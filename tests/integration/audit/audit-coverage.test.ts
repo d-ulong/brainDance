@@ -9,19 +9,11 @@ import {
 } from "@/modules/family-access/relationship-request.service";
 import { createInvitation } from "@/modules/identity/invitation.service";
 import { registerParent } from "@/modules/identity/registration.service";
-import {
-  issueContactVerification,
-  verifyContact,
-} from "@/modules/identity/verification.service";
+import { issueContactVerification, verifyContact } from "@/modules/identity/verification.service";
 import { completeReactionSession } from "../../helpers/training";
 import { seedStudentUser } from "../../helpers/family-access";
 import { bootstrapAdmin } from "../../helpers/identity";
-import {
-  closeTestDb,
-  getTestDb,
-  migrateTestDb,
-  resetIdentityTables,
-} from "../../helpers/db";
+import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
 config({ path: ".env.local" });
 config({ path: ".env" });

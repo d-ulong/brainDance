@@ -42,6 +42,7 @@ export async function GET() {
       contactVerified: user.role === "admin" || Boolean(dbUser?.contactVerifiedAt),
       status: dbUser?.status,
       authorizationEpoch: user.authorizationEpoch,
+      mustChangePassword: dbUser?.mustChangePassword ?? false,
     });
   } catch (error) {
     const { status, body } = toErrorResponse(error);

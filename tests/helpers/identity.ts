@@ -23,10 +23,8 @@ export async function createVerifiedParent(
   },
 ) {
   const { registerParent } = await import("@/modules/identity/registration.service");
-  const {
-    issueContactVerification,
-    verifyContact,
-  } = await import("@/modules/identity/verification.service");
+  const { issueContactVerification, verifyContact } =
+    await import("@/modules/identity/verification.service");
 
   const registered = await registerParent(db, {
     invitationCode: input.invitationCode,

@@ -28,6 +28,7 @@ export async function resetIdentityTables(db: TestDb): Promise<void> {
   await db.execute(sql`
     TRUNCATE TABLE
       audit_events,
+      outbox_events,
       guardian_consents,
       training_metrics,
       training_events,

@@ -13,7 +13,11 @@ export async function seedAdminUser(
   },
 ): Promise<string> {
   const email = input.email.trim().toLowerCase();
-  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
   if (existing) {
     return existing.id;
   }

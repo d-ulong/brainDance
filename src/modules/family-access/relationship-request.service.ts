@@ -11,13 +11,19 @@ import {
   users,
 } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import {
   assertNoActiveRelationshipPair,
   countActiveRelationshipsForStudent,
   requireActiveRelationship,
 } from "@/modules/family-access/authorization.service";
 import { resolveAssociationCodeByPlaintext } from "@/modules/family-access/association-code.service";
-import { FAMILY_TIMEZONE, M1_GUARDIAN_CONSENT_TYPE, M1_GUARDIAN_POLICY_VERSION, RELATIONSHIP_REQUEST_TTL_MS } from "@/modules/family-access/constants";
+import {
+  FAMILY_TIMEZONE,
+  M1_GUARDIAN_CONSENT_TYPE,
+  M1_GUARDIAN_POLICY_VERSION,
+  RELATIONSHIP_REQUEST_TTL_MS,
+} from "@/modules/family-access/constants";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { IdentityError } from "@/modules/identity/errors";
 
@@ -121,7 +127,12 @@ export async function createRelationshipRequest(
       .where(eq(studentAssociationCodes.id, resolved.associationCodeId))
       .limit(1);
 
-    if (!codeRow || codeRow.consumedAt || codeRow.revokedAt || codeRow.expiresAt.getTime() <= Date.now()) {
+    if (
+      !codeRow ||
+      codeRow.consumedAt ||
+      codeRow.revokedAt ||
+      codeRow.expiresAt.getTime() <= Date.now()
+    ) {
       if (codeRow?.consumedAt) {
         throw new FamilyAccessError("ASSOCIATION_CODE_CONSUMED", "Association code already used");
       }
@@ -181,11 +192,7 @@ export async function createRelationshipRequest(
   });
 }
 
-async function loadPendingRequestForStudent(
-  db: Database,
-  studentId: string,
-  requestId: string,
-) {
+async function loadPendingRequestForStudent(db: Database, studentId: string, requestId: string) {
   const [request] = await db
     .select()
     .from(relationshipRequests)
@@ -197,11 +204,17 @@ async function loadPendingRequestForStudent(
   }
 
   if (request.studentId !== studentId) {
-    throw new FamilyAccessError("FORBIDDEN", "Relationship request does not belong to this student");
+    throw new FamilyAccessError(
+      "FORBIDDEN",
+      "Relationship request does not belong to this student",
+    );
   }
 
   if (request.status !== "pending") {
-    throw new FamilyAccessError("RELATIONSHIP_REQUEST_NOT_PENDING", "Relationship request is not pending");
+    throw new FamilyAccessError(
+      "RELATIONSHIP_REQUEST_NOT_PENDING",
+      "Relationship request is not pending",
+    );
   }
 
   if (request.expiresAt.getTime() <= Date.now()) {
@@ -294,7 +307,10 @@ export async function acceptRelationshipRequest(
       .limit(1);
 
     if (!relationship) {
-      throw new FamilyAccessError("RELATIONSHIP_REQUEST_INVALID", "Accepted request missing relationship");
+      throw new FamilyAccessError(
+        "RELATIONSHIP_REQUEST_INVALID",
+        "Accepted request missing relationship",
+      );
     }
 
     return {
@@ -443,6 +459,19 @@ export async function acceptRelationshipRequest(
       requestId: input.requestIdHeader,
       idempotencyKey: `audit:rel-accept:${input.idempotencyKey}`,
       metadata: { familyId, parentId: request.parentId },
+    });
+
+    await appendOutboxEvent(tx, {
+      aggregateType: "relationship",
+      aggregateId: relationship.id,
+      eventType: "relationship.accepted",
+      dedupeKey: `outbox:rel-accept:${input.idempotencyKey}`,
+      payload: {
+        relationshipId: relationship.id,
+        familyId,
+        parentId: request.parentId,
+        studentId: request.studentId,
+      },
     });
 
     return {

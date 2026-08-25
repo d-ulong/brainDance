@@ -8,6 +8,7 @@ export type TrainingErrorCode =
   | "EVENT_SEQUENCE_INVALID"
   | "EVENT_PAYLOAD_INVALID"
   | "STUDENT_BIRTH_DATE_REQUIRED"
+  | "IDEMPOTENCY_SESSION_MISMATCH"
   | "VALIDATION_ERROR";
 
 export class TrainingError extends Error {

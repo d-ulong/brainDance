@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  computeReactionMetrics,
-  validateReactionEvents,
-} from "@/modules/training/reaction-v1";
+import { computeReactionMetrics, validateReactionEvents } from "@/modules/training/reaction-v1";
 
 describe("reaction-v1 metrics", () => {
   it("computes median reaction time from valid correct trials only", () => {

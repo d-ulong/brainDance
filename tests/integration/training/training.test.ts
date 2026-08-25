@@ -17,16 +17,8 @@ import {
   startTrainingSession,
   submitTrainingSession,
 } from "@/modules/training/session.service";
-import {
-  bootstrapVerifiedParentWithInvite,
-  seedStudentUser,
-} from "../../helpers/family-access";
-import {
-  closeTestDb,
-  getTestDb,
-  migrateTestDb,
-  resetIdentityTables,
-} from "../../helpers/db";
+import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
+import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 import { completeReactionSession, ensureReactionDefinitions } from "../../helpers/training";
 
 config({ path: ".env.local" });
@@ -94,16 +86,16 @@ describe.skipIf(!hasDb)("training module", () => {
     expect(submitted.status).toBe("completed");
     expect(submitted.sessionKind).toBe("effective");
     expect(submitted.metrics.find((m) => m.metricKey === "accuracy")?.value).toBe(1);
-    expect(submitted.metrics.find((m) => m.metricKey === "median_reaction_ms")?.value).toBeGreaterThan(
-      100,
-    );
+    expect(
+      submitted.metrics.find((m) => m.metricKey === "median_reaction_ms")?.value,
+    ).toBeGreaterThan(100);
 
     const reloaded = await getTrainingSessionForStudent(db, student.studentId, submitted.sessionId);
     expect(reloaded.status).toBe("completed");
     expect(reloaded.metrics).toHaveLength(submitted.metrics.length);
-    expect(reloaded.metrics.find((m) => m.metricKey === "median_reaction_ms")?.value).toBeGreaterThan(
-      0,
-    );
+    expect(
+      reloaded.metrics.find((m) => m.metricKey === "median_reaction_ms")?.value,
+    ).toBeGreaterThan(0);
   });
 
   it("marks second completed session on same day as practice", async () => {

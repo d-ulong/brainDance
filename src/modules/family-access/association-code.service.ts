@@ -3,10 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "@/db";
 import { studentAssociationCodes } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
-import {
-  generateAssociationCodePlaintext,
-  hashAssociationCode,
-} from "@/lib/crypto";
+import { generateAssociationCodePlaintext, hashAssociationCode } from "@/lib/crypto";
 import { ASSOCIATION_CODE_TTL_MS } from "@/modules/family-access/constants";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 
@@ -120,7 +117,10 @@ export async function resolveAssociationCodeByPlaintext(
   }
 
   if (row.consumedAt) {
-    throw new FamilyAccessError("ASSOCIATION_CODE_CONSUMED", "Association code has already been used");
+    throw new FamilyAccessError(
+      "ASSOCIATION_CODE_CONSUMED",
+      "Association code has already been used",
+    );
   }
 
   if (row.expiresAt.getTime() <= Date.now()) {

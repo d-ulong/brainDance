@@ -1,0 +1,36 @@
+{
+  "id": "m1-verification-remediation",
+  "name": "m1-verification-remediation",
+  "title": "M1 验收缺口修复",
+  "description": "在保留既有 M1 后端能力前提下，修复训练幂等键跨学生泄漏、补齐浏览器可操作闭环 UI、单方解除关联、事务 outbox 占位、Prettier CI，并核对/补齐受控学生开户与首次改密。不修改历史任务 08-25-m1-identity-training-loop 文档。",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "m1-remediation",
+  "package": null,
+  "priority": "P1",
+  "creator": "wangyoulong",
+  "assignee": "wangyoulong",
+  "createdAt": "2026-08-25",
+  "completedAt": "2026-08-25",
+  "branch": "fix/m1-verification-gaps",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/08-25-m1-identity-training-loop/prd.md",
+    ".trellis/tasks/08-25-m1-identity-training-loop/design.md",
+    ".trellis/tasks/08-25-m1-identity-training-loop/research/m1-verification-evidence.md",
+    "docs/data-model.md",
+    "docs/architecture.md",
+    "CONTEXT.md"
+  ],
+  "notes": "Planning-only until owner confirms prd/design/implement. Do not rewrite archived M1 task.",
+  "meta": {
+    "blocksOn": "owner approval of prd.md + design.md + implement.md",
+    "supersedesGapsFrom": "m1-verification-evidence.md §已知未实现"
+  }
+}

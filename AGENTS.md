@@ -13,11 +13,13 @@ Before implementation:
 
 ## 2. Prefer the Smallest Sufficient Solution
 
-- Implement only what the request requires.
-- Avoid speculative features, configurability, and premature abstractions.
-- Do not introduce an abstraction unless it removes meaningful duplication or clarifies a real domain boundary.
-- Handle realistic boundary and failure cases, but avoid defensive layers for scenarios excluded by established invariants.
-- If the implementation is substantially more complex than the problem requires, simplify it.
+- Implement only what the request requires. Remove speculative features, future-only fields or branches, configurability, and imagined requirements (YAGNI).
+- Before writing business code, stop at the first sufficient option: no implementation needed; reuse an existing project implementation; use the standard library; use the framework or platform's native API; reuse an already-installed dependency; use a short, clear implementation; otherwise write the minimum viable business logic.
+- Do not add a third-party dependency when the project, standard library, platform, or an installed dependency already provides a sufficient solution.
+- Do not add wrappers, intermediate layers, or abstractions for hypothetical extensibility. Introduce an abstraction only when it removes meaningful duplication, clarifies a real domain boundary, or the user explicitly requests architecture or encapsulation.
+- Prefer concise, readable, maintainable code—not code golf. If the implementation is substantially more complex than the problem requires, simplify it.
+- Never trade correctness or safety for brevity: preserve necessary input validation, boundary checks, error handling, security controls, and data-integrity guarantees. Avoid defensive layers only for scenarios excluded by established invariants.
+- When the user explicitly requests an abstraction, encapsulation, or architectural design, follow that request instead of applying these constraints mechanically.
 
 ## 3. Keep Changes Focused
 

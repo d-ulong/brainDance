@@ -3,23 +3,12 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { auditEvents, invitations, users } from "@/db/schema";
-import {
-  createInvitation,
-  revokeInvitation,
-} from "@/modules/identity/invitation.service";
+import { createInvitation, revokeInvitation } from "@/modules/identity/invitation.service";
 import { login } from "@/modules/identity/login.service";
 import { registerParent } from "@/modules/identity/registration.service";
-import {
-  issueContactVerification,
-  verifyContact,
-} from "@/modules/identity/verification.service";
+import { issueContactVerification, verifyContact } from "@/modules/identity/verification.service";
 import { bootstrapAdmin } from "../../helpers/identity";
-import {
-  closeTestDb,
-  getTestDb,
-  migrateTestDb,
-  resetIdentityTables,
-} from "../../helpers/db";
+import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -55,7 +44,10 @@ describe.skipIf(!hasDb)("identity module", () => {
     expect(created.codePlaintext.length).toBeGreaterThan(10);
     expect(created.idempotentReplay).toBe(false);
 
-    const [row] = await db.select().from(invitations).where(eq(invitations.id, created.invitationId));
+    const [row] = await db
+      .select()
+      .from(invitations)
+      .where(eq(invitations.id, created.invitationId));
     expect(row?.usedCount).toBe(0);
     expect(row?.targetRole).toBe("parent");
     expect(row?.codeHash).not.toContain(created.codePlaintext);
@@ -294,6 +286,8 @@ describe.skipIf(!hasDb)("identity module", () => {
     expect(second.invitationId).toBe(first.invitationId);
 
     const rows = await db.select().from(invitations);
-    expect(rows.filter((row: (typeof rows)[number]) => row.creationIdempotencyKey === "inv-idem-create")).toHaveLength(1);
+    expect(
+      rows.filter((row: (typeof rows)[number]) => row.creationIdempotencyKey === "inv-idem-create"),
+    ).toHaveLength(1);
   });
 });

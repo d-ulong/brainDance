@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireStudentSession } from "@/lib/auth-request";
+import { requireStudentSessionForWrites } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { issueAssociationCode } from "@/modules/family-access/association-code.service";
 
@@ -11,7 +11,7 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const { db, dbUser } = await requireStudentSession();
+    const { db, dbUser } = await requireStudentSessionForWrites();
     const body = bodySchema.parse(await request.json());
 
     const result = await issueAssociationCode(db, {

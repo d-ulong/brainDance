@@ -12,7 +12,9 @@ export type FamilyAccessErrorCode =
   | "FORBIDDEN"
   | "UNAUTHORIZED"
   | "VALIDATION_ERROR"
-  | "USER_NOT_FOUND";
+  | "USER_NOT_FOUND"
+  | "RELATIONSHIP_NOT_FOUND"
+  | "RELATIONSHIP_NOT_ACTIVE";
 
 export class FamilyAccessError extends Error {
   readonly code: FamilyAccessErrorCode;

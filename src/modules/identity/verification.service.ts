@@ -195,10 +195,7 @@ export async function verifyContact(
   };
 }
 
-export function isContactVerified(user: {
-  contactVerifiedAt: Date | null;
-  role: string;
-}): boolean {
+export function isContactVerified(user: { contactVerifiedAt: Date | null; role: string }): boolean {
   if (user.role === "admin") {
     return true;
   }

@@ -1,12 +1,4 @@
-import {
-  index,
-  pgEnum,
-  pgTable,
-  text,
-  timestamp,
-  unique,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { index, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 import { userRoleEnum, users } from "./identity";
 
@@ -69,9 +61,7 @@ export const familyMemberships = pgTable(
       () => relationships.id,
     ),
   },
-  (table) => [
-    index("family_memberships_family_user_idx").on(table.familyId, table.userId),
-  ],
+  (table) => [index("family_memberships_family_user_idx").on(table.familyId, table.userId)],
 );
 
 export const studentAssociationCodes = pgTable(

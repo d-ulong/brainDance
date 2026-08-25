@@ -5,10 +5,7 @@ import { loginSecurityEvents, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { normalizeAccountKey, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
-import {
-  LOGIN_LOCK_DURATION_MS,
-  MAX_LOGIN_FAILURES,
-} from "@/modules/identity/constants";
+import { LOGIN_LOCK_DURATION_MS, MAX_LOGIN_FAILURES } from "@/modules/identity/constants";
 import { IdentityError } from "@/modules/identity/errors";
 
 export type LoginInput = {
@@ -47,7 +44,11 @@ async function findUserByIdentifier(db: Database, identifier: string) {
   const [byEmail] = await db.select().from(users).where(eq(users.email, normalized)).limit(1);
   if (byEmail) return byEmail;
 
-  const [byPhone] = await db.select().from(users).where(eq(users.phone, identifier.trim())).limit(1);
+  const [byPhone] = await db
+    .select()
+    .from(users)
+    .where(eq(users.phone, identifier.trim()))
+    .limit(1);
   if (byPhone) return byPhone;
 
   const [byUsername] = await db
@@ -61,7 +62,10 @@ async function findUserByIdentifier(db: Database, identifier: string) {
 async function countRecentFailures(db: Database, accountKey: string): Promise<number> {
   const since = new Date(Date.now() - LOGIN_LOCK_DURATION_MS);
   const events = await db
-    .select({ eventType: loginSecurityEvents.eventType, occurredAt: loginSecurityEvents.occurredAt })
+    .select({
+      eventType: loginSecurityEvents.eventType,
+      occurredAt: loginSecurityEvents.occurredAt,
+    })
     .from(loginSecurityEvents)
     .where(
       and(
@@ -175,7 +179,10 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
   if (user.status === "locked") {
     await db
       .update(users)
-      .set({ status: user.contactVerifiedAt ? "active" : "pending_verification", lockedUntil: null })
+      .set({
+        status: user.contactVerifiedAt ? "active" : "pending_verification",
+        lockedUntil: null,
+      })
       .where(eq(users.id, user.id));
   }
 

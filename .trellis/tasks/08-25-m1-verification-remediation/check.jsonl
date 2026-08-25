@@ -1,0 +1,8 @@
+{"file": "CONTEXT.md", "reason": "关联解除、改密会话失效、outbox 事务边界"}
+{"file": "docs/data-model.md", "reason": "outbox_events、relationships 结束、幂等键约定"}
+{"file": "docs/architecture.md", "reason": "Module 边界与事务 outbox 模式"}
+{"file": "docs/product-scope.md", "reason": "M1 受控学生开户与首次改密、解除关联"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/prd.md", "reason": "已批准 M1 范围基线（只读，不修改）"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/research/m1-verification-evidence.md", "reason": "审查缺口来源"}
+{"file": "src/modules/training/session.service.ts", "reason": "训练 start/submit 全局幂等键缺陷"}
+{"file": "src/db/schema/training.ts", "reason": "旧 UNIQUE 约束需迁移替换"}
