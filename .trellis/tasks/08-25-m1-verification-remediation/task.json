@@ -15,7 +15,7 @@
   "branch": "fix/m1-verification-gaps",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "117038211ffc966fb5405b0832d4434b2e8f7c64",
   "pr_url": null,
   "subtasks": [],
   "children": [],

@@ -2,7 +2,9 @@
 
 > **任务**：`08-25-m1-verification-remediation`（分支 `fix/m1-verification-gaps`）  
 > **验收日期**：2026-08-25  
-> **说明**：本文档记录**本修复任务**的验收结果。历史任务 `08-25-m1-identity-training-loop/` 内文档与 `research/m1-verification-evidence.md` **只读、未改写**。
+> **基线提交**：`117038211ffc966fb5405b0832d4434b2e8f7c64`  
+> **说明**：本文档记录**本修复任务**的首次验收结果。历史任务 `08-25-m1-identity-training-loop/` 内文档与其 `research/m1-verification-evidence.md` **只读、未改写**。  
+> **独立复验入口**：[`../VERIFICATION.md`](../VERIFICATION.md) → 填写 [`reverification-signoff.md`](./reverification-signoff.md)
 
 ## 1. 验收矩阵
 

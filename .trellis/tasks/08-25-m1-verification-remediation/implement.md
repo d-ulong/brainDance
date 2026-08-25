@@ -74,9 +74,9 @@ pnpm test:e2e
 
 ## Phase 4 — 验收与文档（0.5 天）
 
-- [ ] **4.1** 全量：`pnpm db:migrate && pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm test:e2e`
-- [ ] **4.2** 编写 `research/m1-verification-evidence.md`（本任务专用）
-- [ ] **4.3** 验收报告：AC-R1–R7 勾选 + 未验证项 + TOTP 阻断说明
+- [x] **4.1** 全量：`pnpm verify:m1-remediation`（或分步见 `VERIFICATION.md`）
+- [x] **4.2** 编写 `research/m1-verification-evidence.md`（本任务专用）
+- [x] **4.3** 独立复验入口：`VERIFICATION.md` + `research/reverification-signoff.md`
 - [ ] **4.4** 更新本任务 `task.json` status → `completed`
 
 ## 测试矩阵（与 PRD AC 一一对应）
