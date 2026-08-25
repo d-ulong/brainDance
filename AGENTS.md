@@ -44,4 +44,4 @@ For trivial changes, skip formal planning and use proportionate verification.
 
 ## Trellis Workflow
 
-For a substantial feature, a new task, or a resumed implementation task, first follow `.agents/skills/trellis-start/SKILL.md`. Use its task workflow and generated specifications before writing code. For simple questions or trivial edits, use judgment and do not create a Trellis task unless requested.
+For a substantial feature, a new task, or a resumed implementation task, first use the user-level `trellis-start` skill. Use its task workflow and generated specifications before writing code. For simple questions or trivial edits, use judgment and do not create a Trellis task unless requested.
