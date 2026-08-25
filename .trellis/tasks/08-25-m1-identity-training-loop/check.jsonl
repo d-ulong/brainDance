@@ -1,0 +1,4 @@
+{"file": "docs/product-scope.md", "reason": "M1 验收与 MVP 边界对照"}
+{"file": "docs/implementation-roadmap.md", "reason": "M1 路线图验收三项"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/prd.md", "reason": "AC-1 至 AC-7 验收清单"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/design.md", "reason": "授权中间件与 DB 约束实现对照"}

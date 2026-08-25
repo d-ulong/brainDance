@@ -3,6 +3,16 @@
 .env.*
 !.env.example
 
+# Next.js and test artifacts
+.next/
+out/
+playwright-report/
+test-results/
+coverage/
+tests/e2e/.fixture.json
+.turbo/
+*.tsbuildinfo
+
 # Dependency and runtime caches
 node_modules/
 __pycache__/

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: braindance-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: braindance
+      POSTGRES_PASSWORD: braindance
+      POSTGRES_DB: braindance
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U braindance -d braindance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - braindance_pg_data:/var/lib/postgresql/data
+
+volumes:
+  braindance_pg_data:

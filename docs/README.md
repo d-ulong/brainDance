@@ -21,6 +21,7 @@
 
 - [ADR-0001：中国大陆优先部署](./adr/0001-mainland-china-deployment.md)
 - [ADR-0002：家庭作为时区与成员归属单位](./adr/0002-family-as-timezone-and-membership-unit.md)
+- [ADR-0003：M1 最小可行技术栈](./adr/0003-m1-tech-stack.md)
 
 ## 规则
 

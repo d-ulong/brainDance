@@ -1,0 +1,6 @@
+{"file": "docs/data-model.md", "reason": "M1 表结构、唯一约束与 relationship 权威事实"}
+{"file": "docs/architecture.md", "reason": "Identity / Family Access / Training Module 边界与实时授权"}
+{"file": "docs/user-flows.md", "reason": "邀请注册、双向关联、训练会话用户流"}
+{"file": "CONTEXT.md", "reason": "关联码生命周期、反应力指标、已验证家长规则"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/design.md", "reason": "M1 技术设计与 API 清单"}
+{"file": ".trellis/tasks/08-25-m1-identity-training-loop/research/adr-0003-m1-tech-stack.md", "reason": "待批准技术栈与目录结构"}

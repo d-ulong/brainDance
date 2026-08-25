@@ -1,0 +1,14 @@
+.next
+node_modules
+pnpm-lock.yaml
+src/db/migrations/meta
+playwright-report
+test-results
+coverage
+
+# Design / workflow docs — not part of app formatting scope
+.trellis/
+docs/
+CONTEXT.md
+AGENTS.md
+README.md
