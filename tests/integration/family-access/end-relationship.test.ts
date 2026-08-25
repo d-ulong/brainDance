@@ -13,7 +13,7 @@ import {
 } from "@/modules/family-access/relationship-request.service";
 import { getTrainingSummaryForParent } from "@/modules/training/session.service";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
-import { completeReactionSession } from "../../helpers/training";
+import { completeReactionSession, ensureReactionDefinitions } from "../../helpers/training";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
 config({ path: ".env.local" });
@@ -31,6 +31,7 @@ describe.skipIf(!hasDb)("end relationship", () => {
 
   beforeEach(async () => {
     await resetIdentityTables(db);
+    await ensureReactionDefinitions(db);
   });
 
   afterAll(async () => {

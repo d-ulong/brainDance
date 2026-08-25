@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
 import { TrainingError } from "@/modules/training/errors";
 import {
+  appendTrainingEvent,
   getTrainingSessionForStudent,
   startTrainingSession,
   submitTrainingSession,
@@ -52,7 +53,7 @@ describe.skipIf(!hasDb)("training idempotency student scope", () => {
     return { studentAId: studentA.studentId, studentBId: studentB.studentId };
   }
 
-  it("isolates start idempotency keys per student", async () => {
+  it("isolates start idempotency keys per student with identical key literals", async () => {
     const { studentAId, studentBId } = await seedTwoStudents();
 
     const startA = await startTrainingSession(db, {
@@ -93,18 +94,43 @@ describe.skipIf(!hasDb)("training idempotency student scope", () => {
     expect(detailB.sessionId).toBe(startB.sessionId);
     expect(detailA.status).toBe("active");
     expect(detailB.status).toBe("active");
+
+    await expect(
+      getTrainingSessionForStudent(db, studentBId, startA.sessionId),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+    await expect(
+      getTrainingSessionForStudent(db, studentAId, startB.sessionId),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+
+    await expect(
+      appendTrainingEvent(db, {
+        studentId: studentBId,
+        sessionId: startA.sessionId,
+        sequence: 0,
+        eventType: "trial.stimulus",
+        payload: { trialIndex: 0, stimulusId: "cross-student" },
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+
+    await expect(
+      submitTrainingSession(db, {
+        studentId: studentBId,
+        sessionId: startA.sessionId,
+        idempotencyKey: "cross-student-submit",
+      }),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
   });
 
   it("isolates submit idempotency keys per student without leaking metrics", async () => {
     const { studentAId, studentBId } = await seedTwoStudents();
 
     const resultA = await completeReactionSession(db, studentAId, {
-      startIdempotencyKey: `start-a-${SHARED_START_KEY}`,
+      startIdempotencyKey: SHARED_START_KEY,
       submitIdempotencyKey: SHARED_SUBMIT_KEY,
       reactionMs: 300,
     });
     const resultB = await completeReactionSession(db, studentBId, {
-      startIdempotencyKey: `start-b-${SHARED_START_KEY}`,
+      startIdempotencyKey: SHARED_START_KEY,
       submitIdempotencyKey: SHARED_SUBMIT_KEY,
       reactionMs: 500,
     });
@@ -136,6 +162,17 @@ describe.skipIf(!hasDb)("training idempotency student scope", () => {
     expect(detailA.metrics).toEqual(replayA.metrics);
     expect(detailB.metrics).toEqual(replayB.metrics);
     expect(detailA.metrics).not.toEqual(detailB.metrics);
+
+    await expect(
+      getTrainingSessionForStudent(db, studentBId, resultA.started.sessionId),
+    ).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
+    await expect(
+      submitTrainingSession(db, {
+        studentId: studentBId,
+        sessionId: resultA.started.sessionId,
+        idempotencyKey: SHARED_SUBMIT_KEY,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_SESSION_MISMATCH" });
   });
 
   it("rejects submit idempotency replay against a different session for the same student", async () => {

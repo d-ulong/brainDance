@@ -9,6 +9,7 @@ import { requireDatabaseUrl } from "@/lib/env";
 export type TestDb = PostgresJsDatabase<typeof schema>;
 
 let sharedClient: ReturnType<typeof postgres> | undefined;
+let resetQueue: Promise<void> = Promise.resolve();
 
 export function getTestDb(): TestDb {
   if (!sharedClient) {
@@ -25,29 +26,34 @@ export async function migrateTestDb(): Promise<void> {
 }
 
 export async function resetIdentityTables(db: TestDb): Promise<void> {
-  await db.execute(sql`
-    TRUNCATE TABLE
-      audit_events,
-      outbox_events,
-      guardian_consents,
-      training_metrics,
-      training_events,
-      training_profile_projection,
-      training_sessions,
-      training_definitions,
-      family_memberships,
-      relationships,
-      relationship_requests,
-      student_association_codes,
-      families,
-      login_security_events,
-      contact_verification_codes,
-      sessions,
-      invitation_redemptions,
-      invitations,
-      users
-    RESTART IDENTITY CASCADE
-  `);
+  const run = resetQueue.then(async () => {
+    await db.execute(sql`
+      TRUNCATE TABLE
+        audit_events,
+        outbox_events,
+        guardian_consents,
+        training_metrics,
+        training_events,
+        training_profile_projection,
+        training_sessions,
+        training_definitions,
+        family_memberships,
+        relationships,
+        relationship_requests,
+        student_association_codes,
+        families,
+        login_security_events,
+        contact_verification_codes,
+        sessions,
+        invitation_redemptions,
+        invitations,
+        users
+      RESTART IDENTITY CASCADE
+    `);
+  });
+
+  resetQueue = run.catch(() => undefined);
+  await run;
 }
 
 /** @deprecated use resetIdentityTables — truncates family + identity tables */

@@ -17,6 +17,16 @@ declare module "lucia" {
   }
 }
 
+function sessionCookieSecure(): boolean {
+  if (process.env.SESSION_COOKIE_SECURE === "false") {
+    return false;
+  }
+  if (process.env.SESSION_COOKIE_SECURE === "true") {
+    return true;
+  }
+  return process.env.NODE_ENV === "production";
+}
+
 export function createLucia(db: Database) {
   const adapter = new DrizzlePostgreSQLAdapter(db, sessions, users);
 
@@ -25,7 +35,7 @@ export function createLucia(db: Database) {
       name: "braindance_session",
       expires: false,
       attributes: {
-        secure: process.env.NODE_ENV === "production",
+        secure: sessionCookieSecure(),
         sameSite: "lax",
         path: "/",
       },

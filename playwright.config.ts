@@ -11,6 +11,7 @@ const sessionSecret =
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: ["**/m1-evidence-capture.spec.ts"],
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -40,15 +41,16 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: process.env.CI
-      ? `pnpm build && pnpm exec next start -p ${e2ePort}`
-      : `pnpm exec next dev -p ${e2ePort}`,
+    // Build in production mode, then serve over HTTP with non-Secure session cookies for E2E.
+    command: "pnpm exec tsx scripts/e2e-web-server.mts",
     url: baseURL,
     reuseExistingServer: false,
-    timeout: 180_000,
+    timeout: 300_000,
     env: {
       ...process.env,
       SESSION_SECRET: sessionSecret,
+      SESSION_COOKIE_SECURE: "false",
+      EXPOSE_DEV_OTP: "true",
     },
   },
 });

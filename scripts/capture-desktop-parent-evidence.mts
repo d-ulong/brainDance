@@ -19,11 +19,7 @@ const outDir = path.join(
 );
 mkdirSync(outDir, { recursive: true });
 
-async function fillField(
-  page: import("playwright").Page,
-  testId: string,
-  value: string,
-) {
+async function fillField(page: import("playwright").Page, testId: string, value: string) {
   const input = page.getByTestId(testId);
   await input.click();
   await input.fill("");

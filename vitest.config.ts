@@ -10,11 +10,20 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    globalSetup: ["tests/global-setup.ts"],
     setupFiles: ["tests/setup.ts"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
     // Integration tests share one Postgres instance and TRUNCATE between cases.
+    // A single worker avoids cross-file TRUNCATE races on the shared database.
     fileParallelism: false,
+    maxWorkers: 1,
+    pool: "forks",
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
   },
   resolve: {
     alias: {

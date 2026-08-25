@@ -24,6 +24,7 @@ import {
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import { bootstrapAdmin } from "../../helpers/identity";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
+import { ensureReactionDefinitions } from "../../helpers/training";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -40,6 +41,7 @@ describe.skipIf(!hasDb)("family access module", () => {
 
   beforeEach(async () => {
     await resetIdentityTables(db);
+    await ensureReactionDefinitions(db);
   });
 
   afterAll(async () => {

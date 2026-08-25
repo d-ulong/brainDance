@@ -34,6 +34,10 @@ export type VerifyContactResult = {
   idempotentReplay: boolean;
 };
 
+function mayExposeDevOtpPlaintext(): boolean {
+  return process.env.EXPOSE_DEV_OTP === "true" || process.env.NODE_ENV !== "production";
+}
+
 export async function issueContactVerification(
   db: Database,
   input: IssueContactVerificationInput,
@@ -104,7 +108,7 @@ export async function issueContactVerification(
 
   return {
     verificationId: created.id,
-    devOtpPlaintext: process.env.NODE_ENV === "production" ? undefined : otpPlaintext,
+    devOtpPlaintext: mayExposeDevOtpPlaintext() ? otpPlaintext : undefined,
     expiresAt,
     idempotentReplay: false,
   };

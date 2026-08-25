@@ -96,28 +96,22 @@ async function ensureFixtureTraining(request: import("@playwright/test").APIRequ
     expect(stimulusResponse.ok()).toBeTruthy();
     sequence += 1;
     await new Promise((resolve) => setTimeout(resolve, 220));
-    const responseEvent = await request.post(
-      `/api/training/sessions/${started.sessionId}/events`,
-      {
-        data: {
-          sequence,
-          eventType: "trial.response",
-          payload: { trialIndex, correct: true, inputMethod: "keyboard" },
-        },
+    const responseEvent = await request.post(`/api/training/sessions/${started.sessionId}/events`, {
+      data: {
+        sequence,
+        eventType: "trial.response",
+        payload: { trialIndex, correct: true, inputMethod: "keyboard" },
       },
-    );
+    });
     expect(responseEvent.ok()).toBeTruthy();
     sequence += 1;
   }
 
-  const submitResponse = await request.post(
-    `/api/training/sessions/${started.sessionId}/submit`,
-    {
-      data: {
-        idempotencyKey: `evidence-submit-${Date.now()}`,
-      },
+  const submitResponse = await request.post(`/api/training/sessions/${started.sessionId}/submit`, {
+    data: {
+      idempotencyKey: `evidence-submit-${Date.now()}`,
     },
-  );
+  });
   expect(submitResponse.ok()).toBeTruthy();
 
   await request.post("/api/auth/session", {
