@@ -1,0 +1,19 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Dependency and runtime caches
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Logs and local editor state
+*.log
+.DS_Store
+Thumbs.db
+
+# User-local Codex and shared-agent runtime integration
+.agents/
+.codex/
