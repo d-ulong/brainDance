@@ -15,7 +15,7 @@
 | `plans` | owner 家长 | 关联家长、学生 | ≤1 active formal / student |
 | `plan_versions` | 计划命令 | 同上 | 只追加；`effective_from` 为编辑后+1 家庭日 |
 | `schedule_items` | Schedule Module | 关联家长、学生 | `occurrence_key` UNIQUE；状态机单向 |
-| `schedule_events` | complete/skip | 同上 | 见 §4.3 资源级幂等 |
+| `schedule_events` | complete/skip | 同上 | 资源级 UNIQUE `(schedule_item_id, idempotency_key)`；跨 actor 同 key → 409 |
 | `fact_versions` | complete 命令 | 同上 | 只追加；含 `idempotency_key`、`completion_kind` |
 | `schedule_horizon_maintains` | **仅** maintain-horizon HTTP | — | 滚动维护幂等锚点 |
 | `point_rule_templates` | admin/seed | 家长读 | M2 一条固定模板 |
@@ -68,7 +68,7 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 | `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
 | `schedule_items` | — | `occurrence_key` UNIQUE |
 | `settlements` | `idempotency_key` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)` |
-| `point_ledger_entries` | `idempotency_key` | 每 settlement 至多一条正向流水（集成测试断言） |
+| `point_ledger_entries` | `idempotency_key` | UNIQUE `idempotency_key`；UNIQUE `settlement_id`（每 settlement 一条正向流水） |
 
 ### 4.3 日程事件幂等 scope（阻断 #2 — 已选定）
 
@@ -111,7 +111,57 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 
 **actor 与 scope**：计划/规则类命令的 UNIQUE 含 `owner_id` / `creator_parent_id`；`schedule_events` 为**资源级** `(schedule_item_id, idempotency_key)`，actor **不**进 UNIQUE，但 §4.3 要求异 actor 同 key → **409**。
 
-## 5. 写命令设计
+### 4.6 occurrence_key（冻结）
+
+```text
+occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:{slot_key}"
+```
+
+- `family_date`：`YYYY-MM-DD`（Asia/Shanghai 日历日）
+- `slot_key`：M2 单时间点计划固定为 `daily:{localTime}`（如 `daily:20:00`）
+- 生成：`generateHorizonInline` / 独立 maintain 均 `INSERT … ON CONFLICT (occurrence_key) DO NOTHING`
+
+### 4.7 schedule_items 状态机
+
+| 当前 status | 允许迁移 | 触发 |
+| --- | --- | --- |
+| `pending` | → `completed` | complete（窗口内） |
+| `pending` | → `skipped` | skip（窗口内） |
+| `pending` | → `expired` | persistExpiredPastWindow；或窗口外 complete/skip 尝试 |
+| `pending` | → `cancelled` | 编辑取消 future；停用计划 |
+| `completed` / `skipped` / `expired` / `cancelled` | 终态 | 异键写命令 → 409；同键 → 回放（若适用） |
+
+### 4.8 persistExpiredPastWindow
+
+```text
+persistExpiredPastWindow(student_id):
+  UPDATE schedule_items
+  SET status = 'expired'
+  WHERE student_id = ?
+    AND status = 'pending'
+    AND isPastCompletionWindow(family_date, now())   -- §6 窗口定义，非简单 family_date < today
+```
+
+**调用方（仅写事务）**：create plan、edit plan、deactivate、complete（窗口外）、skip（窗口外）、maintain-horizon。**禁止** GET/list 调用。
+
+### 4.9 Outbox 与审计（AC-M2-8）
+
+同事务 `appendOutboxEvent` + audit；`dedupe_key` UNIQUE。
+
+| outbox event | aggregate | dedupe_key 示例 |
+| --- | --- | --- |
+| `plan.created` | plan | `plan.created:{plan_id}` |
+| `plan.version_created` | plan | `plan.version_created:{plan_version_id}` |
+| `plan.deactivated` | plan | `plan.deactivated:{plan_id}` |
+| `schedule.horizon_maintained` | student | `schedule.horizon_maintained:{maintain_id}` |
+| `schedule.completed` | schedule_item | `schedule.completed:{schedule_item_id}` |
+| `schedule.skipped` | schedule_item | `schedule.skipped:{schedule_item_id}` |
+| `point_rule.enabled` | point_rule | `point_rule.enabled:{point_rule_id}` |
+| `points.settled` | settlement | `points.settled:{settlement_id}` |
+
+audit `action` 示例：`formal_plan.created`、`schedule_item.completed`、`point_ledger.created`。
+
+**create 回放**：不得第二次写入 `plan.created` outbox（F21）。
 
 ### 5.1 创建正式计划
 
@@ -124,7 +174,7 @@ Body: { title, description?, localTime: "20:00", startDate, endDate? }
   1. assert parent verified + active relationship + student scope
   2. 规范化 body → idempotency_payload_hash
   3. SELECT (owner_id, student_id, create_idempotency_key)
-     → 命中且 hash 一致: **200 回放**（**跳过 4–7**；不二次维护、不重复 audit/outbox）
+     → 命中且 hash 一致: **200 回放**（**跳过 4–8**；不二次维护、不重复 audit/outbox）
      → 命中且 hash 不一致: 409
   4. 仅未命中：assert 无其他 active formal plan
   5. INSERT plans + plan_versions v1
@@ -143,7 +193,7 @@ Body: { title?, description?, localTime?, endDate? }
   1. assert owner
   2. 规范化 body → idempotency_payload_hash
   3. SELECT plan_versions WHERE (plan_id, create_idempotency_key)
-     → 命中且 hash 一致: **200 回放**该 version（跳过 4–6；不二次 inline horizon/outbox）
+     → 命中且 hash 一致: **200 回放**该 version（跳过 4–8；不二次 inline horizon/outbox）
      → 命中且 hash 不一致: 409
   4. INSERT plan_versions vN+1, effective_from = nextFamilyDate(now)
   5. cancel future pending（旧 version，family_date >= effective_from）
@@ -185,24 +235,23 @@ POST /api/schedule-items/:itemId/complete
 Headers: Idempotency-Key
 
   1. assert student owns item（via family relationship）
-  2. 规范化 body（空对象）→ hash；幂等查 schedule_events (schedule_item_id, key) — §4.3：
-     - 已有 complete 且 hash/actor 一致 → **200 回放**（含 fact/settlement/ledger）
-     - 已有 event 且 hash 不一致 → **409**
-     - 已有 skip 等同 key → **409**（跨动作占槽）
-     - 同 key 异 actor → **409**（不回放）
-  3. pending + 窗口外 → persistExpired → **409**
-  4. pending + 窗口内 → deriveCompletionKind(now, family_date) → on_time | late
-  5. INSERT schedule_events (event_type=complete, actor_id=student, completion_kind, occurred_at=now)
-  6. UPDATE schedule_items.status = completed
-  7. INSERT fact_versions (
+  2. 规范化 body（空对象）→ hash；幂等查 schedule_events (schedule_item_id, key) — §4.3
+  3. 若 status 非 pending：同键且已有 complete → **200 回放**；异键或已有 skip → **409**
+  4. pending + 窗口外 → persistExpired → **409**
+  5. pending + 窗口内 → deriveCompletionKind → on_time | late
+  6. INSERT schedule_events (event_type=complete, actor_id=student, completion_kind, occurred_at=now)
+  7. UPDATE schedule_items.status = completed
+  8. INSERT fact_versions (
        student_id, schedule_item_id, fact_key='schedule.completed',
        source_kind='system', value={ completion_kind },
        occurred_at, asserted_at=now, recorded_at=now,
        idempotency_key, idempotency_payload_hash, completion_kind
      )
-  8. settlementService.settleForFact — §5.5
-  9. audit + outbox(schedule.completed)
+  9. settlementService.settleForFact — §5.5
+ 10. audit + outbox(schedule.completed, points.settled)
 ```
+
+幂等查（步骤 2）细则：同 item+key 且 hash/actor 一致 → 回放；异 payload / 异 actor / 异 event_type → 409。
 
 ### 5.4b 跳过日程
 
@@ -212,12 +261,13 @@ Headers: Idempotency-Key
 Body: { reason? }
 
   1. assert actor = 关联学生本人 **或** 已关联家长
-  2. 规范化 body → hash；幂等查 schedule_events — §4.3（与 complete 相同槽位）
-  3. pending + 窗口外 → persistExpired → **409**（不得 skipped）
-  4. pending + 窗口内 → INSERT skip event (event_type=skip, actor_id, completion_kind=NULL, reason?)
-  5. UPDATE schedule_items.status = skipped
-  6. **无** fact_versions、settlement、ledger
-  7. audit + outbox(schedule.skipped)
+  2. 规范化 body → hash；幂等查 schedule_events — §4.3
+  3. 若 status 非 pending：同键且已有 skip → **200 回放**；异键或已有 complete → **409**
+  4. pending + 窗口外 → persistExpired → **409**（不得 skipped）
+  5. pending + 窗口内 → INSERT skip event (event_type=skip, actor_id, completion_kind=NULL, reason?)
+  6. UPDATE schedule_items.status = skipped
+  7. **无** fact_versions、settlement、ledger
+  8. audit + outbox(schedule.skipped)
 
 状态竞争：complete 与 skip 互斥；先完成者胜出；后到的异键 → 409；同 key 跨动作 → 409。
 ```
@@ -233,15 +283,17 @@ settleForFact(fact_version_id) — 在 complete 事务内同步调用：
      - 窗口外不应到达（complete 已 409）
   3. INSERT settlements (
        student_id, fact_version_id, rule_version_id,
-       settlement_period, result='reward', explanation,
-       idempotency_key
+       settlement_period=fact.schedule_item.family_date,
+       result='reward', explanation,
+       idempotency_key=fact.idempotency_key
      ) ON CONFLICT (fact_version_id, rule_version_id, settlement_period) DO NOTHING
      → 若冲突：回放原 settlement + ledger
   4. INSERT point_ledger_entries (
        student_id, settlement_id, amount=+10,
-       reason, source_type='settlement', source_id=settlement.id,
-       idempotency_key, explanation 含 completion_kind
-     ) ON CONFLICT DO NOTHING
+       reason='schedule_complete', source_type='settlement',
+       idempotency_key=fact.idempotency_key,
+       explanation 含 completion_kind
+     ) ON CONFLICT (idempotency_key) DO NOTHING
   5. UPSERT point_balance_projection（balance += amount，同事务）
 
 skip 路径不得调用本函数。
@@ -292,6 +344,19 @@ Body: { templateId: "schedule_system_complete_v1" }
 | 幂等键 | **无**（跟随 create/edit 幂等；create **回放时不调用**） |
 | horizon | 固定 **30 天**（`through = currentFamilyDate + 30`） |
 | 生成范围 | 创建：`max(startDate, today)`→through；编辑：`effective_from`→through（当前 version） |
+
+**算法**：
+
+```text
+generateHorizonInline(plan, version, from, through, ignoreCancelled):
+  for each family_date in [from .. through]:
+    if endDate set and family_date > endDate: continue
+    occurrence_key = "{plan.id}:{version.id}:{family_date}:daily:{localTime}"
+    scheduled_at = toScheduledAt(family_date, localTime, Asia/Shanghai)
+    INSERT schedule_items (plan_id, plan_version_id, family_date, scheduled_at, occurrence_key, status=pending)
+    ON CONFLICT (occurrence_key) DO NOTHING
+  -- ignoreCancelled: 计算 maintain 起点时不得用已 cancelled 行的 max 日期
+```
 
 #### B. 独立 `POST /api/family/students/:studentId/formal-plans/maintain-horizon`
 
@@ -360,6 +425,11 @@ function effectiveStatus(item, now): Status {
 | 创建：同 key 异 payload | 409 | F9 |
 | 创建：无幂等命中且已有 active plan | 409 | F9b |
 | 编辑/停用/启规则 hash 不一致 | 409 | F10 |
+| 停用后 future pending→cancelled | 200 inactive | F2 |
+| 编辑后 effective_from 有新实例 | 200 | F19 |
+| create 回放无二次 horizon/outbox | 200 | F21 |
+| 结算同键回放 | 200；余额不变 | F4 |
+| 维护 batch persist expired | 写 expired | F8 |
 | 已完成异键 complete | 409 | F3 |
 | complete 同键回放 | 200 含 ledger | F11 |
 | 窗口外 complete/skip | persist expired + 409 | F7, F18 |
@@ -398,14 +468,30 @@ function effectiveStatus(item, now): Status {
 
 D1 inline 结算 | D2 +10 含 late | D3 30 天 + 显式 maintain 按钮 | D4 窗口对齐 CONTEXT | D5 表级 hash | D6 skip API only | D7 无 goal | D8 启规则独立
 
-## 10. 测试策略
+## 10. 测试策略与 AC 映射
 
 | 层级 | 范围 | 入口 |
 | --- | --- | --- |
 | 单元 | time-policy 窗口/kind；occurrence_key；effectiveStatus | `tests/unit/time-policy/` |
-| 集成 | 七类写命令幂等、horizon、complete/skip、settlement | `tests/integration/schedule/`、`settlement/` |
+| 集成 | 七类写命令幂等、horizon、complete/skip、settlement、outbox | `tests/integration/schedule/`、`settlement/` |
 | E2E | desktop-chromium + mobile-360 各完整 7 步 | `tests/e2e/m2-schedule-points-flow.spec.ts` |
-| 静态 | test、typecheck、lint、format、build | `pnpm test && …` |
+| 静态 | test、typecheck、lint、format、build | `pnpm test && pnpm typecheck && …` |
 | 回归 | M1 53 Vitest + 10 E2E | 全量 CI |
 
-AC/F 项与测试文件映射见 `research/m2-verification-matrix.md`；实施顺序见 `implement.md` §4。
+| AC/F | 测试文件 |
+| --- | --- |
+| AC-M2-1, F8, F9, F9b, F19, F21 | `formal-plan.test.ts` |
+| AC-M2-2 | `schedule-generation.test.ts` |
+| AC-M2-3, F3, F7, F11, F15, F20 | `schedule-complete.test.ts` |
+| AC-M2-4, AC-M2-5, F4, F15 | `settlement-ledger.test.ts` |
+| AC-M2-6 | `formal-plan.test.ts` (F19) |
+| AC-M2-7 | `m2-schedule-points-flow.spec.ts` |
+| AC-M2-8, F21 | `schedule-outbox.test.ts` |
+| F1 | `schedule-auth.test.ts` |
+| F2 | `formal-plan.test.ts` |
+| F5, F6 | `schedule-query.test.ts` + unit effective-status |
+| F14 | `maintain-horizon.test.ts` |
+| F16–F18, F20 | `schedule-skip.test.ts` |
+| F9–F13, F20 | `command-idempotency.test.ts` |
+
+实施顺序见 `implement.md` §4。

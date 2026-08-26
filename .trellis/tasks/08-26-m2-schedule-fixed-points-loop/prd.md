@@ -5,7 +5,7 @@
 | 项 | 值 |
 | --- | --- |
 | 任务 ID | `m2-schedule-fixed-points-loop` |
-| 基线 | `main` @ `1b8c925`（第四轮：消除 design 省略号与 schema 缺口） |
+| 基线 | `main` @ `e6ece0f`（第五轮：occurrence_key/状态机/outbox/非 pending 语义） |
 | 前置 | M1 已签署（历史任务只读） |
 | 门禁 | 书面确认 prd + design + implement 后方可实现 |
 
@@ -33,7 +33,7 @@
 - 固定 **30 天** horizon（无客户端参数）。
 - **内联生成**：创建/编辑计划事务内 `generateHorizonInline`（不写 `schedule_horizon_maintains`）。
 - **独立命令**：`POST maintain-horizon`，仅家长、显式 **「补齐日程」按钮** 触发（**禁止** mount 自动 POST；**禁止** GET 触发）。
-- `occurrence_key` UNIQUE；编辑后从 **`effective_from` 至 today+30** 为**当前 version** 生成（见 design §5.2）。
+- `occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}"` UNIQUE；编辑后从 **`effective_from` 至 today+30** 为**当前 version** 内联生成；`INSERT ON CONFLICT (occurrence_key) DO NOTHING`。
 
 ### 完成窗口与迟完成
 
@@ -80,7 +80,7 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-5**：`point_balance_projection.balance` = ledger 求和；刷新/重登一致；无 bypass ledger 写余额路径。
 - [ ] **AC-M2-6**：编辑时间后当天实例不变；自 `effective_from` 起为新 version 生成实例至 today+30；无重复 future 实例。
 - [ ] **AC-M2-7**：desktop + mobile-360 **各**跑通：建计划 → 启规则 → 完成 → +10 → 刷新/重登/同键重复 complete 仍 1 ledger。
-- [ ] **AC-M2-8**：写操作同事务 audit + outbox；dedupe_key 唯一；create 回放不重复 outbox。
+- [ ] **AC-M2-8**：写操作同事务 audit + outbox；dedupe_key 唯一（如 `plan.created:{plan_id}`、`schedule.completed:{item_id}`）；create 回放不重复 outbox。
 
 ### 失败路径
 
@@ -94,7 +94,7 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-F8**：维护/创建/编辑事务批量 persist expired。
 - [ ] **AC-M2-F9**：创建同 scope 同键同 payload → 200 回放；异 payload → 409。
 - [ ] **AC-M2-F9b**：已有 active plan + 新 key → 409；同 key 回放 → 200（不触发 active 冲突）。
-- [ ] **AC-M2-F10**：编辑/停用/启规则 payload hash 行为符合 design §5.7。
+- [ ] **AC-M2-F10**：编辑/停用/启规则：同 scope+key+payload hash 一致 → 200 回放；hash 不一致 → 409。
 - [ ] **AC-M2-F11**：complete 同键回放含 ledger。
 - [ ] **AC-M2-F12**：同 key 不同 student 创建 → 各自成功。
 - [ ] **AC-M2-F13**：同 key 跨命令类型（create vs enable-rule）→ 允许。
@@ -114,4 +114,4 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 ## Notes
 
 - 设计细节：`design.md`；实施：`implement.md`；矩阵：`research/m2-verification-matrix.md`。
-- 复审报告：`research/planning-rereview-9c87d40.md`（首轮）、`research/planning-rereview-ee79298.md`（ee79298）、`research/planning-rereview-1b8c925.md`（1b8c925）。
+- 复审报告：`research/planning-rereview-*.md`（首轮至 e6ece0f 各轮）。

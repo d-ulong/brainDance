@@ -1,6 +1,6 @@
 # M2 验收矩阵
 
-> 2026-08-26 第四轮修订（闭合 `planning-rereview-1b8c925.md` 缺口）。
+> 2026-08-26 第五轮修订（闭合 `planning-rereview-e6ece0f.md` 缺口）。
 
 ## 1. 总览
 
@@ -55,6 +55,7 @@
 
 | 项 | 规范 |
 | --- | --- |
+| occurrence_key | `{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}` |
 | schedule_events UNIQUE | `(schedule_item_id, idempotency_key)` 资源级 |
 | 跨 actor 同 key | 409，不回放 |
 | completion_kind | schedule_events + fact_versions 必填（complete） |
@@ -93,3 +94,11 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | 1b8c925 #4 | 过期只读 | design §6 TS + 路径表；F6 |
 | 1b8c925 #5 | 测试策略 | design §10 + implement §4 |
 | 1b8c925 #6 | 路由/seed | implement §2.1、§3 GET 路由 |
+| e6ece0f #1 | occurrence_key | design §4.6；AC-M2-2 |
+| e6ece0f #2 | 状态机 | design §4.7；F3/F16/F17 |
+| e6ece0f #3 | persistExpired | design §4.8；F6/F7/F8/F18 |
+| e6ece0f #4 | outbox dedupe | design §4.9；AC-M2-8/F21 |
+| e6ece0f #5 | 非 pending 回放 | design §5.4/5.4b；F11/F16 |
+| e6ece0f #6 | settlement/ledger | design §5.5；F4 |
+| e6ece0f #7 | inline 算法 | design §5.8A；F19/F21 |
+| e6ece0f #8 | AC 映射内联 | design §10；prd 无见 design |

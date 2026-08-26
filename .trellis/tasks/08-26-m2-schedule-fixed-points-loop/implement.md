@@ -6,7 +6,7 @@
 
 | 阶段 | 内容 | 验证 |
 | --- | --- | --- |
-| **0** | 规划复审 1b8c925 缺口已闭合 | design §2–4、§6、§10 全文 |
+| **0** | 规划复审 e6ece0f 缺口已闭合 | design §4.6–4.9、§5.4/5.8、§10 |
 | **1** | 迁移 0008–0013 | `pnpm db:migrate` |
 | **2** | 扩展 `src/modules/time-policy/` | `tests/unit/time-policy/` |
 | **3** | Schedule：CRUD、inline horizon、maintain-horizon、complete/skip | 集成测试 |
@@ -53,7 +53,8 @@ src/modules/schedule/
   generate-horizon-inline.service.ts
   maintain-horizon.service.ts
   schedule-query.service.ts
-  persist-expired.service.ts
+  persist-expired.service.ts     # §4.8；仅写事务；用 isPastCompletionWindow
+  occurrence-key.ts              # §4.6 构建函数
   complete-schedule.service.ts
   skip-schedule.service.ts
   errors.ts
@@ -92,7 +93,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | `completion-window.test.ts` | 窗口边界 |
 | `derive-completion-kind.test.ts` | on_time / late |
 | `effective-status.test.ts` | 只读 expired |
-| `occurrence-key.test.ts` | key 格式 |
+| `occurrence-key.test.ts` | key 格式 §4.6 |
 
 ### 4.2 集成
 
