@@ -28,7 +28,11 @@
 | --- | --- | --- |
 | `id` | UUID | PK |
 | `owner_id`, `student_id` | UUID | FK → users；NOT NULL |
-| `status` | enum | `active` \| `inactive` |
+| `plan_type` | text | NOT NULL；M2 固定 `formal` |
+| `title` | text | NOT NULL |
+| `description` | text | NULL |
+| `start_date` | date | NOT NULL |
+| `status` | text | CHECK IN (`active`,`inactive`) |
 | `create_idempotency_key`, `create_idempotency_payload_hash` | text | NOT NULL（create 路径） |
 | `deactivate_idempotency_key`, `deactivate_idempotency_payload_hash` | text | NULL 直至 deactivate |
 | `end_date` | date | NULL 允许 |
@@ -114,22 +118,67 @@
 
 **`settlements`**
 
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUID | PK |
+| `student_id`, `fact_version_id`, `rule_version_id` | UUID | FK；NOT NULL |
+| `settlement_period` | date | NOT NULL；= `schedule_item.family_date` |
+| `result` | text | CHECK IN (`reward`) |
+| `explanation` | text | NOT NULL |
+| `idempotency_key` | text | NOT NULL |
+
 | 约束 | UNIQUE `(fact_version_id, rule_version_id, settlement_period)` |
 
 **`point_ledger_entries`**
 
-| 约束 | UNIQUE `settlement_id`；**无**全局 `UNIQUE(idempotency_key)` |
-| 列 | `idempotency_key` 可存客户端 key（审计）；冲突以 `settlement_id` 为准 |
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUID | PK |
+| `student_id`, `settlement_id` | UUID | FK；NOT NULL |
+| `amount` | int | NOT NULL（M2 固定 +10） |
+| `reason`, `source_type`, `explanation` | text | NOT NULL |
+| `idempotency_key` | text | NOT NULL（审计；**非** UNIQUE scope） |
+
+| 约束 | UNIQUE `settlement_id` |
 
 **`point_balance_projection`**
 
-| 列 | PK `student_id` |
-| UPSERT | `INSERT … ON CONFLICT (student_id) DO UPDATE SET balance = balance + EXCLUDED.delta` |
-| 规则 | **仅** ledger `INSERT … RETURNING id` 成功时累加 |
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `student_id` | UUID | PK；FK → users |
+| `balance` | int | NOT NULL DEFAULT 0 |
+| `updated_at` | timestamptz | NOT NULL |
+
+| UPSERT | `INSERT … ON CONFLICT (student_id) DO UPDATE SET balance = point_balance_projection.balance + EXCLUDED.amount, updated_at = now()` |
+| 规则 | **仅** ledger `INSERT … RETURNING id` 成功时执行 UPSERT |
 
 ### 2.0.5 0013 `schedule_horizon_maintains.sql`
 
+| 列 | 类型 | 约束 |
+| --- | --- | --- |
+| `id` | UUID | PK |
+| `student_id`, `actor_id` | UUID | FK；NOT NULL |
+| `idempotency_key`, `idempotency_payload_hash` | text | NOT NULL |
+| `items_created` | int | NOT NULL DEFAULT 0 |
+| `created_at` | timestamptz | NOT NULL |
+
 | 约束 | UNIQUE `(student_id, actor_id, idempotency_key)` |
+
+### 2.0.6 design §4.2 ↔ implement §2.0 交叉表
+
+| design §4.2 表 | implement 节 | 必含约束 |
+| --- | --- | --- |
+| `plans` | §2.0 | plan_type/formal；start_date/end_date；active formal 部分 UNIQUE |
+| `plan_versions` | §2.0 | FK plan_id；create key+hash UNIQUE |
+| `plan_schedule_slots` | §2.0 | `(plan_version_id, slot_key)` UNIQUE |
+| `schedule_items` | §2.0.1 | occurrence_key UNIQUE；status CHECK |
+| `schedule_events` | §2.0.1 | `(schedule_item_id, idempotency_key)` UNIQUE；event_type CHECK |
+| `fact_versions` | §2.0.2 | completion_kind NOT NULL；item+key UNIQUE |
+| `point_rules` | §2.0.3 | creator+student+key UNIQUE |
+| `settlements` | §2.0.4 | `(fact_version_id, rule_version_id, settlement_period)` UNIQUE |
+| `point_ledger_entries` | §2.0.4 | UNIQUE settlement_id；**无**全局 idempotency UNIQUE |
+| `point_balance_projection` | §2.0.4 | PK student_id；UPSERT 仅随 ledger RETURNING |
+| `schedule_horizon_maintains` | §2.0.5 | `(student_id, actor_id, idempotency_key)` UNIQUE |
 
 ### 2.1 迁移索引（摘要）
 
@@ -162,6 +211,7 @@
 src/modules/time-policy/
   to-family-date.ts, resolve-age-band.ts
   to-scheduled-at.ts, next-family-date.ts, family-date-range.ts
+  add-family-days.ts, horizon-through.ts
   completion-window.ts, derive-completion-kind.ts
 src/modules/schedule/
   plan.service.ts
@@ -216,7 +266,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | 文件 | AC |
 | --- | --- |
 | `formal-plan.test.ts` | 1,6,F2,F8,F9,F9b,F19,F21 |
-| `plan-end-date.test.ts` | F22（endDate 上界、缩短 endDate、maintain no-op） |
+| `plan-end-date.test.ts` | F22（endDate 上界、§4.8b、maintain no-op 无 outbox） |
 | `maintain-horizon.test.ts` | F14,F22；编辑后 horizon；无 mount |
 | `schedule-generation.test.ts` | 2 |
 | `schedule-query.test.ts` | F5,F6 |

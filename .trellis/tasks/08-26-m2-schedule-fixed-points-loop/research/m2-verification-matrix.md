@@ -50,7 +50,7 @@
 | F19 | **编辑后 effective_from 有新实例** | formal-plan |
 | F20 | **同 item 同 key 异 actor → 409** | complete + skip |
 | F21 | **create 回放无二次 horizon/outbox** | formal-plan + outbox |
-| F22 | **endDate 上界/缩短/maintain no-op** | plan-end-date |
+| F22 | **endDate / cancelPendingAfterEndDate / maintain no-op 无 outbox** | plan-end-date |
 | F23 | **缺 Idempotency-Key → 400** | write-route-idempotency-header |
 | F24 | **并发同 key 200 回放** | schedule-terminal-concurrency |
 | F25 | **ledger 冲突 balance 不变；跨 item 同 key** | settlement-ledger |
@@ -117,3 +117,7 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | 7804743 C8 | Idempotency-Key 400 | `design.md` §7.1；F23 |
 | 7804743 C9 | ledger 无全局 UNIQUE | `design.md` §4.2/§5.5；F25 |
 | 7804743 C10 | C6–C9 测试映射 | `implement.md` §4.2.1；design §10 |
+| 3e6df81 标准 C4 | 逐表迁移 + §2.0.6 交叉表 | implement §2.0–§2.0.6 |
+| 3e6df81 标准 C6 | endDate + §4.8b + maintain no-op | design §4.8b、§5.8B；F22 |
+| 3e6df81 规格 C11 | horizonThrough 冻结 | design §8；implement §3 |
+| 3e6df81 规格 C12 | ledger RETURNING + balance UPSERT | design §5.5；F25 |

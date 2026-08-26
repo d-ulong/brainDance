@@ -66,18 +66,20 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 
 | 表 | 字段（幂等） | 约束 |
 | --- | --- | --- |
-| `plans` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(owner_id, student_id, create_idempotency_key)`；部分 UNIQUE active formal |
+| `plans` | `plan_type`, `start_date`, `end_date`, `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(owner_id, student_id, create_idempotency_key)`；**部分 UNIQUE** `(student_id) WHERE status='active' AND plan_type='formal'` |
 | `plans` | `deactivate_idempotency_key`, `deactivate_idempotency_payload_hash` | UNIQUE `(id, deactivate_idempotency_key)` |
 | `plan_versions` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(plan_id, create_idempotency_key)` |
 | `plan_schedule_slots` | `slot_key`, `local_time` | UNIQUE `(plan_version_id, slot_key)`；M2 固定 `default` + `20:00` |
-| `schedule_events` | `event_type`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | UNIQUE `(schedule_item_id, idempotency_key)` **不含 event_type** |
+| `schedule_items` | `occurrence_key`, `status` | UNIQUE `occurrence_key`；CHECK status IN (`pending`,`completed`,`skipped`,`expired`,`cancelled`) |
+| `schedule_events` | `event_type`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | UNIQUE `(schedule_item_id, idempotency_key)` **不含 event_type**；CHECK event_type IN (`complete`,`skip`) |
 | `fact_versions` | `idempotency_key`, `idempotency_payload_hash`, `completion_kind`, `occurred_at` | UNIQUE `(schedule_item_id, idempotency_key)` |
 | `schedule_horizon_maintains` | `idempotency_key`, `idempotency_payload_hash`, `actor_id` | UNIQUE `(student_id, actor_id, idempotency_key)` |
 | `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
-| `schedule_items` | — | `occurrence_key` UNIQUE |
-| `settlements` | `idempotency_key` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)` |
-| `point_ledger_entries` | — | UNIQUE `settlement_id`（每 settlement 至多一条正向流水）；**无**全局 `UNIQUE(idempotency_key)` |
-| `point_balance_projection` | — | PK `student_id`；UPSERT `ON CONFLICT (student_id) DO UPDATE` |
+| `settlements` | `idempotency_key`, `settlement_period` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)`；`settlement_period` = `schedule_item.family_date` |
+| `point_ledger_entries` | `idempotency_key`（审计列，非 UNIQUE） | UNIQUE `settlement_id`；**无**全局 `UNIQUE(idempotency_key)` |
+| `point_balance_projection` | `balance` | PK `student_id`；UPSERT `ON CONFLICT (student_id) DO UPDATE` |
+
+逐表 DDL 与 `implement.md` §2.0 一一对应；迁移前须对照 §2.0.6 交叉表。
 
 ### 4.3 日程事件幂等 scope（阻断 #2 — 已选定）
 
@@ -153,6 +155,20 @@ persistExpiredPastWindow(student_id):
 
 **调用方（仅写事务）**：create plan、edit plan、deactivate、complete（窗口外）、skip（窗口外）、maintain-horizon。**禁止** GET/list 调用。
 
+### 4.8b cancelPendingAfterEndDate
+
+```text
+cancelPendingAfterEndDate(student_id, end_date):
+  IF end_date IS NULL: return
+  UPDATE schedule_items
+  SET status = 'cancelled'
+  WHERE student_id = ?
+    AND status = 'pending'
+    AND family_date > end_date
+```
+
+**调用方**：编辑计划缩短 `plans.end_date` 时（§5.2 步骤 5）；与版本切换取消（步骤 6）独立执行。
+
 ### 4.9 Outbox 与审计（AC-M2-8）
 
 同事务 `appendOutboxEvent` + audit；`dedupe_key` UNIQUE。
@@ -205,14 +221,16 @@ Body: { title, description?, localTime: "20:00", startDate, endDate? }
   1. assert parent verified + active relationship + student scope
   2. 规范化 body → idempotency_payload_hash
   3. SELECT (owner_id, student_id, create_idempotency_key)
-     → 命中且 hash 一致: **200 回放**（**跳过 4–9**；不二次维护、不重复 audit/outbox）
+     → 命中且 hash 一致: **200 回放**（**跳过 4–10**；不二次维护、不重复 audit/outbox）
      → 命中且 hash 不一致: 409
   4. 仅未命中：assert 无其他 active formal plan
-  5. INSERT plans + plan_versions v1 + plan_schedule_slots(version, slot_key='default', local_time)
-  6. through = horizonThrough(plan)   -- min(endDate, currentFamilyDate+30)；见 §5.8A
-  7. generateHorizonInline(plan, version=v1, from=max(startDate, today), through=through)
-  8. persistExpiredPastWindow(student_id)
-  9. audit + outbox(plan.created) — **不含** schedule.horizon_maintained
+  5. INSERT plans(plan_type='formal', start_date, end_date, ...) + plan_versions v1 + plan_schedule_slots
+  6. through = horizonThrough(plans)
+  7. from = max(start_date, currentFamilyDate)
+  8. IF from > through → 0 新实例
+     ELSE generateHorizonInline(plans, version=v1, from, through)
+  9. persistExpiredPastWindow(student_id)
+ 10. audit + outbox(plan.created)
 ```
 
 ### 5.2 编辑计划
@@ -225,24 +243,22 @@ Body: { title?, description?, localTime?, endDate? }
   1. assert owner
   2. 规范化 body → idempotency_payload_hash
   3. SELECT plan_versions WHERE (plan_id, create_idempotency_key)
-     → 命中且 hash 一致: **200 回放**该 version（跳过 4–10；不二次 inline horizon/outbox）
+     → 命中且 hash 一致: **200 回放**该 version（跳过 4–11；不二次 inline horizon/outbox）
      → 命中且 hash 不一致: 409
   4. INSERT plan_versions vN+1 + plan_schedule_slots（若 localTime 变更）
-     同时设置 effective_from = nextFamilyDate(now)
-  5. IF endDate 缩短：将所有 version 中 family_date > newEndDate 且 status=pending → cancelled
+     UPDATE plans SET end_date = COALESCE(body.endDate, plans.end_date), title/description 等同理
+     同时设置 effective_from = nextFamilyDate(now) 于新版本
+  5. cancelPendingAfterEndDate(student_id, plans.end_date) — §4.8b
   6. cancel future pending（旧 version，family_date >= effective_from）
-  7. through = horizonThrough(plan)
-  8. generateHorizonInline(
-       plan, version=vN+1,
-       from=effective_from,
-       through=through,
-       ignoreCancelled=true
-     )
-  9. persistExpiredPastWindow(student_id)
- 10. audit + outbox(plan.version_created) — **不含** horizon_maintained
+  7. through = horizonThrough(plans)   -- 读取 plans.end_date
+  8. from = effective_from
+  9. IF from > through → 跳过 generate（0 新实例）
+     ELSE generateHorizonInline(plan, version=vN+1, from, through, ignoreCancelled=true)
+ 10. persistExpiredPastWindow(student_id)
+ 11. audit + outbox(plan.version_created) — **不含** horizon_maintained
 ```
 
-（步骤 4–5 顺序：先写入新版本/endDate，再取消超出新结束日的 pending。）
+（步骤 4–5：先持久化 `plans.end_date`，再取消超出结束日的 pending。）
 
 **禁止**：从「含已取消实例的全表 max(future family_date)」起算；那会导致新版本 0 实例。
 
@@ -321,8 +337,12 @@ settleForFact(fact_version_id) — 在 complete 事务内同步调用：
        explanation 含 completion_kind
      ) ON CONFLICT (settlement_id) DO NOTHING
      RETURNING id
-     → **仅当 RETURNING 有新行**：UPSERT point_balance_projection（balance += amount）
-     → 若冲突（无 RETURNING）：SELECT 原 ledger 回放；**禁止** balance += amount
+     → **仅当 RETURNING 有新行**：
+       UPSERT point_balance_projection
+         ON CONFLICT (student_id) DO UPDATE
+         SET balance = point_balance_projection.balance + EXCLUDED.amount,
+             updated_at = now()
+     → 若冲突（无 RETURNING）：SELECT 原 ledger 回放；**禁止** UPSERT balance
   5. 不同 schedule_item 复用同一客户端 Idempotency-Key → 各自 settlement/ledger（scope 不同）
 
 skip 路径不得调用本函数。
@@ -409,15 +429,16 @@ Auth: 家长 + relationship
 Transaction:
   1. 幂等 schedule_horizon_maintains (student_id, actor_id, key)
   2. assert active plan + current plan_version
-  3. IF plan.endDate IS NOT NULL AND currentFamilyDate > plan.endDate:
-       → **no-op**（200；0 新实例；仍 INSERT maintain 记录 + audit/outbox 若为新 key）
-  4. from = max( currentVersion 已有 future family_date 中 pending 的最远日+1, today )
-     — 仅统计 **当前 version** 且 **status=pending** 的 items
-  5. through = horizonThrough(plan)
-  6. IF from > through → no-op（200；0 新实例）
-  7. ELSE generateHorizonInline(plan, version, from, through)；persistExpiredPastWindow
+  3. through = horizonThrough(plans)
+  4. IF plans.end_date IS NOT NULL AND currentFamilyDate > plans.end_date:
+       → **no-op**（200；items_created=0；**不** generate；**不** outbox schedule.horizon_maintained）
+       → 仍 persistExpiredPastWindow；仍 INSERT maintain 记录（幂等锚点）
+       → 结束
+  5. from = max( currentVersion 已有 future family_date 中 pending 的最远日+1, currentFamilyDate )
+  6. IF from > through → **no-op**（同上：0 实例；无 horizon_maintained outbox）
+  7. ELSE items_created = generateHorizonInline(plans, version, from, through)；persistExpiredPastWindow
   8. INSERT schedule_horizon_maintains
-  9. audit + outbox(schedule.horizon_maintained)
+  9. IF items_created > 0: audit + outbox(schedule.horizon_maintained)
 ```
 
 #### C. UI 触发（阻断 #7）
@@ -486,8 +507,8 @@ function effectiveStatus(item, now): Status {
 | 同 key 不同 student 创建 | 各自 200 | F12 |
 | 跨命令类型同 key | 允许 | F13 |
 | endDate 上界 min(endDate, today+30) | 200；实例不超出 endDate | F22 |
-| 缩短 endDate 取消 future pending | 200；新 endDate 后 pending→cancelled | F22 |
-| maintain 计划已结束 | 200 no-op；0 新实例 | F22 |
+| 缩短 endDate 取消 future pending | 200；§4.8b | F22 |
+| maintain 计划已结束 / from>through | 200 no-op；**无** horizon_maintained outbox | F22 |
 | 缺 Idempotency-Key（七类写 Route） | **400** `IDEMPOTENCY_KEY_REQUIRED` | F23 |
 | complete/skip 并发同 key | 200 回放；仅 1 event/fact/ledger | F24 |
 | ledger 冲突 / 跨 item 同客户端 key | 各自记账；回放 balance 不变 | F25 |
@@ -522,7 +543,9 @@ Route Handler 在鉴权前校验 header；不得进入 domain 层。响应体 `{
 
 ## 8. Time Policy（`src/modules/time-policy/`）
 
-`to-family-date.ts`, `resolve-age-band.ts`, `to-scheduled-at.ts`, `next-family-date.ts`, `family-date-range.ts`, `add-family-days.ts`, `completion-window.ts`, `derive-completion-kind.ts`
+`to-family-date.ts`, `resolve-age-band.ts`, `to-scheduled-at.ts`, `next-family-date.ts`, `family-date-range.ts`, `add-family-days.ts`, `horizon-through.ts`, `completion-window.ts`, `derive-completion-kind.ts`
+
+`horizon-through.ts` 导出 `horizonThrough(plan, now)` — §5.8A 唯一实现源；**禁止**在 Route/Service 重复计算上界。
 
 ## 9. 已批准决策
 

@@ -75,12 +75,12 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 
 ### 必须
 
-- [ ] **AC-M2-1**：家长创建「每天 20:00 完成作业」；自 `max(startDate,today)` 至 today+30 生成正确实例；`maintain-horizon` 可滚动扩展；Asia/Shanghai 边界测试通过。
+- [ ] **AC-M2-1**：家长创建「每天 20:00 完成作业」；自 `max(startDate,today)` 至 **`min(endDate,today+30)`** 生成正确实例；`maintain-horizon` 可滚动扩展；Asia/Shanghai 边界测试通过。
 - [ ] **AC-M2-2**：相同 `occurrence_key` 重复生成 0 新增；DB UNIQUE 拒绝重复。
 - [ ] **AC-M2-3**：完成后 `fact_versions` 含 `idempotency_key`、`completion_kind`、`occurred_at`；同键回放；异键已完成 → 409。
 - [ ] **AC-M2-4**：每次有效 complete 仅 1 settlement + 1 正向 ledger（+10）；explanation 含 `completion_kind`；on_time 与 late 均 +10。
 - [ ] **AC-M2-5**：`point_balance_projection.balance` = ledger 求和；刷新/重登一致；无 bypass ledger 写余额路径。
-- [ ] **AC-M2-6**：编辑时间后当天实例不变；自 `effective_from` 起为新 version 生成实例至 today+30；无重复 future 实例。
+- [ ] **AC-M2-6**：编辑时间后当天实例不变；自 `effective_from` 起为新 version 生成实例至 **`min(endDate,today+30)`**；缩短 endDate 取消 future pending；无重复 future 实例。
 - [ ] **AC-M2-7**：desktop + mobile-360 **各**跑通：建计划 → 启规则 → 完成 → +10 → 刷新/重登/同键重复 complete 仍 1 ledger。
 - [ ] **AC-M2-8**：写操作同事务 audit + outbox；dedupe_key 唯一（如 `plan.created:{plan_id}`、`schedule.completed:{item_id}`）；create 回放不重复 outbox。
 
@@ -108,7 +108,7 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-F19**：编辑后新版本自 effective_from 有实例（不因 cancelled max 日期跳过生成）。
 - [ ] **AC-M2-F20**：同 item 同 key、异 actor（complete vs skip）→ 409，不回放。
 - [ ] **AC-M2-F21**：创建计划幂等回放 → 无第二次 inline horizon、无重复 plan.created outbox。
-- [ ] **AC-M2-F22**：endDate 上界 `min(endDate,today+30)`；缩短 endDate 取消 future pending；maintain 已结束 no-op。
+- [ ] **AC-M2-F22**：endDate 上界 `min(endDate,today+30)`；缩短 endDate 调用 §4.8b 取消 pending；maintain 已结束或 from>through → no-op 且 **不发** `schedule.horizon_maintained` outbox。
 - [ ] **AC-M2-F23**：七类写 Route 缺 `Idempotency-Key` → **400** `IDEMPOTENCY_KEY_REQUIRED`。
 - [ ] **AC-M2-F24**：complete/skip 并发同 key → 200 回放；仅 1 终态 event/fact/ledger。
 - [ ] **AC-M2-F25**：ledger 冲突回放 balance 不变；不同 item 同客户端 key 各自 +10。
