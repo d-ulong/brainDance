@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R6）。基线：`bce550a`（2026-08-26）。
+> 状态：**NO-GO**。复审基线：`bce550a...d139440`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -94,9 +94,33 @@
 
 **证据**：（见本提交 SHA）+ `design.md` §5.8A + `implement.md` §4.2.4 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
 
+## R7 — C2/C12：编辑时必须先读取旧 slot，再切换当前版本
+
+**位置**：`design.md` §5.2；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C2/C12。
+
+**问题**：现流程先执行 `UPDATE plans SET current_version=vN+1.id`，随后在未传 `localTime` 时从 `plans.current_version` 查询应复制的旧 slot。此时它已指向新 version，而新 slot 尚未插入，导致 localTime 无来源并破坏 F27。
+
+**必须修订**：在同一事务中固定以下顺序：
+
+1. 锁定 plan，保存 `oldVersionId = plans.current_version`；
+2. body 未传 `localTime` 时，按 `oldVersionId + slot_key='default'` 读取并锁定旧 `local_time`；
+3. INSERT vN+1；INSERT vN+1 的 default slot（未改时间复制旧值，改时间使用 body 值）；
+4. 最后 `UPDATE plans SET current_version=vN+1.id`；
+5. 以 vN+1 调用 horizon 生成。
+
+**验证**：`formal-plan.test.ts` 覆盖“编辑未传 localTime”成功，新 slot、`occurrence_key`、`scheduled_at` 均使用旧 slot 时间；仍保留“编辑改时间”使用新 slot 的断言。
+
+## R8 — 整改证据必须填写实际提交 SHA
+
+**位置**：本文件 R1–R7 的“证据”行。
+
+**问题**：现有证据写为“（见本提交 SHA）”，不满足本文件要求的“证据：commit + 文档 § + 测试文件”。
+
+**必须修订**：将每一项替换为实际 commit SHA（R1–R6 对应已提交修订，R7 对应本次修订提交），并保留文档 § 与测试文件；不得保留占位文本。
+
 ## 完成标准
 
-1. R1–R6 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
+1. R1–R8 全部关闭，并在本文件每个标题下补一行“证据：实际 commit SHA + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 
@@ -105,4 +129,4 @@ git diff --check
 git status --short
 ```
 
-4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R6 的逐项证据。不得自行宣布 GO。
+4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R8 的逐项证据。不得自行宣布 GO。
