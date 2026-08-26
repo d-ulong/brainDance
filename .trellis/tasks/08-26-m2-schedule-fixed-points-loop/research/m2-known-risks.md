@@ -34,16 +34,22 @@
 | **缓解** | 事务内 cancel+regenerate；`occurrence_key` UNIQUE |
 | **测试** | 并发集成测试（可选 P2） |
 
-## 5. 过期：只读 effective vs 持久化（D4）
+## 5. 过期与迟完成（D4，对齐权威定义）
 
 | 项 | 说明 |
 | --- | --- |
-| **风险** | 误在 GET 中 UPDATE → 隐藏副作用、测试污染 |
-| **缓解** | `schedule-query.service` 只读；`expirePastPending` 仅维护/完成事务；AC-M2-F5/F6 集成测试 |
-| **产品语义** | 列表可见 expired，但库内可能仍 pending 直至维护或完成尝试 |
-| **延期** | Background 批量过期 Worker → **M3** |
+| **风险** | 误用「family_date < today」简化导致与 CONTEXT 冲突 |
+| **缓解** | `completion-window.ts`；窗口 = 计划日+1 日结束；F6/F15 测试 |
+| **迟完成** | 窗口内 +10；模板 `rewardsLateCompletion: true` |
 
-## 6. 表级幂等竞态（D5）
+## 6. maintain-horizon 误触发
+
+| 项 | 说明 |
+| --- | --- |
+| **风险** | GET 或 cron 隐式写库 |
+| **缓解** | 仅 POST maintain-horizon + 创建/编辑内联；F14、NF-4 |
+
+## 7. 表级幂等竞态（D5）
 
 | 项 | 说明 |
 | --- | --- |

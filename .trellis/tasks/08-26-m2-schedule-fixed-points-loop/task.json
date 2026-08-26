@@ -37,6 +37,6 @@
     "m1SignoffCommit": "feba95e",
     "mergeCommit": "8c35b11",
     "approvedDecisions": "D1-D8 2026-08-26",
-    "planRevision": "D4 read-only effective expired; D5 table-level idempotency per design §5.7"
+    "planRevision": "2026-08-26 review: create idempotency order, maintain-horizon, skip API, payload hash, time-policy reuse, late completion window, dual full E2E"
   }
 }

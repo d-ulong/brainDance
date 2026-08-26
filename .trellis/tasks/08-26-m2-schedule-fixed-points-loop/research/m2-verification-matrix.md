@@ -1,103 +1,74 @@
 # M2 验收矩阵
 
-> 规划阶段定义（2026-08-26 修订：D4 过期语义、D5 表级幂等）；实施后由 `research/m2-verification-evidence.md` 记录实测输出。
+> 2026-08-26 审阅修订：maintain-horizon、迟完成窗口、payload hash、skip API、双端完整 E2E。
 
 ## 1. 总览
 
-| 类别 | 条目数 | 门禁 |
-| --- | --- | --- |
-| 功能 AC | 8 | 全部必须 Pass |
-| 失败路径 AC | 13 | 全部必须 Pass |
-| 浏览器 E2E | 1 spec × 2 projects | desktop + mobile-360（**不含**跳过 UI） |
-| 静态检查 | 5 命令 | test/typecheck/lint/format/build |
-
-## 2. 功能验收矩阵
-
-| ID | 验收条件 | 测试方式 | Pass 标准 |
-| --- | --- | --- | --- |
-| AC-M2-1 | 家长创建「每天 20:00 完成作业」正式计划 | 集成 `formal-plan.test.ts` + E2E step 2 | 30 天 horizon；`family_date`/`scheduled_at` 正确 |
-| AC-M2-2 | occurrence_key 稳定不重复 | 集成 `schedule-generation.test.ts` | 重复生成 0 insert；UNIQUE 约束存在 |
-| AC-M2-3 | 完成事实不可覆盖 | 集成 `schedule-complete.test.ts` | fact_versions 追加；同键回放；异键 409 |
-| AC-M2-4 | 唯一可解释流水 +10 | 集成 + E2E step 5 | 1 settlement + 1 ledger（+10）；reason 含计划/实例 |
-| AC-M2-5 | 余额来自流水 | 集成 + E2E step 6 | balance = sum(ledger)；刷新一致 |
-| AC-M2-6 | 计划变更次日起生效 | 集成 `formal-plan.test.ts` | 当天实例不变；future 按新 version 重建 |
-| AC-M2-7 | 浏览器主路径 desktop + 360px | E2E `m2-schedule-points-flow.spec.ts` | 建计划→启规则→完成→积分；无横向滚动 |
-| AC-M2-8 | 审计与 outbox 同事务 | 集成 `schedule-outbox.test.ts` | audit + outbox pending；dedupe 唯一 |
-
-## 3. 失败路径矩阵
-
-| ID | 场景 | 测试方式 | Pass 标准 |
-| --- | --- | --- | --- |
-| AC-M2-F1 | 未授权创建/完成 | `schedule-auth.test.ts` | 403；无 DB 副作用 |
-| AC-M2-F2 | 停用计划 | `formal-plan.test.ts` | future pending → cancelled |
-| AC-M2-F3 | 已完成再完成（异键） | `schedule-complete.test.ts` | 409；ledger 仍 1 条 |
-| AC-M2-F4 | 结算幂等重试 | `settlement-ledger.test.ts` | 同 ledger 回放；balance 不变 |
-| AC-M2-F5 | GET 列表不写库 | `schedule-query.test.ts` | 多次 GET 后 DB status 未变 |
-| AC-M2-F6 | effective expired 只读 | `schedule-query.test.ts` | 响应 expired；DB 仍 pending |
-| AC-M2-F7 | 完成逾期日程 | `schedule-complete.test.ts` | 持久化 expired；409；无 ledger |
-| AC-M2-F8 | 维护事务批量 expired | `formal-plan.test.ts` | 创建/编辑后 past pending → expired |
-| AC-M2-F9 | 创建计划幂等 | `command-idempotency.test.ts` | 同 scope 同键 200；异 payload 409 |
-| AC-M2-F10 | 编辑/停用/启规则幂等 | `command-idempotency.test.ts` | 符合 design §5.7 表 |
-| AC-M2-F11 | 完成幂等 | `command-idempotency.test.ts` | 同 item+键 200；异键已完成 409 |
-| AC-M2-F12 | 同键不同 student 创建 | `command-idempotency.test.ts` | 两计划均成功 |
-| AC-M2-F13 | 同键跨命令类型 | `command-idempotency.test.ts` | create-plan + enable-rule 均成功 |
-
-## 4. 幂等约束验收（D5）
-
-| 命令 | 集成断言 |
+| 类别 | 条目数 |
 | --- | --- |
-| 创建正式计划 | `plans.create_idempotency_key` UNIQUE `(owner_id, student_id, key)` |
-| 编辑版本 | `plan_versions.create_idempotency_key` UNIQUE `(plan_id, key)` |
-| 停用 | `plans.deactivate_idempotency_key` UNIQUE `(id, key)` |
-| 完成 | `schedule_events` UNIQUE `(schedule_item_id, key)` |
-| 启用规则 | `point_rules.create_idempotency_key` UNIQUE `(creator_parent_id, student_id, key)` |
-| 无 command 表 | 迁移/schema 审查无 `command_idempotency` |
+| 功能 AC | 8 |
+| 失败路径 AC | 17（含 F9b、F14–F17） |
+| E2E | 1 spec × 2 projects（**各完整链路**） |
 
-## 5. 路线图验收示例（必须）
+## 2. 功能 AC
 
-**场景**：家长建立每天 20:00 完成作业的正式计划 → **启用规则** → 学生完成 → 只一条 +10 流水 → 刷新/重登/重复提交不重复记分。
-
-| 步骤 | 验证 | 映射 |
+| ID | 条件 | 测试 |
 | --- | --- | --- |
-| 建计划 | E2E + AC-M2-1 | D3 |
-| 启用规则 | E2E step 3 | D8 |
-| 学生完成 | E2E step 4 | AC-M2-3, D1 |
-| 一条 +10 流水 | E2E step 5 | AC-M2-4, D2 |
-| 刷新 | E2E step 6 | AC-M2-5 |
-| 重复提交 | E2E step 7 | AC-M2-F4 |
-| 重登 | E2E session 重建 | AC-M2-5 |
+| AC-M2-1 | 20:00 计划 + 30 天 horizon | formal-plan + maintain-horizon |
+| AC-M2-2 | occurrence_key UNIQUE | schedule-generation |
+| AC-M2-3 | fact_versions 含 idempotency_key | schedule-complete |
+| AC-M2-4 | 按时/迟完成（窗口内）各 +10 | settlement-ledger + E2E |
+| AC-M2-5 | 余额 = ledger 求和 | settlement + E2E |
+| AC-M2-6 | 编辑次日起生效 | formal-plan |
+| AC-M2-7 | **desktop + mobile-360 各完整链路** | m2-schedule-points-flow ×2 projects |
+| AC-M2-8 | audit + outbox | schedule-outbox |
 
-## 6. 非功能矩阵
+## 3. 失败路径 AC
 
-| ID | 条件 | 测试方式 |
+| ID | 场景 | 测试 |
 | --- | --- | --- |
-| NF-1 | M1 回归不破坏 | 全量 `pnpm test` ≥ 53 + 原 E2E 10 |
-| NF-2 | 360px 无横向滚动 | E2E mobile-360 |
-| NF-3 | 写操作 Idempotency-Key | Route 测试拒绝缺失键 |
-| NF-4 | GET 零写库 | AC-M2-F5 + code review |
-| NF-5 | 迁移 expand-only | 0008–0012 无 DROP M1；无 command 表 |
+| F1 | 未授权 | schedule-auth |
+| F2 | 停用 | formal-plan |
+| F3 | 已完成异键 complete | schedule-complete |
+| F4 | 结算幂等 | settlement-ledger |
+| F5 | GET 不写库 | schedule-query |
+| F6 | effective expired（计划日+1 结束） | schedule-query + completion-window unit |
+| F7 | 窗口外 complete | schedule-complete |
+| F8 | 维护事务 persist expired | formal-plan + maintain-horizon |
+| F9 | 创建同 key 回放 / 异 payload 409 | command-idempotency |
+| F9b | 有 active plan + 新 key 409；同 key 回放 200 | formal-plan（**幂等先于 active 检查**） |
+| F10 | 编辑/停用/启规则 hash | command-idempotency |
+| F11 | complete 同键回放 | command-idempotency |
+| F12 | 同 key 不同 student 创建 | command-idempotency |
+| F13 | 跨命令类型同 key 允许 | command-idempotency |
+| F14 | maintain-horizon 回放；GET 不触发 | maintain-horizon |
+| F15 | 迟完成 +10；窗口外无 ledger | schedule-complete + settlement |
+| F16 | complete/skip 同 key 409；complete 后 skip 异键 409 | schedule-skip |
+| F17 | skip 无 ledger；家长/学生可 skip | schedule-skip |
 
-## 7. 明确不验收（M2）
+## 4. 幂等约束（D5）
 
-| 项 | 原因 |
+| 命令 | UNIQUE | payload hash 表字段 |
+| --- | --- | --- |
+| 创建计划 | `(owner_id, student_id, create_idempotency_key)` | `plans.create_idempotency_payload_hash` |
+| 编辑版本 | `(plan_id, create_idempotency_key)` | `plan_versions.create_idempotency_payload_hash` |
+| 停用 | `(id, deactivate_idempotency_key)` | `plans.deactivate_idempotency_payload_hash` |
+| 完成/跳过 | `(schedule_item_id, idempotency_key)` | `schedule_events.idempotency_payload_hash` |
+| 启用规则 | `(creator_parent_id, student_id, create_idempotency_key)` | `point_rules.create_idempotency_payload_hash` |
+| 滚动维护 | `(student_id, actor_id, idempotency_key)` | `schedule_horizon_maintains.idempotency_payload_hash` |
+| fact | `(schedule_item_id, idempotency_key)` | `fact_versions.idempotency_payload_hash` |
+
+## 5. E2E（AC-M2-7）
+
+| Project | 步骤 |
 | --- | --- |
-| 跳过日程 UI | D6 |
-| goals 绑定 | D7 |
-| Outbox Worker | M3 |
-| 人工事实 / 冲销 | M3 |
-| 多家长 / Stroop / TOTP / 路径 B | 见 prd Out of Scope |
+| desktop-chromium | 1–7 完整 |
+| mobile-360 | 1–7 完整（360×800，无横向滚动） |
 
-## 8. 建议复验命令（实施后）
+## 6. 非功能
 
-```bash
-pnpm db:migrate
-pnpm test
-pnpm typecheck && pnpm lint && pnpm format && pnpm build
-pnpm test:e2e
-pnpm test:e2e
-git status --short
-```
-
-## 9. 签署模板
-
-实施后复制 M1 `reverification-signoff.md` 模式填写 GO/NO-GO。
+| ID | 条件 |
+| --- | --- |
+| NF-4 | GET 零写库 |
+| NF-5 | 无 command_log；迁移 0008–0013 |
+| NF-6 | time-policy 扩展于 `src/modules/time-policy/` |
