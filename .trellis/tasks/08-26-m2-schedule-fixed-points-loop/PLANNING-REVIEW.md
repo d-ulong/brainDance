@@ -4,6 +4,10 @@
 > **范围**：仅 `.trellis/tasks/08-26-m2-schedule-fixed-points-loop/`；**禁止**开始实现。
 > **勿改**：`.trellis/tasks/08-25-m1-*` 历史任务。
 
+> **Cursor 整改唯一来源**：当前存在阻断时，必须先阅读并仅按
+> [`research/cursor-remediation.md`](research/cursor-remediation.md) 的 R-ID 修订；
+> 旧 `planning-rereview-*.md` 仅保留审阅历史，不能作为整改范围依据。
+
 ## 审阅顺序（强制）
 
 1. `research/planning-signoff-checklist.md` — 逐项 PASS/FAIL（全部 PASS 方可 GO）
