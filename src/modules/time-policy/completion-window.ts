@@ -1,5 +1,5 @@
 import { addFamilyDays } from "@/modules/time-policy/add-family-days";
-import { familyTimezone } from "@/modules/time-policy/to-family-date";
+import { familyLocalInstant } from "@/modules/time-policy/family-local-instant";
 
 /**
  * Returns the inclusive end of the completion window in UTC.
@@ -26,17 +26,4 @@ export function isWithinCompletionWindow(familyDate: string, now: Date): boolean
  */
 export function isPastCompletionWindow(familyDate: string, now: Date): boolean {
   return now.getTime() > completionWindowEnd(familyDate).getTime();
-}
-
-function familyLocalInstant(familyDate: string, time: string): Date {
-  const offset = timezoneOffsetFor(familyTimezone());
-  return new Date(`${familyDate}T${time}${offset}`);
-}
-
-function timezoneOffsetFor(timeZone: string): string {
-  if (timeZone === "Asia/Shanghai") {
-    return "+08:00";
-  }
-
-  throw new Error(`Unsupported family timezone: ${timeZone}`);
 }

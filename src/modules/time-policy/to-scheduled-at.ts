@@ -1,4 +1,4 @@
-import { familyTimezone } from "@/modules/time-policy/to-family-date";
+import { familyLocalInstant } from "@/modules/time-policy/family-local-instant";
 
 const LOCAL_TIME_PATTERN = /^(\d{2}):(\d{2})(?::(\d{2}))?$/;
 
@@ -15,16 +15,5 @@ export function toScheduledAt(familyDate: string, localTime: string): Date {
   const minutes = match[2];
   const seconds = match[3] ?? "00";
 
-  const offset = timezoneOffsetFor(familyTimezone());
-  const iso = `${familyDate}T${hours}:${minutes}:${seconds}.000${offset}`;
-
-  return new Date(iso);
-}
-
-function timezoneOffsetFor(timeZone: string): string {
-  if (timeZone === "Asia/Shanghai") {
-    return "+08:00";
-  }
-
-  throw new Error(`Unsupported family timezone: ${timeZone}`);
+  return familyLocalInstant(familyDate, `${hours}:${minutes}:${seconds}.000`);
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { familyLocalInstant } from "@/modules/time-policy/family-local-instant";
 import { toScheduledAt } from "@/modules/time-policy/to-scheduled-at";
 
 describe("toScheduledAt", () => {
@@ -17,5 +18,11 @@ describe("toScheduledAt", () => {
 
   it("maps midnight family local time to the previous UTC day evening", () => {
     expect(toScheduledAt("2026-01-01", "00:00")).toEqual(new Date("2025-12-31T16:00:00.000Z"));
+  });
+
+  it("uses the shared familyLocalInstant conversion primitive", () => {
+    expect(toScheduledAt("2026-01-01", "20:00:30")).toEqual(
+      familyLocalInstant("2026-01-01", "20:00:30.000"),
+    );
   });
 });
