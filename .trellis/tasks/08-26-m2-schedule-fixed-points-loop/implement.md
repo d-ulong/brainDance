@@ -22,6 +22,8 @@
 
 ### 2.0 0008 `plans_and_versions.sql`
 
+0008 先按 `docs/data-model.md` §4 建立 `goals` 最小前置表（`id`、`student_id`、`creator_id`、`title`、`status`、`start_date`、`due_date`、`closed_at` 及 users FK），仅用于满足 `plans.goal_id` FK；M2 不写 goal、不实现 goal 业务。随后建立本节三张计划表。
+
 **`plans`**
 
 | 列 | 类型 | 约束 |
@@ -267,7 +269,7 @@
 
 | 序号 | 文件 | 要点 |
 | --- | --- | --- |
-| 0008 | `plans_and_versions.sql` | §2.0 三表 |
+| 0008 | `plans_and_versions.sql` | §2.0 goals 最小前置表 + 三张计划表 |
 | 0009 | `schedule_items_events.sql` | §2.0.1；status/event CHECK |
 | 0010 | `fact_versions.sql` | §2.0.2 |
 | 0011 | `points_templates_rules.sql` | §2.0.3 三表 + seed |

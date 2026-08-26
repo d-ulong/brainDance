@@ -60,7 +60,7 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 
 ### 4.1 表清单
 
-`plans`, `plan_versions`, `plan_schedule_slots`, `schedule_items`, `schedule_events`, `schedule_horizon_maintains`, `fact_versions`, `point_rule_templates`, `point_rules`, `point_rule_versions`, `settlements`, `point_ledger_entries`, `point_balance_projection`（无 `goals`）。
+M2 业务表为 `plans`, `plan_versions`, `plan_schedule_slots`, `schedule_items`, `schedule_events`, `schedule_horizon_maintains`, `fact_versions`, `point_rule_templates`, `point_rules`, `point_rule_versions`, `settlements`, `point_ledger_entries`, `point_balance_projection`。`goals` 仅作为 `plans.goal_id` FK 所需的最小前置表随 0008 建立；M2 不绑定 goal、不实现 goal 业务逻辑。
 
 ### 4.2 关键约束
 
