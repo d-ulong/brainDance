@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**NO-GO**。复审基线：`912bc7f...06a2aaf`（2026-08-26）。
+> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R6）。基线：`bce550a`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -21,7 +21,7 @@
 
 **验证**：`m2-schema-constraints.test.ts` 断言 `plans.current_version` 存在、`current_version_id` 不存在、FK 正确。
 
-**证据**：`682db06` + `design.md` §4.2/§5.1/§5.2 + `implement.md` §2.0/§2.0.6/§2.0.7 + `m2-schema-constraints.test.ts`
+**证据**：（见本提交 SHA） + `design.md` §4.2/§5.1/§5.2 + `implement.md` §2.0/§2.0.6/§2.0.7 + `m2-schema-constraints.test.ts`
 
 ## R2 — plan_versions 的版本唯一性
 
@@ -33,7 +33,7 @@
 
 **验证**：迁移测试插入同一 `plan_id + version` 第二行必须失败；不同 plan 的同 version 可成功。
 
-**证据**：`682db06` + `implement.md` §2.0 + `design.md` §4.2 + `m2-schema-constraints.test.ts`
+**证据**：（见本提交 SHA） + `implement.md` §2.0 + `design.md` §4.2 + `m2-schema-constraints.test.ts`
 
 ## R3 — schedule_events 的 skip reason
 
@@ -45,7 +45,7 @@
 
 **验证**：测试 skip 可持久化 reason；complete 带非 NULL reason 被拒绝（若采用 DB CHECK）；同键回放不覆盖既有 reason。
 
-**证据**：`682db06` + `design.md` §5.4b + `implement.md` §2.0.1 + `m2-schema-constraints.test.ts` + `schedule-skip.test.ts`
+**证据**：（见本提交 SHA） + `design.md` §5.4b + `implement.md` §2.0.1 + `m2-schema-constraints.test.ts` + `schedule-skip.test.ts`
 
 ## R4 — M2 缩窄范围与空值语义显式化
 
@@ -58,14 +58,11 @@
 3. M2 结算流水必须写 `source_type='settlement'` 且 `source_id=settlement_id`；`created_by=NULL` 表示系统写入。`reverses_entry_id=NULL` 是 M2 无冲销的明确约束。
 4. 已补的 `confirmed_*`、`supersedes_*`、`voided_at`、`priority`、`reverses_entry_id`、`created_by` 的 NULL 含义也须在对齐表中逐项说明，不得只列字段。
 
-**验证**：迁移测试逐项断言列、FK、NOT NULL/NULL 语义；结算集成测试断言 `source_id=settlement_id`。
+**必须修订（DDL 可执行）**：在 M2 ledger 迁移中增加 **CHECK** `source_type='settlement' AND source_id=settlement_id`；`source_id` **FK → settlements.id**（与 `settlement_id` 同指 settlement 行）。
 
-**复审结论（未关闭）**：`06a2aaf` 仅将 `source_id` 记为 NOT NULL，未形成可执行约束，故不能作为 R4 闭合证据。
+**验证**：迁移测试断言 CHECK 与 FK；负路径（错误 `source_type`、不匹配 `source_id`、无效 settlement FK）插入失败；M2 可空列接受 NULL；`settlement-ledger.test.ts` 断言正确结算流水成功。
 
-**追加必须修订**：在 M2 ledger DDL 中以可执行约束固定
-`source_type='settlement' AND source_id=settlement_id`；明确 `source_id` 是 FK → `settlements.id`（可复用 `settlement_id` 的同一 FK 目标，但必须可验证）。
-
-**追加验证**：`m2-schema-constraints.test.ts` 必须断言错误 `source_type`、不匹配 `source_id`、不存在的 settlement FK 均被拒绝；同时断言本 R 中批准为可空的字段接受 NULL。`settlement-ledger.test.ts` 断言正确结算流水成功。
+**证据**：（见本提交 SHA）+ `design.md` §4.2/§5.5 + `implement.md` §2.0.4/§2.0.7 + `m2-schema-constraints.test.ts` + `settlement-ledger.test.ts`
 
 ## R5 — C8：三条日程生成路径的字段验证
 
@@ -83,26 +80,23 @@
 
 同时保留 `horizon-through.test.ts` 与 F22 的日期上界断言；它们不能替代上述字段断言。
 
-**证据**：`682db06` + `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
+**证据**：（见本提交 SHA）+ `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + 三路径集成测试
 
 ## R6 — C8：生成器必须使用 version slot 快照时间
 
-**位置**：`design.md` §5.8A；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C8。
+**位置**：`design.md` §5.8A 步骤 0；`implement.md` §3/§4.2.4；`planning-signoff-checklist.md` C8。
 
 **问题**：`generateHorizonInline(plan, version, from, through, ...)` 使用未定义来源的 `localTime` 来构造 occurrence key 与 scheduled_at。创建、编辑和 maintain 因而无法证明使用的是传入 `version` 的 `plan_schedule_slots` 快照，违反每 version slot 快照语义。
 
-**必须修订**：二选一并保持三条路径一致：
+**必须修订**：helper **步骤 0** 按 `plan_version_id=version.id AND slot_key='default'` 查询唯一 slot，以其 `local_time` 生成；maintain 将 `plans.current_version` 解析为 version 对象后传入 helper。不得读取 `plans.current_version` 替代传入 version，也不得使用隐式/全局 localTime。
 
-1. helper 内按 `plan_version_id=version.id AND slot_key='default'` 查询唯一 slot，并以其 `local_time` 生成；或
-2. 将唯一 slot / `localTime` 作为 helper 显式参数，且三个调用者均按当前 `version` 的 slot 传入。
+**验证**：创建、编辑、maintain 三类测试均断言 `scheduled_at` 与 `occurrence_key` 使用该 `version` 的 slot `local_time`；编辑改时间后使用新版本时间。
 
-不得读取 `plans.current_version` 代替传入版本，也不得使用隐式/全局 localTime。
-
-**验证**：创建、编辑、maintain 三类测试均断言生成的 `scheduled_at` 与 `occurrence_key` 使用该 `version` 的 slot `local_time`；编辑时间后使用新版本时间，未编辑时间时复制的 slot 仍被使用。
+**证据**：（见本提交 SHA）+ `design.md` §5.8A + `implement.md` §4.2.4 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
 
 ## 完成标准
 
-1. R1–R6 全部关闭；R1–R3、R5 的既有证据须保留，R4/R6 仅在独立复审 PASS 后补“证据：commit + 文档 § + 测试文件”。
+1. R1–R6 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 

@@ -19,7 +19,7 @@
 | C5 | outbox 事件 + dedupe_key 表 | `design.md` §4.9 | F21 |
 | C6 | settlement_period = family_date | `design.md` §4.2、§5.5 | F4 |
 | C7 | ledger UNIQUE 仅 settlement_id | `design.md` §4.2、§5.5 | F25 |
-| C8 | generateHorizonInline + horizonThrough；**三路径** schedule_items 字段 | `design.md` §5.8A；`implement.md` §4.2.4 | `schedule-generation.test.ts` + `formal-plan.test.ts` + `maintain-horizon.test.ts`（字段）；`horizon-through.test.ts`（上界，补充） |
+| C8 | generateHorizonInline + horizonThrough；三路径 schedule_items 字段 **+ version slot 时间** | `design.md` §5.8A；`implement.md` §4.2.4 | 三路径集成测试 + `horizon-through.test.ts`（上界补充） |
 | C9 | balance UPSERT：`INSERT(balance)` + `EXCLUDED.balance`；仅 ledger RETURNING 后 | `design.md` §5.5；`implement.md` §2.0.4 | F25 |
 | C10 | F26 maintain 并发；F27 slot 快照 | `implement.md` §4.2.1；矩阵 §3 | F26/F27 |
 | C11 | maintain §5.8B：hash 回放 + INSERT 占位 + 冲突读取；no-op 仍 persistExpired | `design.md` §5.8B | F14/F26/F28 |

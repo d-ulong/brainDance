@@ -194,12 +194,13 @@
 | `student_id`, `settlement_id` | UUID | FK；NOT NULL（**已批准 M2 范围缩窄**：M2 仅写结算来源流水；M3 手工奖励/冲销恢复 `settlement_id` 可空） |
 | `amount` | int | NOT NULL（M2 固定 +10） |
 | `reason`, `source_type`, `explanation` | text | NOT NULL |
-| `source_id` | UUID | NOT NULL；M2 结算路径 **必须** `source_id = settlement_id`（`source_type='settlement'`） |
+| `source_id` | UUID | NOT NULL；**FK → settlements.id**（与 `settlement_id` 同指 settlement 行） |
 | `reverses_entry_id` | UUID | FK → point_ledger_entries；**NULL** = M2 无冲销（M3 冲销时指向原 ledger） |
 | `created_by` | UUID | FK → users；**NULL** = 系统写入（M3 人工流水填充操作者） |
 | `idempotency_key` | text | NOT NULL（审计；**非** UNIQUE scope） |
 
 | 约束 | UNIQUE `settlement_id` |
+| CHECK | `source_type = 'settlement' AND source_id = settlement_id` |
 
 **`point_balance_projection`**
 
@@ -239,7 +240,7 @@
 | `point_rules` | student_id, creator_parent_id, template_id, **active** | §2.0.3 | create idempotency；**无 status 列** |
 | `point_rule_versions` | version, parameters, effect, effective_at | §2.0.3 | **priority NULL** = M2 未用单规则优先级 |
 | `settlements` | settlement_period, result, explanation, idempotency_key | §2.0.4 | — |
-| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | **settlement_id NOT NULL**（M2 缩窄）；**source_id NOT NULL = settlement_id**；reverses_entry_id/created_by **NULL** = 无冲销/系统写入 |
+| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | **settlement_id NOT NULL**（M2 缩窄）；**source_id FK → settlements**；**CHECK** `source_type='settlement' AND source_id=settlement_id`；reverses_entry_id/created_by **NULL** = 无冲销/系统写入 |
 | `point_balance_projection` | balance, last_ledger_entry_id, updated_at | §2.0.4 | — |
 
 迁移约束测试须覆盖上表「必填列」存在性及 CHECK（§2.2.1）。
@@ -258,7 +259,7 @@
 | `point_rules` | §2.0.3 | `active` boolean；creator+student+key UNIQUE；`WHERE active` 部分 UNIQUE |
 | `point_rule_versions` | §2.0.3 | (point_rule_id, version) UNIQUE |
 | `settlements` | §2.0.4 | `(fact_version_id, rule_version_id, settlement_period)` UNIQUE |
-| `point_ledger_entries` | §2.0.4 | UNIQUE settlement_id；**source_id = settlement_id**；settlement_id NOT NULL（M2 缩窄）；**无**全局 idempotency UNIQUE |
+| `point_ledger_entries` | §2.0.4 | UNIQUE settlement_id；**CHECK** `source_type='settlement' AND source_id=settlement_id`；**source_id FK → settlements.id**；settlement_id NOT NULL（M2 缩窄）；**无**全局 idempotency UNIQUE |
 | `point_balance_projection` | §2.0.4 | PK student_id；UPSERT 仅随 ledger RETURNING |
 | `schedule_horizon_maintains` | §2.0.5 | `(student_id, actor_id, idempotency_key)` UNIQUE |
 
@@ -286,7 +287,9 @@
 | `schedule_events` from_status/to_status + **reason** 复合 CHECK（complete reason NULL；skip reason 可写） | §2.0.1；R3 |
 | **`fact_versions.schedule_item_id` NOT NULL**；confirmed/supersedes/voided NULL 列存在 | §2.0.2；R4 |
 | `point_rules` UNIQUE + `active` 部分 UNIQUE | §2.0.3 |
-| **`point_ledger_entries.settlement_id` NOT NULL**；`source_id` NOT NULL 列存在 | §2.0.4；R4 |
+| **`point_ledger_entries` CHECK + FK** | `source_type='settlement' AND source_id=settlement_id`；`source_id` FK → settlements；错误 source_type / 不匹配 source_id / 无效 FK 插入失败 | §2.0.4；R4 |
+| **`point_ledger_entries` M2 可空列** | `reverses_entry_id`、`created_by`、`fact_versions.confirmed_*`、`supersedes_*`、`voided_at`、`priority` 接受 NULL | §2.0.2–§2.0.4；R4 |
+| **`point_ledger_entries.settlement_id` NOT NULL**；`source_id` 列 + FK 存在 | §2.0.4；R4 |
 | `point_ledger_entries` UNIQUE settlement_id；无全局 idempotency UNIQUE | §2.0.4 |
 | `point_balance_projection` PK + last_ledger_entry_id + UPSERT | §2.0.4 |
 
@@ -314,7 +317,7 @@ src/modules/time-policy/
   completion-window.ts, derive-completion-kind.ts
 src/modules/schedule/
   plan.service.ts
-  generate-horizon-inline.service.ts
+  generate-horizon-inline.service.ts  # §5.8A；步骤 0 按 version.id 查 plan_schedule_slots.default
   maintain-horizon.service.ts
   schedule-query.service.ts
   persist-expired.service.ts     # §4.8；仅写事务；用 isPastCompletionWindow
@@ -416,7 +419,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | F28 | `maintain-horizon.test.ts` | 计划已结束 maintain → items_created=0 **且** pending→expired |
 | F28 | `plan-end-date.test.ts` | from>through no-op **且** pending→expired；同 key 回放 **不** persist |
 
-### 4.2.4 Cursor 整改映射（R1–R5，`cursor-remediation.md`）
+### 4.2.4 Cursor 整改映射（R1–R6，`cursor-remediation.md`）
 
 | R-ID | 测试文件 | 断言 |
 | --- | --- | --- |
@@ -424,12 +427,15 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | R2 | `m2-schema-constraints.test.ts` | 同 `plan_id + version` 第二行 INSERT 失败；异 plan 同 version 成功 |
 | R3 | `m2-schema-constraints.test.ts` | `schedule_events.reason` 列；复合 CHECK |
 | R3 | `schedule-skip.test.ts` | skip 可持久化 reason；同键回放不覆盖 reason |
-| R4 | `m2-schema-constraints.test.ts` | fact_versions.schedule_item_id NOT NULL；ledger settlement_id/source_id NOT NULL |
-| R4 | `settlement-ledger.test.ts` | 结算流水 `source_type='settlement'` 且 `source_id=settlement_id` |
-| R5 / C8 | `schedule-generation.test.ts` | 创建路径：`student_id=plan.student_id`、`owner_id=plan.owner_id`、`slot_key='default'`、`source='plan'` |
-| R5 / C8 | `formal-plan.test.ts` | 编辑路径：同上四字段 |
-| R5 / C8 | `maintain-horizon.test.ts` | maintain 路径：同上四字段 |
-| C8（补充） | `horizon-through.test.ts` | `horizonThrough(plan, now)` 上界（**不替代**上述字段断言） |
+| R4 | `m2-schema-constraints.test.ts` | fact_versions.schedule_item_id NOT NULL；ledger CHECK `source_type='settlement' AND source_id=settlement_id`；source_id FK → settlements；错误 source_type / 不匹配 source_id / 无效 FK 拒绝；M2 可空列接受 NULL |
+| R4 | `settlement-ledger.test.ts` | 正确结算流水 `source_type='settlement'` 且 `source_id=settlement_id` 成功 |
+| R5 / C8 | `schedule-generation.test.ts` | 创建路径：四字段 + **occurrence_key/scheduled_at 使用 v1 slot local_time** |
+| R5 / C8 | `formal-plan.test.ts` | 编辑路径：四字段；改 localTime 后新 version 使用新 slot 时间 |
+| R5 / C8 | `maintain-horizon.test.ts` | maintain 路径：四字段 + 使用 current version slot 时间 |
+| R6 | `schedule-generation.test.ts` | `generateHorizonInline` 从传入 version 的 `plan_schedule_slots` 取 local_time |
+| R6 | `formal-plan.test.ts` | 编辑 localTime 未变复制旧 slot 时间；变更后使用新 slot |
+| R6 | `maintain-horizon.test.ts` | maintain 传入 `plans.current_version` 对应 version，生成项使用该 version slot |
+| C8（补充） | `horizon-through.test.ts` | `horizonThrough(plan, now)` 上界（**不替代**字段/slot 断言） |
 | C8（补充） | `plan-end-date.test.ts` | F22 endDate 边界 + inline/maintain 生成范围 |
 | S-C4 | `write-route-idempotency-header.test.ts` | §3.1 七 Route 缺 header → 400 |
 
@@ -484,8 +490,10 @@ pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm te
 - [ ] `plans.current_version`（非 current_version_id）；v1 同事务 UPDATE
 - [ ] `plan_versions` UNIQUE `(plan_id, version)` 与幂等键并存
 - [ ] `schedule_events.reason`：skip 可写；complete 必 NULL（复合 CHECK）
-- [ ] M2 缩窄：fact_versions.schedule_item_id NOT NULL；ledger settlement_id/source_id NOT NULL；source_id=settlement_id
-- [ ] C8 三路径字段断言：schedule-generation / formal-plan / maintain-horizon
+- [ ] M2 缩窄：fact_versions.schedule_item_id NOT NULL；ledger settlement_id NOT NULL
+- [ ] ledger **CHECK** `source_type='settlement' AND source_id=settlement_id`；**source_id FK → settlements**
+- [ ] `generateHorizonInline` 步骤 0：按传入 `version.id` 查 `plan_schedule_slots.default`（禁止读 plans.current_version）
+- [ ] C8/R5 三路径字段断言；R6 三路径 slot 时间断言
 - [ ] maintain no-op（items_created=0）仍调用 persistExpiredPastWindow
 - [ ] `git diff --check` 通过
 

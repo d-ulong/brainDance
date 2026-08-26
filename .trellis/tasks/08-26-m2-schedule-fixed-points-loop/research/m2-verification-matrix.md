@@ -71,7 +71,8 @@
 | plans.current_version | FK → plan_versions.id（非 current_version_id）；v1 同事务 UPDATE |
 | plan_versions | UNIQUE `(plan_id, version)` 与幂等键并存 |
 | M2 缩窄 | fact_versions.schedule_item_id NOT NULL；ledger settlement_id/source_id NOT NULL |
-| ledger source | M2：`source_type='settlement'` 且 `source_id=settlement_id` |
+| ledger source | M2：CHECK `source_type='settlement' AND source_id=settlement_id`；source_id FK → settlements |
+| generateHorizonInline slot | 步骤 0 按传入 version 查 plan_schedule_slots.default；禁止读 plans.current_version |
 | plan_kind | 对齐 data-model；非 plan_type |
 | horizon_maintains | 仅独立 POST；内联不写 |
 | maintain body | 空；固定 30 天 |
@@ -145,5 +146,6 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | R1 | plans.current_version 统一 | implement §2.0/§2.0.6/§2.0.7；design §4.2/§5.1 | m2-schema-constraints.test.ts |
 | R2 | plan_versions UNIQUE (plan_id, version) | implement §2.0；design §4.2 | m2-schema-constraints.test.ts |
 | R3 | schedule_events.reason + 复合 CHECK | implement §2.0.1；design §5.4b | m2-schema-constraints + schedule-skip.test.ts |
-| R4 | M2 缩窄 NULL 语义 | design §4.2；implement §2.0.2/§2.0.4/§2.0.7 | m2-schema-constraints + settlement-ledger.test.ts |
+| R4 | M2 缩窄 + ledger CHECK/FK | design §4.2/§5.5；implement §2.0.4/§2.0.7 | m2-schema-constraints（含负路径）+ settlement-ledger |
 | R5 / C8 | 三路径 schedule_items 四字段 | design §5.8A；implement §4.2.4 | schedule-generation + formal-plan + maintain-horizon |
+| R6 | generateHorizonInline 使用 version slot 快照 | design §5.8A 步骤 0；implement §3 | 三路径集成测试（occurrence_key/scheduled_at vs slot local_time） |
