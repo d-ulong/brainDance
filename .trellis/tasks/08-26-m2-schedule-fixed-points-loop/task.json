@@ -1,0 +1,42 @@
+{
+  "id": "m2-schedule-fixed-points-loop",
+  "name": "m2-schedule-fixed-points-loop",
+  "title": "M2 计划与固定积分闭环",
+  "description": "M2 纵向切片：单正式计划、单时间点日程、系统完成事实、固定积分模板、唯一流水与余额投影。当前为规划阶段，未 start。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "m2-schedule-points",
+  "package": null,
+  "priority": "P1",
+  "creator": "wangyoulong",
+  "assignee": "wangyoulong",
+  "createdAt": "2026-08-26",
+  "completedAt": null,
+  "branch": "feat/m2-schedule-fixed-points-loop",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "CONTEXT.md",
+    "docs/data-model.md",
+    "docs/architecture.md",
+    "docs/product-scope.md",
+    "docs/user-flows.md",
+    "docs/implementation-roadmap.md",
+    ".trellis/tasks/08-25-m1-verification-remediation/research/reverification-signoff.md",
+    ".trellis/tasks/08-25-m1-verification-remediation/research/m1-deferrals.md"
+  ],
+  "notes": "Planning-only (rev 2026-08-26: D4 expiration, D5 table idempotency approved). Do not rewrite M1 historical tasks. Implementation blocked until owner approves prd + design + implement.",
+  "meta": {
+    "blocksOn": "owner approval of prd.md + design.md + implement.md",
+    "supersedesFrom": "docs/implementation-roadmap.md M2",
+    "m1SignoffCommit": "feba95e",
+    "mergeCommit": "8c35b11",
+    "approvedDecisions": "D1-D8 2026-08-26",
+    "planRevision": "D4 read-only effective expired; D5 table-level idempotency per design §5.7"
+  }
+}
