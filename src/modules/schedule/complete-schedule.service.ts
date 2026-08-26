@@ -124,6 +124,20 @@ export async function completeScheduleItem(
   const now = input.now ?? new Date();
   const bodyHash = hashIdempotencyPayload(input.body ?? {});
 
+  const [preflightItem] = await db
+    .select({ id: scheduleItems.id, studentId: scheduleItems.studentId })
+    .from(scheduleItems)
+    .where(eq(scheduleItems.id, input.scheduleItemId))
+    .limit(1);
+
+  if (!preflightItem) {
+    throw new ScheduleError("NOT_FOUND", "Schedule item not found");
+  }
+
+  if (preflightItem.studentId !== input.actorId) {
+    throw new ScheduleError("FORBIDDEN", "Only the student can complete schedule items");
+  }
+
   let expiredStudentId: string | null = null;
 
   try {
@@ -147,10 +161,6 @@ export async function completeScheduleItem(
           bodyHash,
         });
         return loadCompleteReplay(tx, input.scheduleItemId, input.idempotencyKey);
-      }
-
-      if (item.studentId !== input.actorId) {
-        throw new ScheduleError("FORBIDDEN", "Only the student can complete schedule items");
       }
 
       if (item.status !== "pending") {

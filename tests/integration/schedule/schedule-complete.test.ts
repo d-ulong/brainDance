@@ -186,7 +186,7 @@ describe.skipIf(!hasDb)("schedule complete", () => {
     expect(updated?.status).toBe("expired");
   });
 
-  it("rejects cross-actor same key (F20)", async () => {
+  it("rejects cross-actor same key with forbidden before replay leak (F20/P3-R05)", async () => {
     const { parentId, studentId, itemId } = await seedTodayItem();
 
     await completeScheduleItem(db, {
@@ -203,7 +203,7 @@ describe.skipIf(!hasDb)("schedule complete", () => {
         idempotencyKey: "complete-cross-actor",
         now: FIXED_NOW,
       }),
-    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    ).rejects.toMatchObject({ code: "FORBIDDEN" satisfies ScheduleError["code"] });
   });
 
   it("supports late completion within window (F15)", async () => {

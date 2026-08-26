@@ -24,6 +24,7 @@ import {
   resetScheduleTables,
 } from "../../helpers/schedule";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
+import { bootstrapVerifiedParentWithInvite } from "../../helpers/family-access";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -367,5 +368,192 @@ describe.skipIf(!hasDb)("formal plan", () => {
       .where(eq(planVersions.planId, created.planId));
 
     expect(versions).toHaveLength(2);
+  });
+
+  it("rejects edit by non-owner with existing key and same payload (P3-R01)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const { parentId: otherParentId } = await bootstrapVerifiedParentWithInvite(
+      db,
+      `other-edit-${crypto.randomUUID()}@test.local`,
+    );
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-owner-edit",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    const editBody = { title: "Owner edited" };
+    await editFormalPlan(db, {
+      ownerId: parentId,
+      planId: created.planId,
+      idempotencyKey: "edit-owner-key",
+      body: editBody,
+      now: FIXED_NOW,
+    });
+
+    await expect(
+      editFormalPlan(db, {
+        ownerId: otherParentId,
+        planId: created.planId,
+        idempotencyKey: "edit-owner-key",
+        body: editBody,
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const versions = await db
+      .select()
+      .from(planVersions)
+      .where(eq(planVersions.planId, created.planId));
+    expect(versions).toHaveLength(2);
+  });
+
+  it("rejects deactivate by non-owner with existing key (P3-R01)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const { parentId: otherParentId } = await bootstrapVerifiedParentWithInvite(
+      db,
+      `other-deactivate-${crypto.randomUUID()}@test.local`,
+    );
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-owner-deactivate",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    await deactivateFormalPlan(db, {
+      ownerId: parentId,
+      planId: created.planId,
+      idempotencyKey: "deactivate-owner-key",
+      now: FIXED_NOW,
+    });
+
+    await expect(
+      deactivateFormalPlan(db, {
+        ownerId: otherParentId,
+        planId: created.planId,
+        idempotencyKey: "deactivate-owner-key",
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const [plan] = await db.select().from(plans).where(eq(plans.id, created.planId)).limit(1);
+    expect(plan?.status).toBe("inactive");
+  });
+
+  it("concurrent edit same key replays with single version side effects (P3-R02)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-concurrent-edit",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    const editBody = { title: "Concurrent edit" };
+    const results = await Promise.all([
+      editFormalPlan(db, {
+        ownerId: parentId,
+        planId: created.planId,
+        idempotencyKey: "concurrent-edit-key",
+        body: editBody,
+        now: FIXED_NOW,
+      }),
+      editFormalPlan(db, {
+        ownerId: parentId,
+        planId: created.planId,
+        idempotencyKey: "concurrent-edit-key",
+        body: editBody,
+        now: FIXED_NOW,
+      }),
+    ]);
+
+    expect(results.every((result) => result.versionId === results[0]!.versionId)).toBe(true);
+    expect(results.filter((result) => result.idempotentReplay)).toHaveLength(1);
+
+    const versions = await db
+      .select()
+      .from(planVersions)
+      .where(eq(planVersions.planId, created.planId));
+    expect(versions).toHaveLength(2);
+
+    const versionOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "plan.version_created"));
+    expect(versionOutbox).toHaveLength(1);
+  });
+
+  it("concurrent deactivate same key replays with single side effects (P3-R02)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-concurrent-deactivate",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    const results = await Promise.all([
+      deactivateFormalPlan(db, {
+        ownerId: parentId,
+        planId: created.planId,
+        idempotencyKey: "concurrent-deactivate-key",
+        now: FIXED_NOW,
+      }),
+      deactivateFormalPlan(db, {
+        ownerId: parentId,
+        planId: created.planId,
+        idempotencyKey: "concurrent-deactivate-key",
+        now: FIXED_NOW,
+      }),
+    ]);
+
+    expect(results.every((result) => result.planId === created.planId)).toBe(true);
+    expect(results.filter((result) => result.idempotentReplay)).toHaveLength(1);
+
+    const deactivateOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "plan.deactivated"));
+    expect(deactivateOutbox).toHaveLength(1);
+  });
+
+  it("rejects edit same key with different payload (P3-R02)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-edit-conflict",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    await editFormalPlan(db, {
+      ownerId: parentId,
+      planId: created.planId,
+      idempotencyKey: "edit-conflict-key",
+      body: { title: "First" },
+      now: FIXED_NOW,
+    });
+
+    await expect(
+      editFormalPlan(db, {
+        ownerId: parentId,
+        planId: created.planId,
+        idempotencyKey: "edit-conflict-key",
+        body: { title: "Second" },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 });

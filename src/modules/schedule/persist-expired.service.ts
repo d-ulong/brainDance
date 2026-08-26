@@ -29,12 +29,19 @@ export async function persistExpiredPastWindow(
     return 0;
   }
 
-  await db
+  const updated = await db
     .update(scheduleItems)
     .set({ status: "expired" })
-    .where(inArray(scheduleItems.id, expiredIds));
+    .where(
+      and(
+        eq(scheduleItems.studentId, studentId),
+        eq(scheduleItems.status, "pending"),
+        inArray(scheduleItems.id, expiredIds),
+      ),
+    )
+    .returning({ id: scheduleItems.id });
 
-  return expiredIds.length;
+  return updated.length;
 }
 
 /**

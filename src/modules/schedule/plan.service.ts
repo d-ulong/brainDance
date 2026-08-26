@@ -129,6 +129,86 @@ async function loadPlanVersionSlotLocalTime(
   return slot?.localTime ?? null;
 }
 
+async function assertPlanOwner(db: Database, planId: string, ownerId: string): Promise<void> {
+  const [plan] = await db
+    .select({ ownerId: plans.ownerId })
+    .from(plans)
+    .where(eq(plans.id, planId))
+    .limit(1);
+
+  if (!plan) {
+    throw new ScheduleError("NOT_FOUND", "Plan not found");
+  }
+
+  if (plan.ownerId !== ownerId) {
+    throw new ScheduleError("FORBIDDEN", "Only the plan owner can manage this plan");
+  }
+}
+
+async function loadEditReplay(
+  db: Database,
+  planId: string,
+  version: typeof planVersions.$inferSelect,
+): Promise<EditFormalPlanResult> {
+  const localTime = await loadPlanVersionSlotLocalTime(db, version.id);
+  if (!localTime) {
+    throw new ScheduleError("SLOT_INVARIANT", "Plan version slot missing");
+  }
+
+  return {
+    planId,
+    versionId: version.id,
+    localTime,
+    itemsCreated: 0,
+    idempotentReplay: true,
+  };
+}
+
+async function findEditVersionReplay(
+  db: Database,
+  planId: string,
+  idempotencyKey: string,
+  bodyHash: string,
+): Promise<EditFormalPlanResult | "conflict" | null> {
+  const [existingVersion] = await db
+    .select()
+    .from(planVersions)
+    .where(
+      and(eq(planVersions.planId, planId), eq(planVersions.createIdempotencyKey, idempotencyKey)),
+    )
+    .limit(1);
+
+  if (!existingVersion) {
+    return null;
+  }
+
+  if (existingVersion.createIdempotencyPayloadHash !== bodyHash) {
+    return "conflict";
+  }
+
+  return loadEditReplay(db, planId, existingVersion);
+}
+
+function findDeactivateReplay(
+  plan: typeof plansTable.$inferSelect,
+  idempotencyKey: string,
+  bodyHash: string,
+): DeactivateFormalPlanResult | "conflict" | null {
+  if (plan.deactivateIdempotencyKey !== idempotencyKey) {
+    return null;
+  }
+
+  if (plan.deactivateIdempotencyPayloadHash !== bodyHash) {
+    return "conflict";
+  }
+
+  return {
+    planId: plan.id,
+    status: "inactive",
+    idempotentReplay: true,
+  };
+}
+
 async function loadCreateReplay(
   db: Database,
   plan: typeof plansTable.$inferSelect,
@@ -345,41 +425,33 @@ export async function editFormalPlan(
 ): Promise<EditFormalPlanResult> {
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.ownerId);
+  await assertPlanOwner(db, input.planId, input.ownerId);
 
   const bodyHash = hashIdempotencyPayload(input.body);
 
-  const [existingVersion] = await db
-    .select()
-    .from(planVersions)
-    .where(
-      and(
-        eq(planVersions.planId, input.planId),
-        eq(planVersions.createIdempotencyKey, input.idempotencyKey),
-      ),
-    )
-    .limit(1);
-
-  if (existingVersion) {
-    if (existingVersion.createIdempotencyPayloadHash !== bodyHash) {
-      throw new ScheduleError("IDEMPOTENCY_CONFLICT", "Edit plan idempotency payload mismatch");
-    }
-
-    const localTime = await loadPlanVersionSlotLocalTime(db, existingVersion.id);
-    if (!localTime) {
-      throw new ScheduleError("SLOT_INVARIANT", "Plan version slot missing");
-    }
-
-    return {
-      planId: input.planId,
-      versionId: existingVersion.id,
-      localTime,
-      itemsCreated: 0,
-      idempotentReplay: true,
-    };
+  const fastReplay = await findEditVersionReplay(db, input.planId, input.idempotencyKey, bodyHash);
+  if (fastReplay === "conflict") {
+    throw new ScheduleError("IDEMPOTENCY_CONFLICT", "Edit plan idempotency payload mismatch");
+  }
+  if (fastReplay) {
+    return fastReplay;
   }
 
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM plans WHERE id = ${input.planId} FOR UPDATE`);
+
+    const lockedReplay = await findEditVersionReplay(
+      tx,
+      input.planId,
+      input.idempotencyKey,
+      bodyHash,
+    );
+    if (lockedReplay === "conflict") {
+      throw new ScheduleError("IDEMPOTENCY_CONFLICT", "Edit plan idempotency payload mismatch");
+    }
+    if (lockedReplay) {
+      return lockedReplay;
+    }
 
     const [oldPlan] = await tx.select().from(plans).where(eq(plans.id, input.planId)).limit(1);
     if (!oldPlan) {
@@ -540,29 +612,21 @@ export async function deactivateFormalPlan(
 ): Promise<DeactivateFormalPlanResult> {
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.ownerId);
+  await assertPlanOwner(db, input.planId, input.ownerId);
 
   const bodyHash = hashIdempotencyPayload({});
 
-  const [existing] = await db
-    .select()
-    .from(plans)
-    .where(
-      and(eq(plans.id, input.planId), eq(plans.deactivateIdempotencyKey, input.idempotencyKey)),
-    )
-    .limit(1);
+  const [preflightPlan] = await db.select().from(plans).where(eq(plans.id, input.planId)).limit(1);
+  if (!preflightPlan) {
+    throw new ScheduleError("NOT_FOUND", "Plan not found");
+  }
 
-  if (existing) {
-    if (existing.deactivateIdempotencyPayloadHash !== bodyHash) {
-      throw new ScheduleError(
-        "IDEMPOTENCY_CONFLICT",
-        "Deactivate plan idempotency payload mismatch",
-      );
-    }
-    return {
-      planId: existing.id,
-      status: "inactive",
-      idempotentReplay: true,
-    };
+  const fastReplay = findDeactivateReplay(preflightPlan, input.idempotencyKey, bodyHash);
+  if (fastReplay === "conflict") {
+    throw new ScheduleError("IDEMPOTENCY_CONFLICT", "Deactivate plan idempotency payload mismatch");
+  }
+  if (fastReplay) {
+    return fastReplay;
   }
 
   return db.transaction(async (tx) => {
@@ -575,6 +639,18 @@ export async function deactivateFormalPlan(
     if (plan.ownerId !== input.ownerId) {
       throw new ScheduleError("FORBIDDEN", "Only the plan owner can deactivate");
     }
+
+    const lockedReplay = findDeactivateReplay(plan, input.idempotencyKey, bodyHash);
+    if (lockedReplay === "conflict") {
+      throw new ScheduleError(
+        "IDEMPOTENCY_CONFLICT",
+        "Deactivate plan idempotency payload mismatch",
+      );
+    }
+    if (lockedReplay) {
+      return lockedReplay;
+    }
+
     if (plan.status === "inactive") {
       throw new ScheduleError("STATE_CONFLICT", "Plan is already inactive");
     }

@@ -116,6 +116,18 @@ export async function skipScheduleItem(
   const bodyHash = hashIdempotencyPayload(body);
   const reason = body.reason ?? null;
 
+  const [preflightItem] = await db
+    .select()
+    .from(scheduleItems)
+    .where(eq(scheduleItems.id, input.scheduleItemId))
+    .limit(1);
+
+  if (!preflightItem) {
+    throw new ScheduleError("NOT_FOUND", "Schedule item not found");
+  }
+
+  await assertSkipAuthorization(db, input.actorId, preflightItem);
+
   let expiredStudentId: string | null = null;
 
   try {
@@ -140,8 +152,6 @@ export async function skipScheduleItem(
         });
         return loadSkipReplay(tx, input.scheduleItemId, input.idempotencyKey);
       }
-
-      await assertSkipAuthorization(tx, input.actorId, item);
 
       if (item.status !== "pending") {
         throw new ScheduleError("STATE_CONFLICT", "Schedule item is not pending");

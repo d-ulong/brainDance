@@ -6,6 +6,7 @@ import { factVersions, scheduleEvents } from "@/db/schema";
 import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
+import { ScheduleError } from "@/modules/schedule/errors";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
@@ -140,10 +141,14 @@ describe.skipIf(!hasDb)("schedule terminal concurrency", () => {
     ]);
 
     const fulfilled = results.filter((result) => result.status === "fulfilled");
-    const rejected = results.filter((result) => result.status === "rejected");
+    const rejected = results.filter(
+      (result) => result.status === "rejected",
+    ) as PromiseRejectedResult[];
 
     expect(fulfilled.length + rejected.length).toBe(2);
     expect(fulfilled.length).toBe(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0]!.reason as ScheduleError).code).toBe("IDEMPOTENCY_CONFLICT");
 
     const events = await db
       .select()
