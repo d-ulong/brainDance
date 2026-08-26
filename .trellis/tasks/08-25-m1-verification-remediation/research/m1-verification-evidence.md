@@ -81,11 +81,12 @@
 | `desktop/01-home-logged-out.png` | 1280×720 | 首页（未登录） |
 | `desktop/02-admin-invitations.png` | 1280×720 | 管理员邀请码 |
 | `desktop/03-student-training-reaction.png` | 1280×720 | 学生反应力训练 |
+| `desktop/04-parent-training-summary.png` | 1280×720 | 家长训练汇总（含 median 指标） |
 | `mobile-360/01-home-logged-out.png` | 360×800 | 首页（未登录） |
 | `mobile-360/02-student-training-reaction.png` | 360×800 | 学生训练 |
 | `mobile-360/03-parent-training-summary.png` | 360×800 | 家长训练汇总（含 median 指标） |
 
-桌面端家长汇总页由 E2E 断言 `parent-metric-median_reaction_ms` 可见性验证（与 mobile 截图同 API/UI 路径）。
+桌面端与 mobile 家长汇总页均通过 E2E 断言 `parent-metric-median_reaction_ms` 可见性验证；`desktop/04` 为可选捕获脚本补充截图。
 
 捕获脚本：`tests/e2e/m1-evidence-capture.spec.ts`（验收专用，非 CI 门禁）。
 
