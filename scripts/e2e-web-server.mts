@@ -1,37 +1,60 @@
 import { execSync, spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
 
 const port = process.env.PLAYWRIGHT_PORT ?? "3002";
+const nextBin = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 
 execSync("pnpm build", {
   stdio: "inherit",
   env: { ...process.env, NODE_ENV: "production" },
 });
 
-const serverEnv = { ...process.env, SESSION_SECRET: process.env.SESSION_SECRET };
+const serverEnv = { ...process.env, PLAYWRIGHT_PORT: port };
 delete serverEnv.NODE_ENV;
 
-const child: ChildProcess = spawn("pnpm", ["exec", "next", "start", "-p", port], {
+const child: ChildProcess = spawn(process.execPath, [nextBin, "start", "-p", port], {
   stdio: "inherit",
   env: serverEnv,
-  shell: true,
+  detached: process.platform !== "win32",
+  windowsHide: true,
 });
 
-function shutdown(signal: NodeJS.Signals) {
-  if (child.killed || child.exitCode !== null) {
+function killProcessTree(pid: number | undefined): void {
+  if (!pid || pid <= 0) {
     return;
   }
 
-  child.kill(signal);
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+      return;
+    }
+
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    // Process already exited.
+  }
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+let shuttingDown = false;
 
-child.on("exit", (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
+function shutdown(): void {
+  if (shuttingDown) {
     return;
   }
 
-  process.exit(code ?? 0);
+  shuttingDown = true;
+  killProcessTree(child.pid);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+process.on("exit", shutdown);
+
+child.on("exit", (code, signal) => {
+  if (signal && !shuttingDown) {
+    shutdown();
+  }
+
+  process.exit(code ?? (signal ? 1 : 0));
 });
