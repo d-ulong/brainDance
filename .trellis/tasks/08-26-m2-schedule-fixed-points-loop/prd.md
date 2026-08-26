@@ -5,7 +5,7 @@
 | 项 | 值 |
 | --- | --- |
 | 任务 ID | `m2-schedule-fixed-points-loop` |
-| 基线 | `main` @ `e6ece0f`（第五轮：occurrence_key/状态机/outbox/非 pending 语义） |
+| 基线 | `main` @ **（见 `PLANNING-REVIEW.md` 审阅 SHA）** — 第六轮 consolidated signoff 包 |
 | 前置 | M1 已签署（历史任务只读） |
 | 门禁 | 书面确认 prd + design + implement 后方可实现 |
 
@@ -113,5 +113,6 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 
 ## Notes
 
-- 设计细节：`design.md`；实施：`implement.md`；矩阵：`research/m2-verification-matrix.md`。
-- 复审报告：`research/planning-rereview-*.md`（首轮至 e6ece0f 各轮）。
+- 设计细节：`design.md`（含 §5.0 决策顺序、§11 Web UI）；实施：`implement.md`；矩阵：`research/m2-verification-matrix.md`。
+- 复审入口：`PLANNING-REVIEW.md`；逐项清单：`research/planning-signoff-checklist.md`。
+- 历史复审报告：`research/planning-rereview-*.md`（首轮至 e6ece0f 各轮）。

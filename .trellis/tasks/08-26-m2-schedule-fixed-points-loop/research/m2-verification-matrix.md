@@ -1,6 +1,6 @@
 # M2 验收矩阵
 
-> 2026-08-26 第五轮修订（闭合 `planning-rereview-e6ece0f.md` 缺口）。
+> 2026-08-26 第六轮 consolidated signoff（闭合 e6ece0f 后全部已知缺口 + 复审入口包）。
 
 ## 1. 总览
 
@@ -102,3 +102,7 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | e6ece0f #6 | settlement/ledger | design §5.5；F4 |
 | e6ece0f #7 | inline 算法 | design §5.8A；F19/F21 |
 | e6ece0f #8 | AC 映射内联 | design §10；prd 无见 design |
+| consolidated | §5.0 决策顺序 | design §5.0、§5.4/5.4b；checklist C9 |
+| consolidated | plan_schedule_slots | design §2/§4.2；implement 0008 |
+| consolidated | Web UI + maintain 按钮 | design §11；NF-7 |
+| consolidated | 复审入口 | `PLANNING-REVIEW.md`；`planning-signoff-checklist.md` |

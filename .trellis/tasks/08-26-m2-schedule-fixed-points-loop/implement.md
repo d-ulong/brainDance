@@ -6,7 +6,7 @@
 
 | 阶段 | 内容 | 验证 |
 | --- | --- | --- |
-| **0** | 规划复审 e6ece0f 缺口已闭合 | design §4.6–4.9、§5.4/5.8、§10 |
+| **0** | 规划复审 consolidated signoff 包已闭合 | `PLANNING-REVIEW.md`；design §4.6–§5.0/§11；checklist A–E |
 | **1** | 迁移 0008–0013 | `pnpm db:migrate` |
 | **2** | 扩展 `src/modules/time-policy/` | `tests/unit/time-policy/` |
 | **3** | Schedule：CRUD、inline horizon、maintain-horizon、complete/skip | 集成测试 |
@@ -20,7 +20,7 @@
 
 | 序号 | 文件 | 要点 |
 | --- | --- | --- |
-| 0008 | `plans_and_versions.sql` | plans: create/deactivate key+hash；plan_versions: create key+hash |
+| 0008 | `plans_and_versions.sql` | plans: create/deactivate key+hash；plan_versions: create key+hash；**plan_schedule_slots** `(plan_version_id, slot_key)` UNIQUE |
 | 0009 | `schedule_items_events.sql` | completion_kind NOT NULL（complete）；UNIQUE (schedule_item_id, idempotency_key) |
 | 0010 | `fact_versions.sql` | idempotency_key, idempotency_payload_hash, completion_kind, occurred_at |
 | 0011 | `points_templates_rules.sql` | schedule_system_complete_v1 模板；point_rules key+hash |

@@ -37,6 +37,6 @@
     "m1SignoffCommit": "feba95e",
     "mergeCommit": "8c35b11",
     "approvedDecisions": "D1-D8 2026-08-26",
-    "planRevision": "2026-08-26 rereview e6ece0f: occurrence_key, state machine, outbox, non-pending replay"
+    "planRevision": "2026-08-26 consolidated signoff: §5.0, plan_schedule_slots, Web UI, PLANNING-REVIEW.md"
   }
 }

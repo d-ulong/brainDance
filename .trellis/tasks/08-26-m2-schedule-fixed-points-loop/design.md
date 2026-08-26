@@ -10,10 +10,17 @@
 
 ## 2. 领域边界
 
+```text
+Formal Plan → Plan Version → plan_schedule_slots → Schedule Items → Complete/Skip Event
+      → Fact Version → Settlement → Ledger → Balance Projection
+Point Template → Point Rule (per student, 独立启用)
+```
+
 | 实体 | 谁可写 | 谁可读 | 不变量 |
 | --- | --- | --- | --- |
 | `plans` | owner 家长 | 关联家长、学生 | ≤1 active formal / student |
 | `plan_versions` | 计划命令 | 同上 | 只追加；`effective_from` 为编辑后+1 家庭日 |
+| `plan_schedule_slots` | 创建/编辑计划 | 同上 | `(plan_version_id, slot_key)` UNIQUE；M2 单槽 `default` |
 | `schedule_items` | Schedule Module | 关联家长、学生 | `occurrence_key` UNIQUE；状态机单向 |
 | `schedule_events` | complete/skip | 同上 | 资源级 UNIQUE `(schedule_item_id, idempotency_key)`；跨 actor 同 key → 409 |
 | `fact_versions` | complete 命令 | 同上 | 只追加；含 `idempotency_key`、`completion_kind` |
@@ -62,6 +69,7 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 | `plans` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(owner_id, student_id, create_idempotency_key)`；部分 UNIQUE active formal |
 | `plans` | `deactivate_idempotency_key`, `deactivate_idempotency_payload_hash` | UNIQUE `(id, deactivate_idempotency_key)` |
 | `plan_versions` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(plan_id, create_idempotency_key)` |
+| `plan_schedule_slots` | `slot_key`, `local_time` | UNIQUE `(plan_version_id, slot_key)`；M2 固定 `default` + `20:00` |
 | `schedule_events` | `event_type`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | UNIQUE `(schedule_item_id, idempotency_key)` **不含 event_type** |
 | `fact_versions` | `idempotency_key`, `idempotency_payload_hash`, `completion_kind`, `occurred_at` | UNIQUE `(schedule_item_id, idempotency_key)` |
 | `schedule_horizon_maintains` | `idempotency_key`, `idempotency_payload_hash`, `actor_id` | UNIQUE `(student_id, actor_id, idempotency_key)` |
@@ -114,11 +122,11 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 ### 4.6 occurrence_key（冻结）
 
 ```text
-occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:{slot_key}"
+occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}"
 ```
 
 - `family_date`：`YYYY-MM-DD`（Asia/Shanghai 日历日）
-- `slot_key`：M2 单时间点计划固定为 `daily:{localTime}`（如 `daily:20:00`）
+- `localTime`：来自当前 `plan_version` 的 `plan_schedule_slots`（M2 单槽 `default`）
 - 生成：`generateHorizonInline` / 独立 maintain 均 `INSERT … ON CONFLICT (occurrence_key) DO NOTHING`
 
 ### 4.7 schedule_items 状态机
@@ -163,6 +171,25 @@ audit `action` 示例：`formal_plan.created`、`schedule_item.completed`、`poi
 
 **create 回放**：不得第二次写入 `plan.created` outbox（F21）。
 
+### 5.0 日程事件决策顺序（complete / skip 共用）
+
+```text
+1. 鉴权（complete=学生；skip=学生或关联家长）
+2. bodyHash = normalizeIdempotencyPayload(body)
+3. existing = SELECT schedule_events WHERE (schedule_item_id, idempotency_key)
+   IF existing:
+     IF existing.actor_id != 当前 actor OR existing.idempotency_payload_hash != bodyHash
+        OR (complete 且 existing.event_type != 'complete')
+        OR (skip 且 existing.event_type != 'skip') → 409
+     ELSE → 200 回放（complete 含 fact/settlement/ledger；skip 含 skip event）
+4. item = SELECT schedule_items FOR UPDATE
+   IF item.status != 'pending' → 409
+5. IF isPastCompletionWindow(item.family_date, now) → persistExpiredPastWindow → 409
+6. 执行写入（complete §5.4 步骤 6–11；skip §5.4b 步骤 6–8）
+```
+
+`normalizeIdempotencyPayload`：稳定 JSON 键序、剔除 Idempotency-Key 头；实现于 `src/modules/schedule/normalize-idempotency-payload.ts`。
+
 ### 5.1 创建正式计划
 
 ```text
@@ -177,7 +204,7 @@ Body: { title, description?, localTime: "20:00", startDate, endDate? }
      → 命中且 hash 一致: **200 回放**（**跳过 4–8**；不二次维护、不重复 audit/outbox）
      → 命中且 hash 不一致: 409
   4. 仅未命中：assert 无其他 active formal plan
-  5. INSERT plans + plan_versions v1
+  5. INSERT plans + plan_versions v1 + plan_schedule_slots(version, slot_key='default', local_time)
   6. generateHorizonInline(plan, version=v1, from=max(startDate, today), through=today+30d)
   7. persistExpiredPastWindow(student_id)
   8. audit + outbox(plan.created) — **不含** schedule.horizon_maintained
@@ -195,7 +222,7 @@ Body: { title?, description?, localTime?, endDate? }
   3. SELECT plan_versions WHERE (plan_id, create_idempotency_key)
      → 命中且 hash 一致: **200 回放**该 version（跳过 4–8；不二次 inline horizon/outbox）
      → 命中且 hash 不一致: 409
-  4. INSERT plan_versions vN+1, effective_from = nextFamilyDate(now)
+  4. INSERT plan_versions vN+1 + plan_schedule_slots（若 localTime 变更）
   5. cancel future pending（旧 version，family_date >= effective_from）
   6. generateHorizonInline(
        plan, version=vN+1,
@@ -206,6 +233,8 @@ Body: { title?, description?, localTime?, endDate? }
   7. persistExpiredPastWindow(student_id)
   8. audit + outbox(plan.version_created) — **不含** horizon_maintained
 ```
+
+（步骤 4 同时设置 `effective_from = nextFamilyDate(now)`。）
 
 **禁止**：从「含已取消实例的全表 max(future family_date)」起算；那会导致新版本 0 实例。
 
@@ -234,24 +263,16 @@ Headers: Idempotency-Key
 POST /api/schedule-items/:itemId/complete
 Headers: Idempotency-Key
 
-  1. assert student owns item（via family relationship）
-  2. 规范化 body（空对象）→ hash；幂等查 schedule_events (schedule_item_id, key) — §4.3
-  3. 若 status 非 pending：同键且已有 complete → **200 回放**；异键或已有 skip → **409**
-  4. pending + 窗口外 → persistExpired → **409**
-  5. pending + 窗口内 → deriveCompletionKind → on_time | late
-  6. INSERT schedule_events (event_type=complete, actor_id=student, completion_kind, occurred_at=now)
-  7. UPDATE schedule_items.status = completed
-  8. INSERT fact_versions (
-       student_id, schedule_item_id, fact_key='schedule.completed',
-       source_kind='system', value={ completion_kind },
-       occurred_at, asserted_at=now, recorded_at=now,
-       idempotency_key, idempotency_payload_hash, completion_kind
-     )
-  9. settlementService.settleForFact — §5.5
- 10. audit + outbox(schedule.completed, points.settled)
+步骤 1–5：§5.0 共用决策
+6. kind = deriveCompletionKind(now, item.family_date)
+7. INSERT schedule_events (complete, actor_id=student, completion_kind=kind, occurred_at=now, bodyHash)
+8. UPDATE schedule_items.status = completed
+9. INSERT fact_versions (student_id, schedule_item_id, fact_key='schedule.completed',
+     source_kind='system', value={ completion_kind: kind }, occurred_at, asserted_at, recorded_at,
+     idempotency_key, idempotency_payload_hash=bodyHash, completion_kind=kind)
+10. settlementService.settleForFact — §5.5
+11. audit + outbox(schedule.completed, points.settled)
 ```
-
-幂等查（步骤 2）细则：同 item+key 且 hash/actor 一致 → 回放；异 payload / 异 actor / 异 event_type → 409。
 
 ### 5.4b 跳过日程
 
@@ -260,16 +281,12 @@ POST /api/schedule-items/:itemId/skip
 Headers: Idempotency-Key
 Body: { reason? }
 
-  1. assert actor = 关联学生本人 **或** 已关联家长
-  2. 规范化 body → hash；幂等查 schedule_events — §4.3
-  3. 若 status 非 pending：同键且已有 skip → **200 回放**；异键或已有 complete → **409**
-  4. pending + 窗口外 → persistExpired → **409**（不得 skipped）
-  5. pending + 窗口内 → INSERT skip event (event_type=skip, actor_id, completion_kind=NULL, reason?)
-  6. UPDATE schedule_items.status = skipped
-  7. **无** fact_versions、settlement、ledger
-  8. audit + outbox(schedule.skipped)
+步骤 1–5：§5.0 共用决策
+6. INSERT schedule_events (skip, actor_id, completion_kind=NULL, reason?, bodyHash)
+7. UPDATE schedule_items.status = skipped
+8. audit + outbox(schedule.skipped) — 无 fact/settlement/ledger
 
-状态竞争：complete 与 skip 互斥；先完成者胜出；后到的异键 → 409；同 key 跨动作 → 409。
+状态竞争：complete 与 skip 互斥；先写入者胜出；后到的异键 → 409；同 key 跨动作 → 409（§5.0 步骤 3）。
 ```
 
 ### 5.5 同步结算（D1 inline）
@@ -466,7 +483,16 @@ function effectiveStatus(item, now): Status {
 
 ## 9. 已批准决策
 
-D1 inline 结算 | D2 +10 含 late | D3 30 天 + 显式 maintain 按钮 | D4 窗口对齐 CONTEXT | D5 表级 hash | D6 skip API only | D7 无 goal | D8 启规则独立
+| # | 决策 | 内容 |
+| --- | --- | --- |
+| D1 | 结算 | inline 同事务 fact→settlement→ledger→balance→audit→outbox |
+| D2 | 积分 | +10/次；late 同 on_time（`rewardsLateCompletion: true`） |
+| D3 | Horizon | 固定 30 天；内联 + 显式 maintain 按钮 |
+| D4 | 过期 | GET 只读 effectiveStatus；persist 仅写事务 |
+| D5 | 幂等 | 表级 key+hash；无 command_log |
+| D6 | Skip | 仅 API + 集成测试 |
+| D7 | Goal | M2 不绑 goal |
+| D8 | 启规则 | 独立步骤（E2E 步骤 3） |
 
 ## 10. 测试策略与 AC 映射
 
@@ -494,4 +520,16 @@ D1 inline 结算 | D2 +10 含 late | D3 30 天 + 显式 maintain 按钮 | D4 窗
 | F16–F18, F20 | `schedule-skip.test.ts` |
 | F9–F13, F20 | `command-idempotency.test.ts` |
 
-实施顺序见 `implement.md` §4。
+## 11. Web UI（M2）
+
+| 路径 | 角色 | 行为 |
+| --- | --- | --- |
+| `/parent/students/[id]/plan` | 家长 | 计划 CRUD；**「补齐日程」按钮** → POST maintain-horizon；**禁止** mount 自动 POST |
+| `/student/schedule` | 学生 | 日程列表；完成按钮 → POST complete |
+| 首页/积分卡片 | 双方 | 展示余额与今日 20:00 任务（可嵌入现有 shell） |
+
+Skip **无 UI**。360×800 无横向滚动（NF-2）。
+
+## 12. 规划复审
+
+审阅入口：`PLANNING-REVIEW.md`；逐项清单：`research/planning-signoff-checklist.md`。
