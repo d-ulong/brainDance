@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { scheduleItems } from "@/db/schema";
+import { factVersions, scheduleEvents, scheduleItems } from "@/db/schema";
 import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
@@ -19,6 +19,19 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
+
+/** Deterministic barrier: `opened` resolves when the gate opens; `released` resolves when release() is called. */
+function createGate<T>() {
+  let open!: (value: T) => void;
+  let release!: () => void;
+  const opened = new Promise<T>((resolve) => {
+    open = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { opened, released, open, release };
+}
 
 describe.skipIf(!hasDb)("persist expired past window", () => {
   const db = getTestDb();
@@ -144,13 +157,13 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
     expect(otherStudentPending.every((item) => item.status === "pending")).toBe(true);
   });
 
-  it("does not overwrite item completed during persist window (P3-R03 race)", async () => {
+  it("does not overwrite item completed during persist SELECT→UPDATE race (P3-R2-01)", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
 
     const created = await createFormalPlan(db, {
       ownerId: parentId,
       studentId,
-      idempotencyKey: "persist-race",
+      idempotencyKey: "persist-race-complete",
       body: { ...DEFAULT_PLAN_BODY, startDate: "2026-01-15" },
       now: FIXED_NOW,
     });
@@ -161,41 +174,71 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
         scheduled_at, status, source, occurrence_key
       ) VALUES (
         '${created.planId}', '${created.versionId}', '${studentId}', '${parentId}',
-        '2026-01-14', 'default', '2026-01-14T12:00:00Z', 'pending', 'plan', 'persist-race-late'
+        '2026-01-13', 'default', '2026-01-13T12:00:00Z', 'pending', 'plan', 'persist-race-complete'
       )
     `);
 
-    const [lateItem] = await db
+    const [raceItem] = await db
       .select()
       .from(scheduleItems)
-      .where(eq(scheduleItems.occurrenceKey, "persist-race-late"))
+      .where(eq(scheduleItems.occurrenceKey, "persist-race-complete"))
       .limit(1);
 
-    const lateNow = new Date("2026-01-15T08:00:00.000Z");
+    const selectGate = createGate<string[]>();
+    const resumeGate = createGate<void>();
+
+    const persistPromise = db.transaction(async (tx) =>
+      persistExpiredPastWindow(tx, studentId, FIXED_NOW, {
+        testHooks: {
+          afterSelectCandidates: async (expiredIds) => {
+            selectGate.open(expiredIds);
+            await resumeGate.released;
+          },
+        },
+      }),
+    );
+
+    const selectedIds = await selectGate.opened;
+    expect(selectedIds).toContain(raceItem!.id);
+
+    const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
     await completeScheduleItem(db, {
       actorId: studentId,
-      scheduleItemId: lateItem!.id,
-      idempotencyKey: "persist-race-complete",
-      now: lateNow,
+      scheduleItemId: raceItem!.id,
+      idempotencyKey: "persist-race-complete-cmd",
+      now: withinWindowNow,
     });
 
-    await persistExpiredPastWindow(db, studentId, FIXED_NOW);
+    resumeGate.release();
+    await persistPromise;
 
     const [updated] = await db
       .select()
       .from(scheduleItems)
-      .where(eq(scheduleItems.occurrenceKey, "persist-race-late"))
+      .where(eq(scheduleItems.id, raceItem!.id))
       .limit(1);
     expect(updated?.status).toBe("completed");
+
+    const events = await db
+      .select()
+      .from(scheduleEvents)
+      .where(eq(scheduleEvents.scheduleItemId, raceItem!.id));
+    expect(events).toHaveLength(1);
+
+    const facts = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.scheduleItemId, raceItem!.id));
+    expect(facts).toHaveLength(1);
   });
 
-  it("expires eligible pending without touching skip terminal status (P3-R03)", async () => {
+  it("does not overwrite item skipped during persist SELECT→UPDATE race (P3-R2-01)", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
 
     const created = await createFormalPlan(db, {
       ownerId: parentId,
       studentId,
-      idempotencyKey: "persist-skip-terminal",
+      idempotencyKey: "persist-race-skip",
       body: { ...DEFAULT_PLAN_BODY, startDate: "2026-01-15" },
       now: FIXED_NOW,
     });
@@ -206,39 +249,55 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
         scheduled_at, status, source, occurrence_key
       ) VALUES (
         '${created.planId}', '${created.versionId}', '${studentId}', '${parentId}',
-        '2026-01-01', 'default', '2026-01-01T12:00:00Z', 'pending', 'plan', 'persist-skip-pending'
+        '2026-01-13', 'default', '2026-01-13T12:00:00Z', 'pending', 'plan', 'persist-race-skip'
       )
     `);
 
-    const [todayItem] = await db
+    const [raceItem] = await db
       .select()
       .from(scheduleItems)
-      .where(
-        and(eq(scheduleItems.studentId, studentId), eq(scheduleItems.familyDate, "2026-01-15")),
-      )
+      .where(eq(scheduleItems.occurrenceKey, "persist-race-skip"))
       .limit(1);
 
+    const selectGate = createGate<string[]>();
+    const resumeGate = createGate<void>();
+
+    const persistPromise = db.transaction(async (tx) =>
+      persistExpiredPastWindow(tx, studentId, FIXED_NOW, {
+        testHooks: {
+          afterSelectCandidates: async (expiredIds) => {
+            selectGate.open(expiredIds);
+            await resumeGate.released;
+          },
+        },
+      }),
+    );
+
+    const selectedIds = await selectGate.opened;
+    expect(selectedIds).toContain(raceItem!.id);
+
+    const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
     await skipScheduleItem(db, {
       actorId: studentId,
-      scheduleItemId: todayItem!.id,
-      idempotencyKey: "persist-skip-today",
-      now: FIXED_NOW,
+      scheduleItemId: raceItem!.id,
+      idempotencyKey: "persist-race-skip-cmd",
+      now: withinWindowNow,
     });
 
-    await persistExpiredPastWindow(db, studentId, FIXED_NOW);
+    resumeGate.release();
+    await persistPromise;
 
-    const [skippedToday] = await db
+    const [updated] = await db
       .select()
       .from(scheduleItems)
-      .where(eq(scheduleItems.id, todayItem!.id))
+      .where(eq(scheduleItems.id, raceItem!.id))
       .limit(1);
-    expect(skippedToday?.status).toBe("skipped");
+    expect(updated?.status).toBe("skipped");
 
-    const [expiredPending] = await db
+    const events = await db
       .select()
-      .from(scheduleItems)
-      .where(eq(scheduleItems.occurrenceKey, "persist-skip-pending"))
-      .limit(1);
-    expect(expiredPending?.status).toBe("expired");
+      .from(scheduleEvents)
+      .where(eq(scheduleEvents.scheduleItemId, raceItem!.id));
+    expect(events).toHaveLength(1);
   });
 });

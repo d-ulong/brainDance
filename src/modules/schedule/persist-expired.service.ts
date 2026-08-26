@@ -4,6 +4,13 @@ import type { Database } from "@/db";
 import { scheduleItems } from "@/db/schema";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
 
+/** Test-only seam; production callers must omit. */
+export type PersistExpiredOptions = {
+  testHooks?: {
+    afterSelectCandidates?: (expiredIds: string[]) => void | Promise<void>;
+  };
+};
+
 /**
  * Persists expired status for pending items past the completion window.
  * Must only be called inside write transactions.
@@ -12,6 +19,7 @@ export async function persistExpiredPastWindow(
   db: Database,
   studentId: string,
   now: Date,
+  options?: PersistExpiredOptions,
 ): Promise<number> {
   const pending = await db
     .select({
@@ -27,6 +35,10 @@ export async function persistExpiredPastWindow(
 
   if (expiredIds.length === 0) {
     return 0;
+  }
+
+  if (options?.testHooks?.afterSelectCandidates) {
+    await options.testHooks.afterSelectCandidates(expiredIds);
   }
 
   const updated = await db

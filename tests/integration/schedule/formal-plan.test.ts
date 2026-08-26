@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -489,6 +489,24 @@ describe.skipIf(!hasDb)("formal plan", () => {
       .from(outboxEvents)
       .where(eq(outboxEvents.eventType, "plan.version_created"));
     expect(versionOutbox).toHaveLength(1);
+
+    const editAudit = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.action, "formal_plan.version_created"),
+          eq(auditEvents.resourceType, "plan_version"),
+        ),
+      );
+    expect(editAudit).toHaveLength(1);
+
+    const [slot] = await db
+      .select()
+      .from(planScheduleSlots)
+      .where(eq(planScheduleSlots.planVersionId, results[0]!.versionId))
+      .limit(1);
+    expect(slot).toBeDefined();
   });
 
   it("concurrent deactivate same key replays with single side effects (P3-R02)", async () => {
@@ -519,6 +537,30 @@ describe.skipIf(!hasDb)("formal plan", () => {
 
     expect(results.every((result) => result.planId === created.planId)).toBe(true);
     expect(results.filter((result) => result.idempotentReplay)).toHaveLength(1);
+
+    const [plan] = await db.select().from(plans).where(eq(plans.id, created.planId)).limit(1);
+    expect(plan?.status).toBe("inactive");
+
+    const futureItems = await db
+      .select()
+      .from(scheduleItems)
+      .where(
+        and(eq(scheduleItems.planId, created.planId), gte(scheduleItems.familyDate, "2026-01-15")),
+      );
+    expect(futureItems.length).toBeGreaterThan(0);
+    expect(futureItems.every((item) => item.status === "cancelled")).toBe(true);
+
+    const deactivateAudit = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.action, "formal_plan.deactivated"),
+          eq(auditEvents.resourceType, "plan"),
+          eq(auditEvents.resourceId, created.planId),
+        ),
+      );
+    expect(deactivateAudit).toHaveLength(1);
 
     const deactivateOutbox = await db
       .select()
