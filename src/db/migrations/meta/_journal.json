@@ -57,6 +57,48 @@
       "when": 1787671200000,
       "tag": "0007_controlled_student_password",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787674800000,
+      "tag": "0008_plans_and_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787678400000,
+      "tag": "0009_schedule_items_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787682000000,
+      "tag": "0010_fact_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787685600000,
+      "tag": "0011_points_templates_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787689200000,
+      "tag": "0012_settlements_ledger_balance",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787692800000,
+      "tag": "0013_schedule_horizon_maintains",
+      "breakpoints": true
     }
   ]
 }
