@@ -133,3 +133,5 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | a55541a C12 | §5.2 无条件 slot | design §5.2；F27 |
 | 8003694 标准 C4 | 迁移 data-model 对齐 §2.0.7；from_status/to_status | implement §2.0.7；design §4.2 |
 | 8003694 规格 C11 | maintain no-op 仍 persistExpired | design §5.8B 步骤 5；F28 |
+| fb5f05c 标准 C4 | generateHorizonInline + fact_versions 全列 | design §5.8A；implement §2.0.2 |
+| fb5f05c 规格 F28 | 回放不 persist；no-op 仍 persist | design §5.8B 2/4/5；implement §4.2.2 |

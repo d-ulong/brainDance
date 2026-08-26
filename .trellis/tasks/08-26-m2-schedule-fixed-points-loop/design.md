@@ -72,7 +72,7 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 | `plan_schedule_slots` | `slot_key`, `local_time` | UNIQUE `(plan_version_id, slot_key)`；M2 固定 `default` + `20:00` |
 | `schedule_items` | `owner_id`, `slot_key`, `source`, `plan_snapshot`, `occurrence_key`, `status` | 对齐 data-model §4；M2 `source='plan'` |
 | `schedule_events` | `from_status`, `to_status`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | 对齐 data-model §4（状态迁移）；**复合 CHECK** 见 implement §2.0.1 |
-| `fact_versions` | `idempotency_key`, `idempotency_payload_hash`, `completion_kind`, `occurred_at` | UNIQUE `(schedule_item_id, idempotency_key)` |
+| `fact_versions` | `fact_key`, `source_kind`, `value`, `occurred_at`, `asserted_at`, `recorded_at`, `idempotency_key`, … | UNIQUE `(schedule_item_id, idempotency_key)`；M2 `source_kind='system'` |
 | `schedule_horizon_maintains` | `idempotency_key`, `idempotency_payload_hash`, `actor_id` | UNIQUE `(student_id, actor_id, idempotency_key)` |
 | `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
 | `settlements` | `idempotency_key`, `settlement_period` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)`；`settlement_period` = `schedule_item.family_date` |
@@ -420,7 +420,13 @@ generateHorizonInline(plan, version, from, through, ignoreCancelled):
     if plan.endDate set and family_date > plan.endDate: continue
     occurrence_key = "{plan.id}:{version.id}:{family_date}:daily:{localTime}"
     scheduled_at = toScheduledAt(family_date, localTime, Asia/Shanghai)
-    INSERT schedule_items (plan_id, plan_version_id, family_date, scheduled_at, occurrence_key, status=pending)
+    INSERT schedule_items (
+      plan_id, plan_version_id, student_id, owner_id,
+      family_date, slot_key, scheduled_at, status, source, occurrence_key, plan_snapshot
+    ) VALUES (
+      plan.id, version.id, plan.student_id, plan.owner_id,
+      family_date, 'default', scheduled_at, 'pending', 'plan', occurrence_key, NULL
+    )
     ON CONFLICT (occurrence_key) DO NOTHING
   -- ignoreCancelled: 计算 maintain 起点时不得用已 cancelled 行的 max 日期
 ```
@@ -440,7 +446,7 @@ Transaction:
                 WHERE (student_id, actor_id, idempotency_key)
      IF existing:
        IF existing.idempotency_payload_hash != bodyHash → 409
-       ELSE → **200 回放**（**不** generate / audit / outbox）
+       ELSE → **200 回放**（**不** generate / audit / outbox / **persistExpiredPastWindow**）
   3. plan = SELECT plans FOR UPDATE WHERE student_id AND plan_kind='formal' AND status='active'
      assert plan + current plan_version
   4. INSERT schedule_horizon_maintains (student_id, actor_id, key, hash, items_created=0)
@@ -449,7 +455,7 @@ Transaction:
      IF 无 RETURNING:
        row = SELECT 既有 maintain WHERE (student_id, actor_id, key)
        IF row.hash != bodyHash → 409
-       ELSE → **200 回放** row（**不** generate / audit / outbox）
+       ELSE → **200 回放** row（**不** generate / audit / outbox / **persistExpiredPastWindow**）
   5. -- 仅步骤 4 RETURNING 成功者（首个占位）继续：
      persistExpiredPastWindow(student_id)   -- **含 no-op**（items_created=0）；回放路径跳过
      through = horizonThrough(plans)

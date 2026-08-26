@@ -113,7 +113,9 @@
 | --- | --- |
 | `id` | PK |
 | `schedule_item_id`, `student_id` | FK；NOT NULL |
-| `fact_key` | `schedule.completed` |
+| `fact_key` | text NOT NULL；M2 固定 `schedule.completed` |
+| `source_kind` | text NOT NULL；M2 固定 `system` |
+| `value` | jsonb NOT NULL；M2 `{ completion_kind }` |
 | `idempotency_key`, `idempotency_payload_hash` | NOT NULL |
 | `completion_kind` | CHECK IN (`on_time`,`late`)；NOT NULL |
 | `occurred_at`, `asserted_at`, `recorded_at` | timestamptz NOT NULL |
@@ -159,6 +161,7 @@
 | `version` | int | NOT NULL（data-model 字段名 `version`） |
 | `parameters` | jsonb | NOT NULL；M2 `{}` |
 | `effect` | jsonb | NOT NULL；自模板复制 +10 |
+| `priority` | int | NULL（M2 未用；对齐 data-model 列） |
 | `effective_at` | timestamptz | NOT NULL |
 | `status` | text | CHECK IN (`active`,`superseded`) |
 
@@ -187,6 +190,7 @@
 | `student_id`, `settlement_id` | UUID | FK；NOT NULL |
 | `amount` | int | NOT NULL（M2 固定 +10） |
 | `reason`, `source_type`, `explanation` | text | NOT NULL |
+| `source_id` | UUID | NULL（M2 未用；对齐 data-model 列） |
 | `idempotency_key` | text | NOT NULL（审计；**非** UNIQUE scope） |
 
 | 约束 | UNIQUE `settlement_id` |
@@ -224,11 +228,12 @@
 | `plan_schedule_slots` | plan_version_id, slot_key, local_time | §2.0 | — |
 | `schedule_items` | owner_id, slot_key, source, occurrence_key, plan_snapshot | §2.0.1 | — |
 | `schedule_events` | from_status, to_status, actor_id, occurred_at, idempotency_key | §2.0.1 | idempotency_payload_hash, completion_kind |
-| `fact_versions` | fact_key, source_kind, occurred_at, asserted_at, recorded_at | §2.0.2 | idempotency hash, completion_kind |
+| `fact_versions` | fact_key, source_kind, value, occurred_at, asserted_at, recorded_at | §2.0.2 | idempotency hash, completion_kind |
 | `point_rule_templates` | event_type, parameter/effect/negative_effect_schema, stacking_mode, limits, active | §2.0.3 | — |
-| `point_rules` / `point_rule_versions` | student_id, creator_parent_id, template_id, version, parameters, effect, effective_at | §2.0.3 | create idempotency；status 列 |
+| `point_rules` | student_id, creator_parent_id, template_id | §2.0.3 | create idempotency；status |
+| `point_rule_versions` | version, parameters, effect, effective_at | §2.0.3 | priority NULL |
 | `settlements` | settlement_period, result, explanation, idempotency_key | §2.0.4 | — |
-| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | settlement_id UNIQUE |
+| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | settlement_id UNIQUE；source_id NULL |
 | `point_balance_projection` | balance, last_ledger_entry_id, updated_at | §2.0.4 | — |
 
 迁移约束测试须覆盖上表「必填列」存在性及 CHECK（§2.2.1）。
@@ -242,7 +247,7 @@
 | `schedule_items` | §2.0.1 | owner_id, slot_key, source, plan_snapshot |
 | `schedule_events` | §2.0.1 | from_status/to_status + completion_kind 复合 CHECK |
 | `point_balance_projection` | §2.0.4 | last_ledger_entry_id |
-| `fact_versions` | §2.0.2 | completion_kind NOT NULL；item+key UNIQUE |
+| `fact_versions` | §2.0.2 | source_kind, value, fact_key；item+key UNIQUE |
 | `point_rule_templates` | §2.0.3 | PK id；seed schedule_system_complete_v1 |
 | `point_rules` | §2.0.3 | creator+student+key UNIQUE；active 部分 UNIQUE |
 | `point_rule_versions` | §2.0.3 | (point_rule_id, version) UNIQUE |
@@ -268,7 +273,7 @@
 
 | 断言 | 覆盖 |
 | --- | --- |
-| data-model §2.0.7 必填列存在（plans/plan_versions/schedule_events/projection 等） | §2.0.7 |
+| data-model §2.0.7 必填列存在（含 fact_versions.source_kind/value） | §2.0.7 |
 | `plan_kind='formal'` + 部分 UNIQUE active formal | §2.0 |
 | `schedule_events` from_status/to_status 复合 CHECK | §2.0.1 |
 | `point_rules` UNIQUE + active 部分 UNIQUE | §2.0.3 |
@@ -374,6 +379,14 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | C10 | `formal-plan.test.ts` | F27 编辑 localTime 未变仍建 slot 并生成 |
 | C11 | `maintain-horizon.test.ts` | §5.8B 回放无副作用；F28 no-op 仍 persistExpired |
 | C12 | `formal-plan.test.ts` | §5.2 每 version 无条件 slot 快照 |
+
+### 4.2.2 复审测试映射（fb5f05c 闭合）
+
+| C-ID | 测试文件 | 断言 |
+| --- | --- | --- |
+| C4 | `m2-schema-constraints.test.ts` | §2.0.2 fact_versions source_kind/value；§5.8A INSERT 含 owner_id/slot_key/source |
+| F28 | `maintain-horizon.test.ts` | 计划已结束 maintain → items_created=0 **且** pending→expired |
+| F28 | `plan-end-date.test.ts` | from>through no-op **且** pending→expired；同 key 回放 **不** persist |
 
 ### 4.3 E2E
 
