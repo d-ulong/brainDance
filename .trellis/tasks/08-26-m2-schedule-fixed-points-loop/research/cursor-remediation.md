@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R8）。基线：`8b2ded8`（2026-08-26）。
+> 状态：**NO-GO**。复审基线：`8b2ded8...af93cf6`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -122,9 +122,30 @@
 
 **证据**：`677d74a` + 本文件 R1–R7 各证据行
 
+## R9 — C6/F22：编辑后的 endDate 必须作为取消与 horizon 的唯一输入
+
+**位置**：`design.md` §5.2；`implement.md` §4.2；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C6。
+
+**问题**：编辑流程写入 `plans.end_date` 后，后续仍以未说明是否已刷新的 `plans.end_date` 传给 `cancelPendingAfterEndDate()` 和 `horizonThrough()`。缩短 endDate 时，取消与新实例生成可能使用旧日期。
+
+**必须修订**：在锁定 plan 后明确计算 `effectiveEndDate`，并构造 `updatedPlan`：
+
+```text
+effectiveEndDate = body.endDate ?? oldPlan.end_date
+UPDATE plans SET end_date = effectiveEndDate, ...
+updatedPlan = oldPlan with end_date=effectiveEndDate and current_version=vN+1.id
+cancelPendingAfterEndDate(student_id, effectiveEndDate)
+through = horizonThrough(updatedPlan)
+generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
+```
+
+不得依赖 ORM/SQL UPDATE 后内存对象是否自动刷新。
+
+**验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。
+
 ## 完成标准
 
-1. R1–R8 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
+1. R1–R9 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 
@@ -133,4 +154,4 @@ git diff --check
 git status --short
 ```
 
-4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R8 的逐项证据。不得自行宣布 GO。
+4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R9 的逐项证据。不得自行宣布 GO。
