@@ -13,6 +13,7 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
 const sessionSecret =
   process.env.SESSION_SECRET ?? "test-session-secret-at-least-32-characters-long";
 const nextBin = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
+const playwrightCli = path.join(process.cwd(), "node_modules", "@playwright", "test", "cli.js");
 
 const { NODE_ENV: _nodeEnv, ...processEnv } = process.env;
 const serverEnv = {
@@ -60,8 +61,7 @@ function startServer(): ChildProcess {
 
 function runPlaywright(): Promise<number> {
   return new Promise((resolve, reject) => {
-    const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-    const child = spawn(pnpmCommand, ["exec", "playwright", "test"], {
+    const child = spawn(process.execPath, [playwrightCli, "test"], {
       stdio: "inherit",
       env: {
         ...process.env,
