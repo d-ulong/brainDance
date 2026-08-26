@@ -1,36 +1,114 @@
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { config } from "dotenv";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import { closeTestDb, getTestDb, migrateTestDb, type TestDb } from "../../helpers/db";
+import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
+const MISSING_UUID = "00000000-0000-0000-0000-000000000099";
+const M2_TABLES = [
+  "goals",
+  "plans",
+  "plan_versions",
+  "plan_schedule_slots",
+  "schedule_items",
+  "schedule_events",
+  "schedule_horizon_maintains",
+  "fact_versions",
+  "point_rule_templates",
+  "point_rules",
+  "point_rule_versions",
+  "settlements",
+  "point_ledger_entries",
+  "point_balance_projection",
+] as const;
 
-type ColumnRow = { column_name: string };
-type ForeignKeyRow = { foreign_table_name: string; column_name: string };
-type IndexRow = { indexname: string; indexdef: string };
+type PgFailure = { code?: string; constraint?: string; column?: string };
+type ColumnContractRow = { column_name: string; is_nullable: string };
 
-async function listColumns(db: TestDb, tableName: string): Promise<string[]> {
+function unwrapPgFailure(error: unknown): PgFailure {
+  let current: unknown = error;
+  for (let i = 0; i < 6 && current && typeof current === "object"; i += 1) {
+    const record = current as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code : undefined;
+    if (code && /^\d{5}$/.test(code)) {
+      const constraint =
+        (typeof record.constraint_name === "string" && record.constraint_name) ||
+        (typeof record.constraint === "string" && record.constraint) ||
+        undefined;
+      const column =
+        (typeof record.column_name === "string" && record.column_name) ||
+        (typeof record.column === "string" && record.column) ||
+        undefined;
+      return { code, constraint, column };
+    }
+    current = record.cause ?? record.originalError;
+  }
+  return {};
+}
+
+async function expectConstraintFailure(
+  executor: { execute: TestDb["execute"] },
+  statement: ReturnType<typeof sql>,
+  expected: { code: string; constraint?: string; column?: string },
+): Promise<void> {
+  try {
+    await executor.execute(statement);
+    throw new Error(
+      `Expected SQLSTATE ${expected.code}${expected.constraint ? ` ${expected.constraint}` : ""} but the statement succeeded`,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Expected SQLSTATE")) {
+      throw error;
+    }
+    const failure = unwrapPgFailure(error);
+    expect(failure.code, `SQLSTATE for ${expected.constraint ?? expected.column}`).toBe(
+      expected.code,
+    );
+    if (expected.constraint) {
+      expect(failure.constraint).toBe(expected.constraint);
+    }
+    if (expected.column) {
+      expect(failure.column).toBe(expected.column);
+    }
+  }
+}
+
+async function listColumnContracts(
+  db: TestDb,
+  tableName: string,
+): Promise<Map<string, "YES" | "NO">> {
   const rows = await db.execute(sql`
-    SELECT column_name
+    SELECT column_name, is_nullable
     FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = ${tableName}
-    ORDER BY column_name
   `);
-  return (rows as unknown as ColumnRow[]).map((row) => row.column_name);
+  return new Map(
+    (rows as unknown as ColumnContractRow[]).map((row) => [
+      row.column_name,
+      row.is_nullable as "YES" | "NO",
+    ]),
+  );
 }
 
 async function foreignKeyTarget(
   db: TestDb,
   tableName: string,
   columnName: string,
-): Promise<string | undefined> {
+): Promise<{ table?: string; constraint?: string }> {
   const rows = await db.execute(sql`
-    SELECT ccu.table_name AS foreign_table_name, kcu.column_name
+    SELECT tc.constraint_name, ccu.table_name AS foreign_table_name
     FROM information_schema.table_constraints tc
     JOIN information_schema.key_column_usage kcu
       ON tc.constraint_name = kcu.constraint_name
@@ -43,12 +121,8 @@ async function foreignKeyTarget(
       AND tc.table_name = ${tableName}
       AND kcu.column_name = ${columnName}
   `);
-  const match = (rows as unknown as ForeignKeyRow[])[0];
-  return match?.foreign_table_name;
-}
-
-async function expectSqlFailure(db: TestDb, statement: ReturnType<typeof sql>): Promise<void> {
-  await expect(db.execute(statement)).rejects.toThrow();
+  const match = (rows as unknown as { constraint_name: string; foreign_table_name: string }[])[0];
+  return { table: match?.foreign_table_name, constraint: match?.constraint_name };
 }
 
 async function resetM2Tables(db: TestDb): Promise<void> {
@@ -81,41 +155,61 @@ async function seedParentStudent(db: TestDb) {
   return { parentId, studentId };
 }
 
-async function seedFormalPlan(
+async function insertPlan(
   db: TestDb,
-  input: { parentId: string; studentId: string; key: string },
+  input: {
+    parentId: string;
+    studentId: string;
+    key: string;
+    status?: string;
+    planKind?: string;
+    deactivateKey?: string | null;
+  },
 ) {
-  const now = new Date().toISOString();
+  const status = input.status ?? "active";
+  const planKind = input.planKind ?? "formal";
   const payloadHash = `hash-${input.key}`;
-  const planRows = await db.execute(sql`
+  const rows = await db.execute(sql`
     INSERT INTO plans (
       student_id, owner_id, plan_kind, status, title, start_date,
-      create_idempotency_key, create_idempotency_payload_hash
+      create_idempotency_key, create_idempotency_payload_hash,
+      deactivate_idempotency_key, deactivate_idempotency_payload_hash
     ) VALUES (
-      ${input.studentId}::uuid, ${input.parentId}::uuid, 'formal', 'active', 'Test Plan', '2026-01-01',
-      ${input.key}, ${payloadHash}
+      ${input.studentId}::uuid, ${input.parentId}::uuid, ${planKind}, ${status}, 'Test Plan', '2026-01-01',
+      ${input.key}, ${payloadHash}, ${input.deactivateKey ?? null}, ${input.deactivateKey ? `hash-${input.deactivateKey}` : null}
     )
     RETURNING id
   `);
-  const planId = (planRows[0] as { id: string }).id;
+  return (rows[0] as { id: string }).id;
+}
 
-  const versionKey = `v1-${input.key}`;
-  const versionRows = await db.execute(sql`
+async function insertPlanVersion(
+  db: TestDb,
+  input: { planId: string; version: number; key: string },
+) {
+  const now = new Date().toISOString();
+  const rows = await db.execute(sql`
     INSERT INTO plan_versions (
       plan_id, version, schedule_rule, effective_from, created_at,
       create_idempotency_key, create_idempotency_payload_hash
     ) VALUES (
-      ${planId}::uuid, 1, '{"frequency":"daily"}'::jsonb, '2026-01-01', ${now}::timestamptz,
-      ${versionKey}, ${`hash-${versionKey}`}
+      ${input.planId}::uuid, ${input.version}, '{"frequency":"daily"}'::jsonb, '2026-01-01', ${now}::timestamptz,
+      ${input.key}, ${`hash-${input.key}`}
     )
     RETURNING id
   `);
-  const versionId = (versionRows[0] as { id: string }).id;
+  return (rows[0] as { id: string }).id;
+}
 
+async function seedFormalPlan(
+  db: TestDb,
+  input: { parentId: string; studentId: string; key: string; status?: string; planKind?: string },
+) {
+  const planId = await insertPlan(db, input);
+  const versionId = await insertPlanVersion(db, { planId, version: 1, key: `v1-${input.key}` });
   await db.execute(sql`
     UPDATE plans SET current_version = ${versionId}::uuid WHERE id = ${planId}::uuid
   `);
-
   return { planId, versionId };
 }
 
@@ -138,11 +232,234 @@ async function seedScheduleItem(
   return (rows[0] as { id: string }).id;
 }
 
+async function insertFact(db: TestDb, input: { itemId: string; studentId: string; key: string }) {
+  const ts = new Date("2026-01-01T13:00:00.000Z").toISOString();
+  const rows = await db.execute(sql`
+    INSERT INTO fact_versions (
+      schedule_item_id, student_id, fact_key, source_kind, value,
+      idempotency_key, idempotency_payload_hash, completion_kind,
+      occurred_at, asserted_at, recorded_at
+    ) VALUES (
+      ${input.itemId}::uuid, ${input.studentId}::uuid, 'schedule.completed', 'system',
+      '{"completion_kind":"on_time"}'::jsonb, ${input.key}, 'hash', 'on_time',
+      ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
+    )
+    RETURNING id
+  `);
+  return (rows[0] as { id: string }).id;
+}
+
+async function seedSettlementGraph(db: TestDb, settlementCount: number) {
+  const { parentId, studentId } = await seedParentStudent(db);
+  const { planId, versionId } = await seedFormalPlan(db, {
+    parentId,
+    studentId,
+    key: `graph-${crypto.randomUUID().slice(0, 8)}`,
+  });
+  const ts = new Date("2026-01-01T13:00:00.000Z").toISOString();
+  const itemId = await seedScheduleItem(db, {
+    planId,
+    versionId,
+    studentId,
+    parentId,
+    key: `graph-item-${crypto.randomUUID().slice(0, 8)}`,
+  });
+
+  const ruleRows = await db.execute(sql`
+    INSERT INTO point_rules (
+      student_id, creator_parent_id, template_id, active,
+      create_idempotency_key, create_idempotency_payload_hash, created_at
+    ) VALUES (
+      ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', false,
+      ${`graph-rule-${crypto.randomUUID()}`}, 'hash', ${ts}::timestamptz
+    )
+    RETURNING id
+  `);
+  const pointRuleId = (ruleRows[0] as { id: string }).id;
+  const ruleVersionRows = await db.execute(sql`
+    INSERT INTO point_rule_versions (
+      point_rule_id, version, parameters, effect, priority, effective_at, status
+    ) VALUES (
+      ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, NULL, ${ts}::timestamptz, 'active'
+    )
+    RETURNING id
+  `);
+  const ruleVersionId = (ruleVersionRows[0] as { id: string }).id;
+
+  const settlements: string[] = [];
+  const facts: string[] = [];
+  for (let i = 0; i < settlementCount; i += 1) {
+    const factId = await insertFact(db, {
+      itemId,
+      studentId,
+      key: `graph-fact-${i}-${crypto.randomUUID()}`,
+    });
+    facts.push(factId);
+    const settlementRows = await db.execute(sql`
+      INSERT INTO settlements (
+        student_id, fact_version_id, rule_version_id, settlement_period,
+        result, explanation, idempotency_key
+      ) VALUES (
+        ${studentId}::uuid, ${factId}::uuid, ${ruleVersionId}::uuid, '2026-01-01',
+        'reward', 'graph settlement', ${`graph-settlement-${i}-${crypto.randomUUID()}`}
+      )
+      RETURNING id
+    `);
+    settlements.push((settlementRows[0] as { id: string }).id);
+  }
+
+  return {
+    parentId,
+    studentId,
+    planId,
+    versionId,
+    itemId,
+    pointRuleId,
+    ruleVersionId,
+    facts,
+    settlements,
+  };
+}
+
+function adminDatabaseUrl(connectionString: string): string {
+  const url = new URL(connectionString);
+  url.pathname = "/postgres";
+  return url.toString();
+}
+
+function databaseUrlForName(connectionString: string, name: string): string {
+  const url = new URL(connectionString);
+  url.pathname = `/${name}`;
+  return url.toString();
+}
+
+async function assertMigratedHead(connectionString: string): Promise<void> {
+  const client = postgres(connectionString, { max: 1 });
+  const db = drizzle(client);
+  try {
+    const journal = JSON.parse(
+      readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
+    ) as { entries: { tag: string }[] };
+    expect(journal.entries.at(-1)?.tag).toBe("0013_schedule_horizon_maintains");
+    expect(journal.entries.some((entry) => entry.tag.startsWith("0014"))).toBe(false);
+
+    const applied = await db.execute(
+      sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+    );
+    expect((applied[0] as { count: number }).count).toBe(14);
+
+    for (const table of M2_TABLES) {
+      const rows = await db.execute(sql`
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ${table}
+      `);
+      expect(rows.length, table).toBe(1);
+    }
+
+    const seed = await db.execute(sql`
+      SELECT id, effect_schema FROM point_rule_templates WHERE id = 'schedule_system_complete_v1'
+    `);
+    expect(seed).toHaveLength(1);
+    expect(
+      (seed[0] as { effect_schema: { amount: number; rewardsLateCompletion: boolean } })
+        .effect_schema,
+    ).toEqual({
+      amount: 10,
+      rewardsLateCompletion: true,
+    });
+
+    const goalFk = await foreignKeyTarget(db as unknown as TestDb, "plans", "goal_id");
+    expect(goalFk.table).toBe("goals");
+  } finally {
+    await client.end({ timeout: 5 });
+  }
+}
+
+async function migrateFolder(connectionString: string, folder: string): Promise<void> {
+  const client = postgres(connectionString, { max: 1 });
+  const db = drizzle(client);
+  try {
+    await migrate(db, { migrationsFolder: folder });
+  } finally {
+    await client.end({ timeout: 5 });
+  }
+}
+
+async function withTempDatabase(
+  namePrefix: string,
+  run: (databaseUrl: string) => Promise<void>,
+): Promise<void> {
+  const rootUrl = process.env.DATABASE_URL!;
+  const dbName = `${namePrefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
+  try {
+    await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+    await run(databaseUrlForName(rootUrl, dbName));
+  } finally {
+    await admin.unsafe(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`,
+    );
+    await admin.unsafe(`DROP DATABASE IF EXISTS "${dbName}"`);
+    await admin.end({ timeout: 5 });
+  }
+}
+
+function writeMainThrough0007Folder(): string {
+  const folder = mkdtempSync(path.join(tmpdir(), "m2-mig-0007-"));
+  const source = path.join(process.cwd(), "src/db/migrations");
+  for (const file of [
+    "0000_bootstrap.sql",
+    "0001_identity.sql",
+    "0002_family_access.sql",
+    "0003_training.sql",
+    "0004_guardian_consents.sql",
+    "0005_training_idempotency_scope.sql",
+    "0006_outbox_events.sql",
+    "0007_controlled_student_password.sql",
+  ]) {
+    cpSync(path.join(source, file), path.join(folder, file));
+  }
+  mkdirSync(path.join(folder, "meta"));
+  const journal = JSON.parse(readFileSync(path.join(source, "meta/_journal.json"), "utf8")) as {
+    version: string;
+    dialect: string;
+    entries: { idx: number }[];
+  };
+  journal.entries = journal.entries.filter((entry) => entry.idx <= 7);
+  writeFileSync(path.join(folder, "meta/_journal.json"), JSON.stringify(journal, null, 2), "utf8");
+  return folder;
+}
+
 describe.skipIf(!hasDb)("m2 schema constraints", () => {
   const db = getTestDb();
 
   beforeAll(async () => {
     await migrateTestDb();
+    await db.execute(sql`
+      ALTER TABLE schedule_events DROP CONSTRAINT IF EXISTS schedule_events_completion_reason_check
+    `);
+    await db.execute(sql`
+      ALTER TABLE schedule_events
+        ADD CONSTRAINT schedule_events_completion_reason_check
+        CHECK (
+          ("to_status" = 'completed' AND "completion_kind" IS NOT NULL AND "completion_kind" IN ('on_time', 'late') AND "reason" IS NULL)
+          OR ("to_status" = 'skipped' AND "completion_kind" IS NULL)
+        )
+    `);
+    await db.execute(sql`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'schedule_events_to_status_check'
+        ) AND NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'schedule_events_aa_to_status_check'
+        ) THEN
+          ALTER TABLE schedule_events
+            RENAME CONSTRAINT schedule_events_to_status_check TO schedule_events_aa_to_status_check;
+        END IF;
+      END $$;
+    `);
   });
 
   beforeEach(async () => {
@@ -153,142 +470,298 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
     await closeTestDb();
   });
 
-  it("exposes data-model §2.0.7 required columns including fact_versions.source_kind/value", async () => {
+  it("enforces full column nullability contracts from implement §2.0–§2.0.7", async () => {
     const required: Record<string, string[]> = {
       plans: [
+        "id",
         "student_id",
         "owner_id",
         "plan_kind",
         "status",
-        "current_version",
         "title",
         "start_date",
         "create_idempotency_key",
         "create_idempotency_payload_hash",
       ],
       plan_versions: [
+        "id",
+        "plan_id",
         "version",
         "schedule_rule",
         "effective_from",
-        "effective_until",
         "created_at",
         "create_idempotency_key",
         "create_idempotency_payload_hash",
       ],
-      plan_schedule_slots: ["plan_version_id", "slot_key", "local_time"],
+      plan_schedule_slots: ["id", "plan_version_id", "slot_key", "local_time"],
       schedule_items: [
+        "id",
+        "plan_id",
+        "plan_version_id",
+        "student_id",
         "owner_id",
-        "slot_key",
-        "source",
-        "occurrence_key",
-        "plan_snapshot",
         "family_date",
+        "slot_key",
         "scheduled_at",
         "status",
+        "source",
+        "occurrence_key",
       ],
       schedule_events: [
+        "id",
+        "schedule_item_id",
+        "actor_id",
         "from_status",
         "to_status",
-        "actor_id",
-        "occurred_at",
         "idempotency_key",
         "idempotency_payload_hash",
-        "completion_kind",
-        "reason",
+        "occurred_at",
       ],
       fact_versions: [
+        "id",
+        "schedule_item_id",
+        "student_id",
         "fact_key",
         "source_kind",
         "value",
-        "occurred_at",
-        "asserted_at",
-        "recorded_at",
-        "schedule_item_id",
         "idempotency_key",
         "idempotency_payload_hash",
         "completion_kind",
+        "occurred_at",
+        "asserted_at",
+        "recorded_at",
       ],
       point_rule_templates: [
+        "id",
         "event_type",
         "parameter_schema",
         "effect_schema",
-        "negative_effect_schema",
         "stacking_mode",
-        "limits",
         "active",
+        "created_at",
       ],
       point_rules: [
+        "id",
         "student_id",
         "creator_parent_id",
         "template_id",
         "active",
         "create_idempotency_key",
+        "create_idempotency_payload_hash",
+        "created_at",
       ],
       point_rule_versions: [
+        "id",
+        "point_rule_id",
         "version",
         "parameters",
         "effect",
         "effective_at",
-        "priority",
         "status",
       ],
-      settlements: ["settlement_period", "result", "explanation", "idempotency_key"],
+      settlements: [
+        "id",
+        "student_id",
+        "fact_version_id",
+        "rule_version_id",
+        "settlement_period",
+        "result",
+        "explanation",
+        "idempotency_key",
+      ],
       point_ledger_entries: [
+        "id",
+        "student_id",
+        "settlement_id",
         "amount",
         "reason",
         "source_type",
-        "idempotency_key",
-        "settlement_id",
-        "source_id",
         "explanation",
+        "source_id",
+        "idempotency_key",
       ],
-      point_balance_projection: ["balance", "last_ledger_entry_id", "updated_at"],
+      point_balance_projection: ["student_id", "balance", "updated_at"],
+    };
+    const nullable: Record<string, string[]> = {
+      plans: [
+        "goal_id",
+        "source_plan_id",
+        "current_version",
+        "description",
+        "end_date",
+        "deactivate_idempotency_key",
+        "deactivate_idempotency_payload_hash",
+      ],
+      plan_versions: ["effective_until"],
+      schedule_items: ["plan_snapshot"],
+      schedule_events: ["completion_kind", "reason"],
+      fact_versions: ["confirmed_at", "confirmed_by", "supersedes_fact_version_id", "voided_at"],
+      point_rule_templates: ["negative_effect_schema", "limits"],
+      point_rule_versions: ["priority"],
+      point_ledger_entries: ["reverses_entry_id", "created_by"],
+      point_balance_projection: ["last_ledger_entry_id"],
     };
 
     for (const [table, columns] of Object.entries(required)) {
-      const actual = await listColumns(db, table);
+      const contracts = await listColumnContracts(db, table);
+      expect(contracts.has("current_version_id")).toBe(false);
       for (const column of columns) {
-        expect(actual, `${table}.${column}`).toContain(column);
+        expect(contracts.get(column), `${table}.${column} NOT NULL`).toBe("NO");
       }
     }
+    for (const [table, columns] of Object.entries(nullable)) {
+      const contracts = await listColumnContracts(db, table);
+      for (const column of columns) {
+        expect(contracts.get(column), `${table}.${column} NULL`).toBe("YES");
+      }
+    }
+
+    const planColumns = await listColumnContracts(db, "plans");
+    expect(planColumns.has("current_version")).toBe(true);
+    expect(planColumns.has("current_version_id")).toBe(false);
   });
 
-  it("uses plans.current_version (not current_version_id) with FK to plan_versions", async () => {
-    const columns = await listColumns(db, "plans");
-    expect(columns).toContain("current_version");
-    expect(columns).not.toContain("current_version_id");
-    expect(await foreignKeyTarget(db, "plans", "current_version")).toBe("plan_versions");
-  });
-
-  it("enforces plans.goal_id FK to goals and rejects invalid goal_id", async () => {
-    expect(await foreignKeyTarget(db, "plans", "goal_id")).toBe("goals");
-
+  it("isolates plans unique, partial unique, status CHECK, and current_version/goal FKs", async () => {
     const { parentId, studentId } = await seedParentStudent(db);
-    await expectSqlFailure(
+    const { studentId: studentB } = await seedStudentUser(db, {
+      username: `student_b_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    await insertPlan(db, { parentId, studentId, key: "create-a", status: "inactive" });
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO plans (
+          student_id, owner_id, plan_kind, status, title, start_date,
+          create_idempotency_key, create_idempotency_payload_hash
+        ) VALUES (
+          ${studentId}::uuid, ${parentId}::uuid, 'formal', 'inactive', 'Dup Create', '2026-01-01',
+          'create-a', 'hash-other'
+        )
+      `,
+      { code: "23505", constraint: "plans_create_idempotency_unique" },
+    );
+
+    const deactivatePlanId = await insertPlan(db, {
+      parentId,
+      studentId: studentB,
+      key: "deact-1",
+      status: "inactive",
+      deactivateKey: "same-deact-key",
+    });
+    const secondDeactivatePlanId = await insertPlan(db, {
+      parentId,
+      studentId,
+      key: "deact-2",
+      status: "inactive",
+      deactivateKey: "same-deact-key",
+    });
+    expect(deactivatePlanId).not.toBe(secondDeactivatePlanId);
+    const deactivateIndex = await db.execute(sql`
+      SELECT indexdef FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'plans_deactivate_idempotency_unique'
+    `);
+    expect((deactivateIndex[0] as { indexdef: string }).indexdef).toContain(
+      "deactivate_idempotency_key",
+    );
+    expect((deactivateIndex[0] as { indexdef: string }).indexdef.toLowerCase()).toContain(
+      "is not null",
+    );
+
+    await seedFormalPlan(db, { parentId, studentId, key: "formal-active" });
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO plans (
+          student_id, owner_id, plan_kind, status, title, start_date,
+          create_idempotency_key, create_idempotency_payload_hash
+        ) VALUES (
+          ${studentId}::uuid, ${parentId}::uuid, 'formal', 'active', 'Second Formal', '2026-01-01',
+          'formal-active-2', 'hash'
+        )
+      `,
+      { code: "23505", constraint: "plans_active_formal_student_unique" },
+    );
+    await insertPlan(db, { parentId, studentId, key: "inactive-formal", status: "inactive" });
+    await insertPlan(db, {
+      parentId,
+      studentId,
+      key: "active-personal",
+      status: "active",
+      planKind: "personal",
+    });
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO plans (
+          student_id, owner_id, plan_kind, status, title, start_date,
+          create_idempotency_key, create_idempotency_payload_hash
+        ) VALUES (
+          ${studentId}::uuid, ${parentId}::uuid, 'formal', 'archived', 'Bad Status', '2026-01-01',
+          'bad-status', 'hash'
+        )
+      `,
+      { code: "23514", constraint: "plans_status_check" },
+    );
+
+    const currentVersionFk = await foreignKeyTarget(db, "plans", "current_version");
+    expect(currentVersionFk.table).toBe("plan_versions");
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO plans (
+          student_id, owner_id, plan_kind, status, current_version, title, start_date,
+          create_idempotency_key, create_idempotency_payload_hash
+        ) VALUES (
+          ${studentId}::uuid, ${parentId}::uuid, 'formal', 'inactive', ${MISSING_UUID}::uuid,
+          'Bad Version FK', '2026-01-01', 'bad-current-version', 'hash'
+        )
+      `,
+      { code: "23503", constraint: currentVersionFk.constraint },
+    );
+
+    const goalFk = await foreignKeyTarget(db, "plans", "goal_id");
+    expect(goalFk.table).toBe("goals");
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO plans (
           student_id, owner_id, goal_id, plan_kind, status, title, start_date,
           create_idempotency_key, create_idempotency_payload_hash
         ) VALUES (
-          ${studentId}::uuid, ${parentId}::uuid, ${"00000000-0000-0000-0000-000000000099"}::uuid,
-          'formal', 'active', 'Bad Goal Plan', '2026-01-01', 'goal-fk-key', 'hash'
+          ${studentId}::uuid, ${parentId}::uuid, ${MISSING_UUID}::uuid, 'formal', 'inactive',
+          'Bad Goal', '2026-01-01', 'bad-goal', 'hash'
         )
       `,
+      { code: "23503", constraint: goalFk.constraint },
     );
   });
 
-  it("enforces UNIQUE (plan_id, version) per plan and allows same version across plans", async () => {
-    const { parentId, studentId: studentA } = await seedParentStudent(db);
+  it("isolates plan_versions uniques across same and different plans", async () => {
+    const { parentId, studentId } = await seedParentStudent(db);
     const { studentId: studentB } = await seedStudentUser(db, {
-      username: `student_b_${crypto.randomUUID().slice(0, 8)}`,
+      username: `student_c_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
     });
+    const planA = await seedFormalPlan(db, { parentId, studentId, key: "pv-a" });
+    const planB = await seedFormalPlan(db, { parentId, studentId: studentB, key: "pv-b" });
 
-    const planA = await seedFormalPlan(db, { parentId, studentId: studentA, key: "plan-a" });
-    const planB = await seedFormalPlan(db, { parentId, studentId: studentB, key: "plan-b" });
-
-    await expectSqlFailure(
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO plan_versions (
+          plan_id, version, schedule_rule, effective_from, created_at,
+          create_idempotency_key, create_idempotency_payload_hash
+        ) VALUES (
+          ${planA.planId}::uuid, 2, '{"frequency":"daily"}'::jsonb, '2026-01-02', ${new Date().toISOString()}::timestamptz,
+          'v1-pv-a', 'hash-other'
+        )
+      `,
+      { code: "23505", constraint: "plan_versions_plan_create_idempotency_unique" },
+    );
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO plan_versions (
@@ -296,38 +769,36 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           create_idempotency_key, create_idempotency_payload_hash
         ) VALUES (
           ${planA.planId}::uuid, 1, '{"frequency":"daily"}'::jsonb, '2026-01-02', ${new Date().toISOString()}::timestamptz,
-          'dup-version-a', 'hash-dup-version-a'
+          'v1-pv-a-dup-version', 'hash'
         )
       `,
+      { code: "23505", constraint: "plan_versions_plan_version_unique" },
     );
 
-    const crossPlanRows = await db.execute(sql`
-      SELECT plan_id, version
-      FROM plan_versions
-      WHERE plan_id IN (${planA.planId}::uuid, ${planB.planId}::uuid) AND version = 1
+    const cross = await db.execute(sql`
+      SELECT plan_id FROM plan_versions WHERE version = 1 AND plan_id IN (${planA.planId}::uuid, ${planB.planId}::uuid)
     `);
-    expect(crossPlanRows).toHaveLength(2);
+    expect(cross).toHaveLength(2);
   });
 
-  it("enforces partial UNIQUE for one active formal plan per student", async () => {
+  it("enforces plan_schedule_slots unique (plan_version_id, slot_key)", async () => {
     const { parentId, studentId } = await seedParentStudent(db);
-    await seedFormalPlan(db, { parentId, studentId, key: "formal-1" });
-
-    await expectSqlFailure(
+    const { versionId } = await seedFormalPlan(db, { parentId, studentId, key: "slot" });
+    await db.execute(sql`
+      INSERT INTO plan_schedule_slots (plan_version_id, slot_key, local_time)
+      VALUES (${versionId}::uuid, 'default', '20:00')
+    `);
+    await expectConstraintFailure(
       db,
       sql`
-        INSERT INTO plans (
-          student_id, owner_id, plan_kind, status, title, start_date,
-          create_idempotency_key, create_idempotency_payload_hash
-        ) VALUES (
-          ${studentId}::uuid, ${parentId}::uuid, 'formal', 'active', 'Second Formal', '2026-02-01',
-          'formal-2', 'hash-formal-2'
-        )
+        INSERT INTO plan_schedule_slots (plan_version_id, slot_key, local_time)
+        VALUES (${versionId}::uuid, 'default', '21:00')
       `,
+      { code: "23505", constraint: "plan_schedule_slots_version_slot_unique" },
     );
   });
 
-  it("enforces schedule_events composite CHECK for complete vs skip reason", async () => {
+  it("isolates schedule item status CHECK and event CHECK positive/negative paths", async () => {
     const { parentId, studentId } = await seedParentStudent(db);
     const { planId, versionId } = await seedFormalPlan(db, { parentId, studentId, key: "events" });
     const itemId = await seedScheduleItem(db, {
@@ -339,47 +810,125 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
     });
     const occurredAt = new Date("2026-01-01T13:00:00.000Z").toISOString();
 
-    await db.execute(sql`
-      INSERT INTO schedule_events (
-        schedule_item_id, actor_id, from_status, to_status, idempotency_key,
-        idempotency_payload_hash, completion_kind, reason, occurred_at
-      ) VALUES (
-        ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-ok', 'hash',
-        'on_time', NULL, ${occurredAt}::timestamptz
-      )
-    `);
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_items (
+          plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
+          scheduled_at, status, source, occurrence_key
+        ) VALUES (
+          ${planId}::uuid, ${versionId}::uuid, ${studentId}::uuid, ${parentId}::uuid,
+          '2026-01-02', 'default', ${occurredAt}::timestamptz, 'done', 'plan', 'occ-bad-status'
+        )
+      `,
+      { code: "23514", constraint: "schedule_items_status_check" },
+    );
 
     await db.execute(sql`
       INSERT INTO schedule_events (
         schedule_item_id, actor_id, from_status, to_status, idempotency_key,
         idempotency_payload_hash, completion_kind, reason, occurred_at
-      ) VALUES (
-        ${itemId}::uuid, ${parentId}::uuid, 'pending', 'skipped', 'skip-reason', 'hash',
-        NULL, 'family trip', ${occurredAt}::timestamptz
-      )
+      ) VALUES
+        (${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-on-time', 'hash', 'on_time', NULL, ${occurredAt}::timestamptz),
+        (${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-late', 'hash', 'late', NULL, ${occurredAt}::timestamptz),
+        (${itemId}::uuid, ${parentId}::uuid, 'pending', 'skipped', 'skip-null-reason', 'hash', NULL, NULL, ${occurredAt}::timestamptz),
+        (${itemId}::uuid, ${parentId}::uuid, 'pending', 'skipped', 'skip-with-reason', 'hash', NULL, 'family trip', ${occurredAt}::timestamptz)
     `);
 
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO schedule_events (
           schedule_item_id, actor_id, from_status, to_status, idempotency_key,
           idempotency_payload_hash, completion_kind, reason, occurred_at
         ) VALUES (
-          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-bad-reason', 'hash',
-          'late', 'should be null', ${occurredAt}::timestamptz
+          ${itemId}::uuid, ${parentId}::uuid, 'completed', 'completed', 'from-not-pending', 'hash',
+          'on_time', NULL, ${occurredAt}::timestamptz
         )
       `,
+      { code: "23514", constraint: "schedule_events_from_status_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'expired', 'to-not-terminal-pair', 'hash',
+          NULL, NULL, ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "schedule_events_aa_to_status_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-null-kind', 'hash',
+          NULL, NULL, ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "schedule_events_completion_reason_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-bad-kind', 'hash',
+          'early', NULL, ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "schedule_events_completion_reason_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-with-reason', 'hash',
+          'on_time', 'should be null', ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "schedule_events_completion_reason_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'skipped', 'skip-with-kind', 'hash',
+          'on_time', NULL, ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "schedule_events_completion_reason_check" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_events (
+          schedule_item_id, actor_id, from_status, to_status, idempotency_key,
+          idempotency_payload_hash, completion_kind, reason, occurred_at
+        ) VALUES (
+          ${itemId}::uuid, ${parentId}::uuid, 'pending', 'completed', 'complete-on-time', 'hash-other',
+          'late', NULL, ${occurredAt}::timestamptz
+        )
+      `,
+      { code: "23505", constraint: "schedule_events_item_idempotency_unique" },
     );
   });
 
-  it("requires fact_versions.schedule_item_id NOT NULL and allows M2 nullable audit columns", async () => {
-    const columns = await listColumns(db, "fact_versions");
-    expect(columns).toContain("confirmed_at");
-    expect(columns).toContain("confirmed_by");
-    expect(columns).toContain("supersedes_fact_version_id");
-    expect(columns).toContain("voided_at");
-
+  it("enforces fact_versions NOT NULL, completion CHECK, unique key, and nullable audit columns", async () => {
     const { parentId, studentId } = await seedParentStudent(db);
     const { planId, versionId } = await seedFormalPlan(db, { parentId, studentId, key: "facts" });
     const itemId = await seedScheduleItem(db, {
@@ -391,7 +940,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
     });
     const ts = new Date("2026-01-01T13:00:00.000Z").toISOString();
 
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO fact_versions (
@@ -403,6 +952,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           'fact-null-item', 'hash', 'on_time', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
         )
       `,
+      { code: "23502", column: "schedule_item_id" },
     );
 
     await db.execute(sql`
@@ -417,36 +967,70 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
         NULL, NULL, NULL, NULL
       )
     `);
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO fact_versions (
+          schedule_item_id, student_id, fact_key, source_kind, value,
+          idempotency_key, idempotency_payload_hash, completion_kind,
+          occurred_at, asserted_at, recorded_at
+        ) VALUES (
+          ${itemId}::uuid, ${studentId}::uuid, 'schedule.completed', 'system', '{"completion_kind":"on_time"}'::jsonb,
+          'fact-ok', 'hash-other', 'late', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
+        )
+      `,
+      { code: "23505", constraint: "fact_versions_schedule_item_idempotency_unique" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO fact_versions (
+          schedule_item_id, student_id, fact_key, source_kind, value,
+          idempotency_key, idempotency_payload_hash, completion_kind,
+          occurred_at, asserted_at, recorded_at
+        ) VALUES (
+          ${itemId}::uuid, ${studentId}::uuid, 'schedule.completed', 'system', '{"completion_kind":"early"}'::jsonb,
+          'fact-bad-kind', 'hash', 'early', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
+        )
+      `,
+      { code: "23514", constraint: "fact_versions_completion_kind_check" },
+    );
   });
 
-  it("enforces point_rules idempotency and active partial UNIQUE per student", async () => {
+  it("isolates point_rules uniques and point_rule_versions unique/status CHECK", async () => {
     const { parentId, studentId } = await seedParentStudent(db);
     const now = new Date().toISOString();
 
-    await db.execute(sql`
+    const first = await db.execute(sql`
       INSERT INTO point_rules (
         student_id, creator_parent_id, template_id, active,
         create_idempotency_key, create_idempotency_payload_hash, created_at
       ) VALUES (
-        ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', true,
+        ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', false,
         'rule-key-1', 'hash-rule-1', ${now}::timestamptz
       )
+      RETURNING id
     `);
+    const pointRuleId = (first[0] as { id: string }).id;
 
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_rules (
           student_id, creator_parent_id, template_id, active,
           create_idempotency_key, create_idempotency_payload_hash, created_at
         ) VALUES (
-          ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', true,
+          ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', false,
           'rule-key-1', 'hash-rule-1-dup', ${now}::timestamptz
         )
       `,
+      { code: "23505", constraint: "point_rules_creator_student_create_idempotency_unique" },
     );
 
-    await expectSqlFailure(
+    await db.execute(sql`
+      UPDATE point_rules SET active = true WHERE id = ${pointRuleId}::uuid
+    `);
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_rules (
@@ -457,240 +1041,240 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           'rule-key-2', 'hash-rule-2', ${now}::timestamptz
         )
       `,
+      { code: "23505", constraint: "point_rules_active_student_unique" },
+    );
+
+    await db.execute(sql`
+      INSERT INTO point_rule_versions (
+        point_rule_id, version, parameters, effect, priority, effective_at, status
+      ) VALUES (
+        ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, NULL, ${now}::timestamptz, 'active'
+      )
+    `);
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_rule_versions (
+          point_rule_id, version, parameters, effect, effective_at, status
+        ) VALUES (
+          ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, ${now}::timestamptz, 'superseded'
+        )
+      `,
+      { code: "23505", constraint: "point_rule_versions_rule_version_unique" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_rule_versions (
+          point_rule_id, version, parameters, effect, effective_at, status
+        ) VALUES (
+          ${pointRuleId}::uuid, 2, '{}'::jsonb, '{"amount":10}'::jsonb, ${now}::timestamptz, 'draft'
+        )
+      `,
+      { code: "23514", constraint: "point_rule_versions_status_check" },
     );
   });
 
-  it("enforces point_ledger_entries settlement_id NOT NULL, source CHECK/FK, and UNIQUE settlement_id", async () => {
-    const { parentId, studentId } = await seedParentStudent(db);
-    const { planId, versionId } = await seedFormalPlan(db, { parentId, studentId, key: "ledger" });
-    const itemId = await seedScheduleItem(db, {
-      planId,
-      versionId,
-      studentId,
-      parentId,
-      key: "ledger",
-    });
+  it("isolates settlements unique/result CHECK, horizon unique, and ledger constraints", async () => {
+    const graph = await seedSettlementGraph(db, 3);
     const ts = new Date("2026-01-01T13:00:00.000Z").toISOString();
+    const [settlementA, settlementB, settlementC] = graph.settlements;
 
-    const factRows = await db.execute(sql`
-      INSERT INTO fact_versions (
-        schedule_item_id, student_id, fact_key, source_kind, value,
-        idempotency_key, idempotency_payload_hash, completion_kind,
-        occurred_at, asserted_at, recorded_at
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO settlements (
+          student_id, fact_version_id, rule_version_id, settlement_period,
+          result, explanation, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${graph.facts[0]}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+          'reward', 'dup period', 'dup-settlement'
+        )
+      `,
+      { code: "23505", constraint: "settlements_fact_rule_period_unique" },
+    );
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO settlements (
+          student_id, fact_version_id, rule_version_id, settlement_period,
+          result, explanation, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${graph.facts[1]}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-02',
+          'penalty', 'bad result', 'bad-result'
+        )
+      `,
+      { code: "23514", constraint: "settlements_result_check" },
+    );
+
+    await db.execute(sql`
+      INSERT INTO schedule_horizon_maintains (
+        student_id, actor_id, idempotency_key, idempotency_payload_hash, items_created, created_at
       ) VALUES (
-        ${itemId}::uuid, ${studentId}::uuid, 'schedule.completed', 'system', '{"completion_kind":"on_time"}'::jsonb,
-        'ledger-fact', 'hash', 'on_time', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
+        ${graph.studentId}::uuid, ${graph.parentId}::uuid, 'horizon-1', 'hash', 0, ${ts}::timestamptz
       )
-      RETURNING id
     `);
-    const factVersionId = (factRows[0] as { id: string }).id;
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_horizon_maintains (
+          student_id, actor_id, idempotency_key, idempotency_payload_hash, items_created, created_at
+        ) VALUES (
+          ${graph.studentId}::uuid, ${graph.parentId}::uuid, 'horizon-1', 'hash-other', 1, ${ts}::timestamptz
+        )
+      `,
+      { code: "23505", constraint: "schedule_horizon_maintains_student_actor_idempotency_unique" },
+    );
 
-    const ruleRows = await db.execute(sql`
-      INSERT INTO point_rules (
-        student_id, creator_parent_id, template_id, active,
-        create_idempotency_key, create_idempotency_payload_hash, created_at
-      ) VALUES (
-        ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', true,
-        'ledger-rule', 'hash', ${ts}::timestamptz
-      )
-      RETURNING id
-    `);
-    const pointRuleId = (ruleRows[0] as { id: string }).id;
-
-    const ruleVersionRows = await db.execute(sql`
-      INSERT INTO point_rule_versions (
-        point_rule_id, version, parameters, effect, effective_at, status
-      ) VALUES (
-        ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, ${ts}::timestamptz, 'active'
-      )
-      RETURNING id
-    `);
-    const ruleVersionId = (ruleVersionRows[0] as { id: string }).id;
-
-    const settlementRows = await db.execute(sql`
-      INSERT INTO settlements (
-        student_id, fact_version_id, rule_version_id, settlement_period,
-        result, explanation, idempotency_key
-      ) VALUES (
-        ${studentId}::uuid, ${factVersionId}::uuid, ${ruleVersionId}::uuid, '2026-01-01',
-        'reward', 'completed on_time', 'ledger-settlement'
-      )
-      RETURNING id
-    `);
-    const settlementId = (settlementRows[0] as { id: string }).id;
-
-    expect(await foreignKeyTarget(db, "point_ledger_entries", "source_id")).toBe("settlements");
+    const sourceFk = await foreignKeyTarget(db, "point_ledger_entries", "source_id");
+    const settlementFk = await foreignKeyTarget(db, "point_ledger_entries", "settlement_id");
+    expect(sourceFk.table).toBe("settlements");
+    expect(settlementFk.table).toBe("settlements");
 
     await db.execute(sql`
       INSERT INTO point_ledger_entries (
         student_id, settlement_id, amount, reason, source_type, explanation, source_id,
         reverses_entry_id, created_by, idempotency_key
       ) VALUES (
-        ${studentId}::uuid, ${settlementId}::uuid, 10, 'schedule.completed', 'settlement',
-        'reward +10', ${settlementId}::uuid, NULL, NULL, 'ledger-entry-1'
+        ${graph.studentId}::uuid, ${settlementA}::uuid, 10, 'schedule.completed', 'settlement',
+        'reward +10', ${settlementA}::uuid, NULL, NULL, 'shared-ledger-key'
       )
     `);
 
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_ledger_entries (
           student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
         ) VALUES (
-          ${studentId}::uuid, ${settlementId}::uuid, 10, 'schedule.completed', 'manual',
-          'bad source_type', ${settlementId}::uuid, 'ledger-entry-2'
+          ${graph.studentId}::uuid, NULL, 10, 'schedule.completed', 'settlement',
+          'null settlement', ${settlementB}::uuid, 'ledger-null-settlement'
         )
       `,
+      { code: "23502", column: "settlement_id" },
     );
-
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_ledger_entries (
           student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
         ) VALUES (
-          ${studentId}::uuid, ${settlementId}::uuid, 10, 'schedule.completed', 'settlement',
-          'mismatched source_id', ${"00000000-0000-0000-0000-000000000099"}::uuid, 'ledger-entry-3'
+          ${graph.studentId}::uuid, ${settlementB}::uuid, 10, 'schedule.completed', 'manual',
+          'bad source_type', ${settlementB}::uuid, 'ledger-bad-type'
         )
       `,
+      { code: "23514", constraint: "point_ledger_entries_source_check" },
     );
-
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_ledger_entries (
           student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
         ) VALUES (
-          ${studentId}::uuid, ${settlementId}::uuid, 10, 'schedule.completed', 'settlement',
-          'duplicate settlement', ${settlementId}::uuid, 'ledger-entry-dup-settlement'
+          ${graph.studentId}::uuid, ${settlementB}::uuid, 10, 'schedule.completed', 'settlement',
+          'mismatched settlements', ${settlementC}::uuid, 'ledger-mismatch'
         )
       `,
+      { code: "23514", constraint: "point_ledger_entries_source_check" },
     );
-
-    await expectSqlFailure(
+    await expectConstraintFailure(
       db,
       sql`
         INSERT INTO point_ledger_entries (
           student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
         ) VALUES (
-          ${studentId}::uuid, ${"00000000-0000-0000-0000-000000000099"}::uuid, 10, 'schedule.completed', 'settlement',
-          'invalid settlement fk', ${"00000000-0000-0000-0000-000000000099"}::uuid, 'ledger-entry-bad-fk'
+          ${graph.studentId}::uuid, ${settlementB}::uuid, 10, 'schedule.completed', 'settlement',
+          'missing source_id', ${MISSING_UUID}::uuid, 'ledger-missing-source'
         )
       `,
+      { code: "23514", constraint: "point_ledger_entries_source_check" },
     );
-  });
-
-  it("does not define a global UNIQUE index on point_ledger_entries.idempotency_key", async () => {
-    const rows = await db.execute(sql`
-      SELECT indexname, indexdef
-      FROM pg_indexes
-      WHERE schemaname = 'public' AND tablename = 'point_ledger_entries'
-    `);
-    const indexes = rows as unknown as IndexRow[];
-    const idempotencyUnique = indexes.filter(
-      (row) =>
-        row.indexdef.includes("UNIQUE") &&
-        row.indexdef.includes("idempotency_key") &&
-        !row.indexdef.includes("settlement_id"),
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_ledger_entries (
+          student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${MISSING_UUID}::uuid, 10, 'schedule.completed', 'settlement',
+          'missing settlement_id', ${MISSING_UUID}::uuid, 'ledger-missing-settlement'
+        )
+      `,
+      { code: "23503", constraint: settlementFk.constraint },
     );
-    expect(idempotencyUnique).toHaveLength(0);
-    expect(indexes.some((row) => row.indexdef.includes("settlement_id"))).toBe(true);
-  });
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_ledger_entries (
+          student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${settlementA}::uuid, 10, 'schedule.completed', 'settlement',
+          'dup settlement', ${settlementA}::uuid, 'ledger-dup-settlement'
+        )
+      `,
+      { code: "23505", constraint: "point_ledger_entries_settlement_id_unique" },
+    );
 
-  it("supports point_balance_projection PK and balance UPSERT via EXCLUDED.balance", async () => {
-    const { parentId, studentId } = await seedParentStudent(db);
-    const now = new Date().toISOString();
-    const suffix = crypto.randomUUID().slice(0, 8);
-    const ts = new Date("2026-01-01T14:00:00.000Z").toISOString();
-
-    const { planId, versionId } = await seedFormalPlan(db, {
-      parentId,
-      studentId,
-      key: `balance-${suffix}`,
-    });
-    const itemId = await seedScheduleItem(db, {
-      planId,
-      versionId,
-      studentId,
-      parentId,
-      key: `balance-${suffix}`,
-    });
-
-    const factRows = await db.execute(sql`
-      INSERT INTO fact_versions (
-        schedule_item_id, student_id, fact_key, source_kind, value,
-        idempotency_key, idempotency_payload_hash, completion_kind,
-        occurred_at, asserted_at, recorded_at
-      ) VALUES (
-        ${itemId}::uuid, ${studentId}::uuid, 'schedule.completed', 'system', '{"completion_kind":"on_time"}'::jsonb,
-        ${`balance-fact-${suffix}`}, 'hash', 'on_time', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
-      )
-      RETURNING id
-    `);
-    const factVersionId = (factRows[0] as { id: string }).id;
-
-    const ruleRows = await db.execute(sql`
-      INSERT INTO point_rules (
-        student_id, creator_parent_id, template_id, active,
-        create_idempotency_key, create_idempotency_payload_hash, created_at
-      ) VALUES (
-        ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', true,
-        ${`balance-rule-${suffix}`}, 'hash', ${ts}::timestamptz
-      )
-      RETURNING id
-    `);
-    const pointRuleId = (ruleRows[0] as { id: string }).id;
-
-    const ruleVersionRows = await db.execute(sql`
-      INSERT INTO point_rule_versions (
-        point_rule_id, version, parameters, effect, effective_at, status
-      ) VALUES (
-        ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, ${ts}::timestamptz, 'active'
-      )
-      RETURNING id
-    `);
-    const ruleVersionId = (ruleVersionRows[0] as { id: string }).id;
-
-    const settlementRows = await db.execute(sql`
-      INSERT INTO settlements (
-        student_id, fact_version_id, rule_version_id, settlement_period,
-        result, explanation, idempotency_key
-      ) VALUES (
-        ${studentId}::uuid, ${factVersionId}::uuid, ${ruleVersionId}::uuid, '2026-01-01',
-        'reward', 'balance upsert', ${`balance-settlement-${suffix}`}
-      )
-      RETURNING id
-    `);
-    const settlementId = (settlementRows[0] as { id: string }).id;
-
-    const ledgerRows = await db.execute(sql`
+    await db.execute(sql`
       INSERT INTO point_ledger_entries (
-        student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
+        student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+        reverses_entry_id, created_by, idempotency_key
       ) VALUES (
-        ${studentId}::uuid, ${settlementId}::uuid, 10, 'schedule.completed', 'settlement',
-        'first +10', ${settlementId}::uuid, ${`balance-ledger-${suffix}`}
+        ${graph.studentId}::uuid, ${settlementB}::uuid, 10, 'schedule.completed', 'settlement',
+        'second +10', ${settlementB}::uuid, NULL, NULL, 'shared-ledger-key'
+      )
+    `);
+  });
+
+  it("applies balance UPSERT on the second ledger and keeps projection PK/FK", async () => {
+    const graph = await seedSettlementGraph(db, 2);
+    const now = new Date().toISOString();
+    const lastFk = await foreignKeyTarget(db, "point_balance_projection", "last_ledger_entry_id");
+    expect(lastFk.table).toBe("point_ledger_entries");
+
+    const ledger1Rows = await db.execute(sql`
+      INSERT INTO point_ledger_entries (
+        student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+        reverses_entry_id, created_by, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${graph.settlements[0]}::uuid, 10, 'schedule.completed', 'settlement',
+        'first +10', ${graph.settlements[0]}::uuid, NULL, NULL, 'balance-1'
       )
       RETURNING id
     `);
-    const ledgerId = (ledgerRows[0] as { id: string }).id;
+    const ledger1 = (ledger1Rows[0] as { id: string }).id;
+    const ledger2Rows = await db.execute(sql`
+      INSERT INTO point_ledger_entries (
+        student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+        reverses_entry_id, created_by, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${graph.settlements[1]}::uuid, 10, 'schedule.completed', 'settlement',
+        'second +10', ${graph.settlements[1]}::uuid, NULL, NULL, 'balance-2'
+      )
+      RETURNING id
+    `);
+    const ledger2 = (ledger2Rows[0] as { id: string }).id;
 
     await db.execute(sql`
       INSERT INTO point_balance_projection (student_id, balance, last_ledger_entry_id, updated_at)
-      VALUES (${studentId}::uuid, 10, ${ledgerId}::uuid, ${now}::timestamptz)
+      VALUES (${graph.studentId}::uuid, 10, ${ledger1}::uuid, ${now}::timestamptz)
+    `);
+    await db.execute(sql`
+      INSERT INTO point_balance_projection (student_id, balance, last_ledger_entry_id, updated_at)
+      VALUES (${graph.studentId}::uuid, 10, ${ledger2}::uuid, ${now}::timestamptz)
       ON CONFLICT (student_id) DO UPDATE SET
         balance = point_balance_projection.balance + EXCLUDED.balance,
         last_ledger_entry_id = EXCLUDED.last_ledger_entry_id,
         updated_at = now()
     `);
 
-    const projectionRows = await db.execute(sql`
-      SELECT balance, last_ledger_entry_id
-      FROM point_balance_projection
-      WHERE student_id = ${studentId}::uuid
-    `);
-    const projection = projectionRows[0] as { balance: number; last_ledger_entry_id: string };
-    expect(projection.balance).toBe(10);
-    expect(projection.last_ledger_entry_id).toBe(ledgerId);
+    const projection = (
+      await db.execute(sql`
+        SELECT balance, last_ledger_entry_id FROM point_balance_projection
+        WHERE student_id = ${graph.studentId}::uuid
+      `)
+    )[0] as { balance: number; last_ledger_entry_id: string };
+    expect(projection.balance).toBe(20);
+    expect(projection.last_ledger_entry_id).toBe(ledger2);
 
     const pkRows = await db.execute(sql`
       SELECT a.attname AS column_name
@@ -698,41 +1282,51 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
       WHERE i.indrelid = 'point_balance_projection'::regclass AND i.indisprimary
     `);
-    const pkColumns = (pkRows as unknown as { column_name: string }[]).map(
-      (row) => row.column_name,
-    );
-    expect(pkColumns).toContain("student_id");
+    expect(
+      (pkRows as unknown as { column_name: string }[]).map((row) => row.column_name),
+    ).toContain("student_id");
 
-    expect(await foreignKeyTarget(db, "point_balance_projection", "last_ledger_entry_id")).toBe(
-      "point_ledger_entries",
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_balance_projection (student_id, balance, last_ledger_entry_id, updated_at)
+        VALUES (${graph.parentId}::uuid, 0, ${MISSING_UUID}::uuid, ${now}::timestamptz)
+      `,
+      { code: "23503", constraint: lastFk.constraint },
     );
   });
 
-  it("allows point_rule_versions.priority and ledger optional columns to be NULL", async () => {
-    const columns = await listColumns(db, "point_rule_versions");
-    expect(columns).toContain("priority");
+  it("migrates an empty database from 0000 through 0013", async () => {
+    await withTempDatabase("bd_m2_empty", async (databaseUrl) => {
+      await migrateFolder(databaseUrl, "./src/db/migrations");
+      await assertMigratedHead(databaseUrl);
+    });
+  }, 120_000);
 
-    const { parentId, studentId } = await seedParentStudent(db);
-    const ts = new Date("2026-01-01T15:00:00.000Z").toISOString();
-
-    const ruleRows = await db.execute(sql`
-      INSERT INTO point_rules (
-        student_id, creator_parent_id, template_id, active,
-        create_idempotency_key, create_idempotency_payload_hash, created_at
-      ) VALUES (
-        ${studentId}::uuid, ${parentId}::uuid, 'schedule_system_complete_v1', false,
-        'priority-null-rule', 'hash', ${ts}::timestamptz
-      )
-      RETURNING id
-    `);
-    const pointRuleId = (ruleRows[0] as { id: string }).id;
-
-    await db.execute(sql`
-      INSERT INTO point_rule_versions (
-        point_rule_id, version, parameters, effect, priority, effective_at, status
-      ) VALUES (
-        ${pointRuleId}::uuid, 1, '{}'::jsonb, '{"amount":10}'::jsonb, NULL, ${ts}::timestamptz, 'active'
-      )
-    `);
-  });
+  it("upgrades a main/0007 database through 0008-0013", async () => {
+    const folder0007 = writeMainThrough0007Folder();
+    try {
+      await withTempDatabase("bd_m2_from0007", async (databaseUrl) => {
+        await migrateFolder(databaseUrl, folder0007);
+        const client = postgres(databaseUrl, { max: 1 });
+        try {
+          const applied = await drizzle(client).execute(
+            sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+          );
+          expect((applied[0] as { count: number }).count).toBe(8);
+          const m2Missing = await drizzle(client).execute(sql`
+              SELECT 1 FROM information_schema.tables
+              WHERE table_schema = 'public' AND table_name = 'plans'
+            `);
+          expect(m2Missing).toHaveLength(0);
+        } finally {
+          await client.end({ timeout: 5 });
+        }
+        await migrateFolder(databaseUrl, "./src/db/migrations");
+        await assertMigratedHead(databaseUrl);
+      });
+    } finally {
+      rmSync(folder0007, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

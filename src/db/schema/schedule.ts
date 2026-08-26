@@ -156,7 +156,7 @@ export const scheduleEvents = pgTable(
     check("schedule_events_to_status_check", sql`${table.toStatus} IN ('completed', 'skipped')`),
     check(
       "schedule_events_completion_reason_check",
-      sql`(${table.toStatus} = 'completed' AND ${table.completionKind} IN ('on_time', 'late') AND ${table.reason} IS NULL) OR (${table.toStatus} = 'skipped' AND ${table.completionKind} IS NULL)`,
+      sql`(${table.toStatus} = 'completed' AND ${table.completionKind} IS NOT NULL AND ${table.completionKind} IN ('on_time', 'late') AND ${table.reason} IS NULL) OR (${table.toStatus} = 'skipped' AND ${table.completionKind} IS NULL)`,
     ),
   ],
 );

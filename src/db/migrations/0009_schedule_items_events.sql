@@ -29,7 +29,7 @@ CREATE TABLE "schedule_events" (
 	CONSTRAINT "schedule_events_item_idempotency_unique" UNIQUE("schedule_item_id","idempotency_key"),
 	CONSTRAINT "schedule_events_from_status_check" CHECK ("from_status" IN ('pending')),
 	CONSTRAINT "schedule_events_to_status_check" CHECK ("to_status" IN ('completed', 'skipped')),
-	CONSTRAINT "schedule_events_completion_reason_check" CHECK (("to_status" = 'completed' AND "completion_kind" IN ('on_time', 'late') AND "reason" IS NULL) OR ("to_status" = 'skipped' AND "completion_kind" IS NULL))
+	CONSTRAINT "schedule_events_completion_reason_check" CHECK (("to_status" = 'completed' AND "completion_kind" IS NOT NULL AND "completion_kind" IN ('on_time', 'late') AND "reason" IS NULL) OR ("to_status" = 'skipped' AND "completion_kind" IS NULL))
 );
 --> statement-breakpoint
 ALTER TABLE "schedule_items" ADD CONSTRAINT "schedule_items_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
