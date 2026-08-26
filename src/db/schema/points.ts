@@ -44,7 +44,10 @@ export const factVersions = pgTable(
     voidedAt: timestamp("voided_at", { withTimezone: true }),
   },
   (table) => [
-    check("fact_versions_completion_kind_check", sql`${table.completionKind} IN ('on_time', 'late')`),
+    check(
+      "fact_versions_completion_kind_check",
+      sql`${table.completionKind} IN ('on_time', 'late')`,
+    ),
     unique("fact_versions_schedule_item_idempotency_unique").on(
       table.scheduleItemId,
       table.idempotencyKey,
@@ -172,14 +175,11 @@ export const pointLedgerEntries = pgTable(
   ],
 );
 
-export const pointBalanceProjection = pgTable(
-  "point_balance_projection",
-  {
-    studentId: uuid("student_id")
-      .primaryKey()
-      .references(() => users.id),
-    balance: integer("balance").notNull().default(0),
-    lastLedgerEntryId: uuid("last_ledger_entry_id").references(() => pointLedgerEntries.id),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-  },
-);
+export const pointBalanceProjection = pgTable("point_balance_projection", {
+  studentId: uuid("student_id")
+    .primaryKey()
+    .references(() => users.id),
+  balance: integer("balance").notNull().default(0),
+  lastLedgerEntryId: uuid("last_ledger_entry_id").references(() => pointLedgerEntries.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});

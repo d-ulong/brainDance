@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
+import { goals } from "./goals";
 import { users } from "./identity";
 
 export const plans = pgTable(
@@ -26,7 +27,7 @@ export const plans = pgTable(
     ownerId: uuid("owner_id")
       .notNull()
       .references(() => users.id),
-    goalId: uuid("goal_id"),
+    goalId: uuid("goal_id").references(() => goals.id),
     planKind: text("plan_kind").notNull(),
     sourcePlanId: uuid("source_plan_id").references((): AnyPgColumn => plans.id),
     status: text("status").notNull(),
@@ -90,7 +91,9 @@ export const planScheduleSlots = pgTable(
     slotKey: text("slot_key").notNull(),
     localTime: time("local_time").notNull(),
   },
-  (table) => [unique("plan_schedule_slots_version_slot_unique").on(table.planVersionId, table.slotKey)],
+  (table) => [
+    unique("plan_schedule_slots_version_slot_unique").on(table.planVersionId, table.slotKey),
+  ],
 );
 
 export const scheduleItems = pgTable(
@@ -145,7 +148,10 @@ export const scheduleEvents = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
   },
   (table) => [
-    unique("schedule_events_item_idempotency_unique").on(table.scheduleItemId, table.idempotencyKey),
+    unique("schedule_events_item_idempotency_unique").on(
+      table.scheduleItemId,
+      table.idempotencyKey,
+    ),
     check("schedule_events_from_status_check", sql`${table.fromStatus} IN ('pending')`),
     check("schedule_events_to_status_check", sql`${table.toStatus} IN ('completed', 'skipped')`),
     check(
