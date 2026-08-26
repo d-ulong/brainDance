@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R5）。基线：`912bc7f`（2026-08-26）。
+> 状态：**NO-GO**。复审基线：`912bc7f...06a2aaf`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -60,7 +60,12 @@
 
 **验证**：迁移测试逐项断言列、FK、NOT NULL/NULL 语义；结算集成测试断言 `source_id=settlement_id`。
 
-**证据**：`682db06` + `design.md` §4.2「已批准 M2 范围缩窄」+ `implement.md` §2.0.2/§2.0.4/§2.0.7 + `m2-schema-constraints.test.ts` + `settlement-ledger.test.ts`
+**复审结论（未关闭）**：`06a2aaf` 仅将 `source_id` 记为 NOT NULL，未形成可执行约束，故不能作为 R4 闭合证据。
+
+**追加必须修订**：在 M2 ledger DDL 中以可执行约束固定
+`source_type='settlement' AND source_id=settlement_id`；明确 `source_id` 是 FK → `settlements.id`（可复用 `settlement_id` 的同一 FK 目标，但必须可验证）。
+
+**追加验证**：`m2-schema-constraints.test.ts` 必须断言错误 `source_type`、不匹配 `source_id`、不存在的 settlement FK 均被拒绝；同时断言本 R 中批准为可空的字段接受 NULL。`settlement-ledger.test.ts` 断言正确结算流水成功。
 
 ## R5 — C8：三条日程生成路径的字段验证
 
@@ -80,9 +85,24 @@
 
 **证据**：`682db06` + `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
 
+## R6 — C8：生成器必须使用 version slot 快照时间
+
+**位置**：`design.md` §5.8A；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C8。
+
+**问题**：`generateHorizonInline(plan, version, from, through, ...)` 使用未定义来源的 `localTime` 来构造 occurrence key 与 scheduled_at。创建、编辑和 maintain 因而无法证明使用的是传入 `version` 的 `plan_schedule_slots` 快照，违反每 version slot 快照语义。
+
+**必须修订**：二选一并保持三条路径一致：
+
+1. helper 内按 `plan_version_id=version.id AND slot_key='default'` 查询唯一 slot，并以其 `local_time` 生成；或
+2. 将唯一 slot / `localTime` 作为 helper 显式参数，且三个调用者均按当前 `version` 的 slot 传入。
+
+不得读取 `plans.current_version` 代替传入版本，也不得使用隐式/全局 localTime。
+
+**验证**：创建、编辑、maintain 三类测试均断言生成的 `scheduled_at` 与 `occurrence_key` 使用该 `version` 的 slot `local_time`；编辑时间后使用新版本时间，未编辑时间时复制的 slot 仍被使用。
+
 ## 完成标准
 
-1. R1–R5 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
+1. R1–R6 全部关闭；R1–R3、R5 的既有证据须保留，R4/R6 仅在独立复审 PASS 后补“证据：commit + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 
@@ -91,4 +111,4 @@ git diff --check
 git status --short
 ```
 
-4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R5 的逐项证据。不得自行宣布 GO。
+4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R6 的逐项证据。不得自行宣布 GO。
