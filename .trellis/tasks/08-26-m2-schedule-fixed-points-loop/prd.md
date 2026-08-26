@@ -33,7 +33,9 @@
 - 固定 **30 天** horizon（无客户端参数）。
 - **内联生成**：创建/编辑计划事务内 `generateHorizonInline`（不写 `schedule_horizon_maintains`）。
 - **独立命令**：`POST maintain-horizon`，仅家长、显式 **「补齐日程」按钮** 触发（**禁止** mount 自动 POST；**禁止** GET 触发）。
-- `occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}"` UNIQUE；编辑后从 **`effective_from` 至 today+30** 为**当前 version** 内联生成；`INSERT ON CONFLICT (occurrence_key) DO NOTHING`。
+- `occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}"` UNIQUE；编辑后从 **`effective_from` 至 `min(endDate, today+30)`** 为**当前 version** 内联生成；`INSERT ON CONFLICT (occurrence_key) DO NOTHING`。
+- 编辑**缩短** `endDate` 时：新结束日之后的 future `pending` → `cancelled`。
+- 计划已过 `endDate` 时：`maintain-horizon` 为 **no-op**（200，0 新实例）。
 
 ### 完成窗口与迟完成
 
@@ -106,6 +108,10 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-F19**：编辑后新版本自 effective_from 有实例（不因 cancelled max 日期跳过生成）。
 - [ ] **AC-M2-F20**：同 item 同 key、异 actor（complete vs skip）→ 409，不回放。
 - [ ] **AC-M2-F21**：创建计划幂等回放 → 无第二次 inline horizon、无重复 plan.created outbox。
+- [ ] **AC-M2-F22**：endDate 上界 `min(endDate,today+30)`；缩短 endDate 取消 future pending；maintain 已结束 no-op。
+- [ ] **AC-M2-F23**：七类写 Route 缺 `Idempotency-Key` → **400** `IDEMPOTENCY_KEY_REQUIRED`。
+- [ ] **AC-M2-F24**：complete/skip 并发同 key → 200 回放；仅 1 终态 event/fact/ledger。
+- [ ] **AC-M2-F25**：ledger 冲突回放 balance 不变；不同 item 同客户端 key 各自 +10。
 
 ## Non-Functional
 

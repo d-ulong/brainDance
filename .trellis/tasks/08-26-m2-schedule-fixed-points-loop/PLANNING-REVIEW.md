@@ -1,13 +1,13 @@
 # M2 规划复审 — 独立审阅入口
 
-> **用途**：供 Codex 在 **`main`** 上审阅规划是否 **GO**（允许进入 `task.py start`）。  
-> **范围**：仅 `.trellis/tasks/08-26-m2-schedule-fixed-points-loop/`；**禁止**开始实现。  
+> **用途**：供 Codex 在 **`main`** 上审阅规划是否 **GO**（允许进入 `task.py start`）。
+> **范围**：仅 `.trellis/tasks/08-26-m2-schedule-fixed-points-loop/`；**禁止**开始实现。
 > **勿改**：`.trellis/tasks/08-25-m1-*` 历史任务。
 
 ## 审阅顺序（强制）
 
 1. `research/planning-signoff-checklist.md` — 逐项 PASS/FAIL（全部 PASS 方可 GO）
-2. `prd.md` — AC-M2-1~8、AC-M2-F1~F21
+2. `prd.md` — AC-M2-1~8、AC-M2-F1~F25
 3. `design.md` — §4~§6、§5.0/§5.8、§4.9 outbox、§11 Web UI
 4. `implement.md` — §2~§4、§6~§7
 5. `research/m2-verification-matrix.md` — AC/F 与测试映射
@@ -17,7 +17,7 @@
 ```bash
 git fetch origin
 git log -1 --oneline   # 记录 HEAD SHA
-git diff --check -- .trellis/tasks/08-26-m2-schedule-fixed-points-loop
+git diff --check 9c9a1a6...HEAD -- .trellis/tasks/08-26-m2-schedule-fixed-points-loop
 ```
 
 ## GO 条件（全部满足）

@@ -7,7 +7,7 @@
 | 类别 | 条目 |
 | --- | --- |
 | 功能 AC | 8 |
-| 失败路径 AC | 21（F1–F21） |
+| 失败路径 AC | 25（F1–F25） |
 | E2E | 1 spec × 2 projects（各完整 1–7） |
 | NF | NF-1–NF-8 |
 
@@ -50,6 +50,10 @@
 | F19 | **编辑后 effective_from 有新实例** | formal-plan |
 | F20 | **同 item 同 key 异 actor → 409** | complete + skip |
 | F21 | **create 回放无二次 horizon/outbox** | formal-plan + outbox |
+| F22 | **endDate 上界/缩短/maintain no-op** | plan-end-date |
+| F23 | **缺 Idempotency-Key → 400** | write-route-idempotency-header |
+| F24 | **并发同 key 200 回放** | schedule-terminal-concurrency |
+| F25 | **ledger 冲突 balance 不变；跨 item 同 key** | settlement-ledger |
 
 ## 4. 幂等与 schema
 
@@ -72,7 +76,7 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | --- | --- |
 | NF-1 | M1 回归 53 + E2E 10 |
 | NF-2 | 360px 无横向滚动 |
-| NF-3 | 写操作 Idempotency-Key |
+| NF-3 | 写操作 Idempotency-Key；缺失 → 400 `IDEMPOTENCY_KEY_REQUIRED` |
 | NF-4 | GET 零写库 |
 | NF-5 | 无 command_log；0008–0013 |
 | NF-6 | time-policy 扩展 |
@@ -106,3 +110,10 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | consolidated | plan_schedule_slots | design §2/§4.2；implement 0008 |
 | consolidated | Web UI + maintain 按钮 | design §11；NF-7 |
 | consolidated | 复审入口 | `PLANNING-REVIEW.md`；`planning-signoff-checklist.md` |
+| 7804743 C3 | diff --check 范围 | `PLANNING-REVIEW.md` 审阅基线 `9c9a1a6...HEAD` |
+| 7804743 C4 | 逐表迁移 | `implement.md` §2.0–§2.0.5 |
+| 7804743 C6 | endDate 边界 | `design.md` §5.1/§5.2/§5.8A/B；F22 |
+| 7804743 C7 | 锁后重查回放 | `design.md` §5.0；F24 |
+| 7804743 C8 | Idempotency-Key 400 | `design.md` §7.1；F23 |
+| 7804743 C9 | ledger 无全局 UNIQUE | `design.md` §4.2/§5.5；F25 |
+| 7804743 C10 | C6–C9 测试映射 | `implement.md` §4.2.1；design §10 |
