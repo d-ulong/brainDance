@@ -10,10 +10,7 @@ import {
   type UserRole,
 } from "@/modules/identity/constants";
 import { IdentityError } from "@/modules/identity/errors";
-import {
-  generateInviteCodePlaintext,
-  hashInviteCode,
-} from "@/lib/crypto";
+import { generateInviteCodePlaintext, hashInviteCode } from "@/lib/crypto";
 
 export type CreateInvitationInput = {
   adminId: string;

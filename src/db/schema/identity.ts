@@ -1,4 +1,5 @@
 import {
+  boolean,
   date,
   index,
   integer,
@@ -34,6 +35,8 @@ export const users = pgTable(
     contactVerifiedAt: timestamp("contact_verified_at", { withTimezone: true }),
     status: userStatusEnum("status").notNull().default("pending_verification"),
     authorizationEpoch: integer("authorization_epoch").notNull().default(0),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -134,17 +137,19 @@ export const loginSecurityEvents = pgTable(
   ],
 );
 
-export const auditEvents = pgTable("audit_events", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  actorId: uuid("actor_id"),
-  action: text("action").notNull(),
-  resourceType: text("resource_type").notNull(),
-  resourceId: uuid("resource_id"),
-  reasonCode: text("reason_code"),
-  requestId: text("request_id"),
-  idempotencyKey: text("idempotency_key"),
-  metadata: jsonb("metadata").$type<Record<string, string | number | boolean | null>>(),
-  occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [
-  unique("audit_events_idempotency_unique").on(table.idempotencyKey),
-]);
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actorId: uuid("actor_id"),
+    action: text("action").notNull(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: uuid("resource_id"),
+    reasonCode: text("reason_code"),
+    requestId: text("request_id"),
+    idempotencyKey: text("idempotency_key"),
+    metadata: jsonb("metadata").$type<Record<string, string | number | boolean | null>>(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [unique("audit_events_idempotency_unique").on(table.idempotencyKey)],
+);

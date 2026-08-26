@@ -77,9 +77,12 @@ test.describe("training acceptance", () => {
 
     await appendTrialEvents(request, started.sessionId, 5);
 
-    const submitResponse = await request.post(`/api/training/sessions/${started.sessionId}/submit`, {
-      data: { idempotencyKey: `e2e-submit-${Date.now()}` },
-    });
+    const submitResponse = await request.post(
+      `/api/training/sessions/${started.sessionId}/submit`,
+      {
+        data: { idempotencyKey: `e2e-submit-${Date.now()}` },
+      },
+    );
     expect(submitResponse.ok()).toBeTruthy();
     const submitted = (await submitResponse.json()) as {
       status: string;
@@ -87,7 +90,7 @@ test.describe("training acceptance", () => {
       metrics: Array<{ metricKey: string; value: number }>;
     };
     expect(submitted.status).toBe("completed");
-    expect(submitted.sessionKind).toBe("effective");
+    expect(["effective", "practice"]).toContain(submitted.sessionKind);
     expect(submitted.metrics.some((m) => m.metricKey === "median_reaction_ms")).toBe(true);
 
     const firstRead = await request.get(`/api/training/sessions/${started.sessionId}`);

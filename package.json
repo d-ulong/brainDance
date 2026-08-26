@@ -10,13 +10,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "tsx scripts/run-e2e.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-m1.ts",
     "db:studio": "drizzle-kit studio",
     "format": "prettier --check .",
-    "format:write": "prettier --write ."
+    "format:write": "prettier --write .",
+    "verify:m1-remediation": "pnpm db:migrate && pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm test:e2e"
   },
   "dependencies": {
     "@lucia-auth/adapter-drizzle": "^1.1.0",

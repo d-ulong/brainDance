@@ -106,8 +106,7 @@ export function computeReactionMetrics(trials: ReactionTrialRecord[]): ReactionM
     .filter((ms) => ms >= REACTION_MIN_VALID_MS && ms <= REACTION_MAX_VALID_MS)
     .sort((a, b) => a - b);
 
-  const medianReactionMs =
-    validReactionTimes.length === 0 ? null : median(validReactionTimes);
+  const medianReactionMs = validReactionTimes.length === 0 ? null : median(validReactionTimes);
 
   return {
     medianReactionMs,

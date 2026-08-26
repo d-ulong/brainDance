@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireStudentSession } from "@/lib/auth-request";
+import {
+  jsonWithSessionCookie,
+  refreshSessionCookieAfterEpochChange,
+  requireStudentSessionForWrites,
+} from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { acceptRelationshipRequest } from "@/modules/family-access/relationship-request.service";
 
@@ -15,7 +18,7 @@ type RouteContext = {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const { db, dbUser } = await requireStudentSession();
+    const { db, dbUser, session } = await requireStudentSessionForWrites();
     const { requestId } = await context.params;
     const body = bodySchema.parse(await request.json());
 
@@ -26,13 +29,18 @@ export async function POST(request: Request, context: RouteContext) {
       requestIdHeader: request.headers.get("x-request-id") ?? undefined,
     });
 
-    return NextResponse.json({
-      relationshipId: result.relationshipId,
-      familyId: result.familyId,
-      idempotentReplay: result.idempotentReplay,
-    });
+    const sessionCookie = await refreshSessionCookieAfterEpochChange(db, dbUser.id, session.id);
+
+    return jsonWithSessionCookie(
+      {
+        relationshipId: result.relationshipId,
+        familyId: result.familyId,
+        idempotentReplay: result.idempotentReplay,
+      },
+      sessionCookie,
+    );
   } catch (error) {
     const { status, body } = toErrorResponse(error);
-    return NextResponse.json(body, { status });
+    return Response.json(body, { status });
   }
 }

@@ -2,11 +2,12 @@ import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { getDb } from "@/db";
+import { getDb, type Database } from "@/db";
 import { users } from "@/db/schema";
 import { createLucia } from "@/lib/lucia";
 import { IdentityError } from "@/modules/identity/errors";
 import { validateSession } from "@/modules/identity/login.service";
+import { assertStudentMayPerformWrites } from "@/modules/identity/password-change-guard";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 
 async function requireSession() {
@@ -56,8 +57,51 @@ export async function requireStudentSession() {
   return ctx;
 }
 
+export async function requireStudentSessionForWrites() {
+  const ctx = await requireStudentSession();
+  assertStudentMayPerformWrites(ctx.dbUser);
+  return ctx;
+}
+
+export async function requireVerifiedParentSession() {
+  const ctx = await requireParentSession();
+  if (!ctx.dbUser.contactVerifiedAt) {
+    throw new FamilyAccessError("CONTACT_NOT_VERIFIED", "Parent contact must be verified");
+  }
+  return ctx;
+}
+
 export async function requireAuthenticatedSession() {
   return requireSession();
+}
+
+export async function refreshSessionCookieAfterEpochChange(
+  db: Database,
+  userId: string,
+  currentSessionId: string,
+) {
+  const lucia = createLucia(db);
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) {
+    throw new IdentityError("USER_NOT_FOUND", "User not found");
+  }
+
+  await lucia.invalidateSession(currentSessionId);
+  const newSession = await lucia.createSession(userId, {
+    authorizationEpoch: user.authorizationEpoch,
+  });
+  const sessionCookie = lucia.createSessionCookie(newSession.id);
+
+  return {
+    name: sessionCookie.name,
+    value: sessionCookie.value,
+    attributes: {
+      secure: sessionCookie.attributes.secure ?? false,
+      path: sessionCookie.attributes.path ?? "/",
+      httpOnly: sessionCookie.attributes.httpOnly ?? true,
+      sameSite: sessionCookie.attributes.sameSite ?? "lax",
+    },
+  };
 }
 
 export function jsonWithSessionCookie<T>(

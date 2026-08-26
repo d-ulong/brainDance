@@ -8,9 +8,11 @@ import {
   pgTable,
   text,
   timestamp,
-  unique,
   uuid,
+  unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 import { users } from "./identity";
 
@@ -34,10 +36,7 @@ export const trainingDefinitions = pgTable(
     trainingKey: text("training_key").notNull(),
     version: integer("version").notNull(),
     ageBand: text("age_band").notNull(),
-    metricSchema: jsonb("metric_schema")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
+    metricSchema: jsonb("metric_schema").$type<Record<string, unknown>>().notNull().default({}),
     active: integer("active").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -76,8 +75,12 @@ export const trainingSessions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    unique("training_sessions_start_idempotency_unique").on(table.startIdempotencyKey),
-    unique("training_sessions_submit_idempotency_unique").on(table.submitIdempotencyKey),
+    uniqueIndex("training_sessions_start_idempotency_scoped")
+      .on(table.studentId, table.startIdempotencyKey)
+      .where(sql`${table.startIdempotencyKey} is not null`),
+    uniqueIndex("training_sessions_submit_idempotency_scoped")
+      .on(table.studentId, table.submitIdempotencyKey)
+      .where(sql`${table.submitIdempotencyKey} is not null`),
     index("training_sessions_student_key_date_idx").on(
       table.studentId,
       table.trainingKey,

@@ -13,7 +13,8 @@ export type IdentityErrorCode =
   | "VERIFICATION_EXPIRED"
   | "USER_NOT_FOUND"
   | "CONTACT_NOT_VERIFIED"
-  | "VALIDATION_ERROR";
+  | "VALIDATION_ERROR"
+  | "PASSWORD_CHANGE_REQUIRED";
 
 export class IdentityError extends Error {
   readonly code: IdentityErrorCode;

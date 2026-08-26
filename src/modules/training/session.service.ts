@@ -9,12 +9,10 @@ import {
   users,
 } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { getActiveTrainingDefinition } from "@/modules/training/definition.service";
-import {
-  REACTION_TRAINING_KEY,
-  TRAINING_BLUR_ABANDON_MS,
-} from "@/modules/training/constants";
+import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/training/constants";
 import { TrainingError } from "@/modules/training/errors";
 import {
   computeReactionMetrics,
@@ -23,6 +21,7 @@ import {
 } from "@/modules/training/reaction-v1";
 import { resolveAgeBand, type AgeBand } from "@/modules/time-policy/resolve-age-band";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 
 export type StartTrainingSessionInput = {
   studentId: string;
@@ -291,28 +290,96 @@ async function upsertProfileProjection(
   }
 }
 
+async function findStartSessionByIdempotency(
+  db: Database,
+  studentId: string,
+  idempotencyKey: string,
+) {
+  const [existing] = await db
+    .select()
+    .from(trainingSessions)
+    .where(
+      and(
+        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.startIdempotencyKey, idempotencyKey),
+      ),
+    )
+    .limit(1);
+
+  return existing;
+}
+
+async function buildStartReplayResult(
+  db: Database,
+  existing: typeof trainingSessions.$inferSelect,
+): Promise<StartTrainingSessionResult> {
+  const definition = await getActiveTrainingDefinition(
+    db,
+    existing.trainingKey,
+    existing.ageBand as AgeBand,
+  );
+
+  return {
+    sessionId: existing.id,
+    trainingKey: existing.trainingKey,
+    definitionVersion: existing.definitionVersion,
+    ageBand: existing.ageBand as AgeBand,
+    familyDate: existing.familyDate,
+    expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
+    status: "active",
+    idempotentReplay: true,
+  };
+}
+
+async function resolveSubmitIdempotencyReplay(
+  db: Database,
+  input: SubmitTrainingSessionInput,
+  existing: typeof trainingSessions.$inferSelect,
+): Promise<SubmitTrainingSessionResult> {
+  if (existing.id !== input.sessionId) {
+    throw new TrainingError(
+      "IDEMPOTENCY_SESSION_MISMATCH",
+      "Submit idempotency key is bound to a different training session",
+    );
+  }
+
+  const metrics = await loadSessionMetrics(db, existing.id);
+  return {
+    sessionId: existing.id,
+    status: existing.status as SubmitTrainingSessionResult["status"],
+    sessionKind: existing.sessionKind,
+    metrics,
+    idempotentReplay: true,
+  };
+}
+
+async function findSubmitSessionByIdempotency(
+  db: Database,
+  studentId: string,
+  idempotencyKey: string,
+) {
+  const [existing] = await db
+    .select()
+    .from(trainingSessions)
+    .where(
+      and(
+        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.submitIdempotencyKey, idempotencyKey),
+      ),
+    )
+    .limit(1);
+
+  return existing;
+}
+
 export async function startTrainingSession(
   db: Database,
   input: StartTrainingSessionInput,
 ): Promise<StartTrainingSessionResult> {
-  const [existing] = await db
-    .select()
-    .from(trainingSessions)
-    .where(eq(trainingSessions.startIdempotencyKey, input.idempotencyKey))
-    .limit(1);
+  const existing = await findStartSessionByIdempotency(db, input.studentId, input.idempotencyKey);
 
   if (existing) {
-    const definition = await getActiveTrainingDefinition(db, existing.trainingKey, existing.ageBand as AgeBand);
-    return {
-      sessionId: existing.id,
-      trainingKey: existing.trainingKey,
-      definitionVersion: existing.definitionVersion,
-      ageBand: existing.ageBand as AgeBand,
-      familyDate: existing.familyDate,
-      expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
-      status: "active",
-      idempotentReplay: true,
-    };
+    return buildStartReplayResult(db, existing);
   }
 
   const ageBand = await resolveStudentAgeBand(db, input.studentId);
@@ -320,49 +387,62 @@ export async function startTrainingSession(
   const familyDate = toFamilyDate();
   const startedAt = new Date();
 
-  const [created] = await db
-    .insert(trainingSessions)
-    .values({
-      studentId: input.studentId,
-      trainingKey: input.trainingKey,
-      definitionId: definition.id,
-      definitionVersion: definition.version,
-      ageBand,
-      familyDate,
-      startedAt,
+  try {
+    const [created] = await db
+      .insert(trainingSessions)
+      .values({
+        studentId: input.studentId,
+        trainingKey: input.trainingKey,
+        definitionId: definition.id,
+        definitionVersion: definition.version,
+        ageBand,
+        familyDate,
+        startedAt,
+        status: "active",
+        startIdempotencyKey: input.idempotencyKey,
+      })
+      .returning();
+
+    if (!created) {
+      throw new Error("Failed to create training session");
+    }
+
+    await appendAuditEvent(db, {
+      actorId: input.studentId,
+      action: "training_session.started",
+      resourceType: "training_session",
+      resourceId: created.id,
+      requestId: input.requestId,
+      idempotencyKey: `audit:training-start:${input.studentId}:${input.idempotencyKey}`,
+      metadata: {
+        trainingKey: input.trainingKey,
+        familyDate,
+        ageBand,
+      },
+    });
+
+    return {
+      sessionId: created.id,
+      trainingKey: created.trainingKey,
+      definitionVersion: created.definitionVersion,
+      ageBand: created.ageBand as AgeBand,
+      familyDate: created.familyDate,
+      expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
       status: "active",
-      startIdempotencyKey: input.idempotencyKey,
-    })
-    .returning();
+      idempotentReplay: false,
+    };
+  } catch (error) {
+    if (!isPostgresUniqueViolation(error)) {
+      throw error;
+    }
 
-  if (!created) {
-    throw new Error("Failed to create training session");
+    const raced = await findStartSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+    if (!raced) {
+      throw error;
+    }
+
+    return buildStartReplayResult(db, raced);
   }
-
-  await appendAuditEvent(db, {
-    actorId: input.studentId,
-    action: "training_session.started",
-    resourceType: "training_session",
-    resourceId: created.id,
-    requestId: input.requestId,
-    idempotencyKey: `audit:training-start:${input.idempotencyKey}`,
-    metadata: {
-      trainingKey: input.trainingKey,
-      familyDate,
-      ageBand,
-    },
-  });
-
-  return {
-    sessionId: created.id,
-    trainingKey: created.trainingKey,
-    definitionVersion: created.definitionVersion,
-    ageBand: created.ageBand as AgeBand,
-    familyDate: created.familyDate,
-    expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
-    status: "active",
-    idempotentReplay: false,
-  };
 }
 
 export async function appendTrainingEvent(
@@ -491,30 +571,39 @@ export async function abandonTrainingSession(
   return { sessionId: input.sessionId, status: "abandoned" };
 }
 
+async function replayOrMismatchOnSubmitKeyConflict(
+  db: Database,
+  input: SubmitTrainingSessionInput,
+): Promise<SubmitTrainingSessionResult> {
+  const raced = await findSubmitSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+  if (!raced) {
+    throw new Error("Submit idempotency conflict without matching session");
+  }
+
+  return resolveSubmitIdempotencyReplay(db, input, raced);
+}
+
 export async function submitTrainingSession(
   db: Database,
   input: SubmitTrainingSessionInput,
 ): Promise<SubmitTrainingSessionResult> {
-  const [existingBySubmitKey] = await db
-    .select()
-    .from(trainingSessions)
-    .where(eq(trainingSessions.submitIdempotencyKey, input.idempotencyKey))
-    .limit(1);
+  const existingBySubmitKey = await findSubmitSessionByIdempotency(
+    db,
+    input.studentId,
+    input.idempotencyKey,
+  );
 
   if (existingBySubmitKey) {
-    const metrics = await loadSessionMetrics(db, existingBySubmitKey.id);
-    return {
-      sessionId: existingBySubmitKey.id,
-      status: existingBySubmitKey.status as SubmitTrainingSessionResult["status"],
-      sessionKind: existingBySubmitKey.sessionKind,
-      metrics,
-      idempotentReplay: true,
-    };
+    return resolveSubmitIdempotencyReplay(db, input, existingBySubmitKey);
   }
 
   const session = await loadOwnedSession(db, input.studentId, input.sessionId);
 
-  if (session.status === "completed" || session.status === "invalid" || session.status === "abandoned") {
+  if (
+    session.status === "completed" ||
+    session.status === "invalid" ||
+    session.status === "abandoned"
+  ) {
     throw new TrainingError("SESSION_ALREADY_COMPLETED", "Session is already finalized");
   }
 
@@ -524,10 +613,17 @@ export async function submitTrainingSession(
 
   if (session.blurAccumulatedMs > TRAINING_BLUR_ABANDON_MS) {
     const finishedAt = new Date();
-    await db
-      .update(trainingSessions)
-      .set({ status: "abandoned", finishedAt, submitIdempotencyKey: input.idempotencyKey })
-      .where(eq(trainingSessions.id, input.sessionId));
+    try {
+      await db
+        .update(trainingSessions)
+        .set({ status: "abandoned", finishedAt, submitIdempotencyKey: input.idempotencyKey })
+        .where(eq(trainingSessions.id, input.sessionId));
+    } catch (error) {
+      if (isPostgresUniqueViolation(error)) {
+        return replayOrMismatchOnSubmitKeyConflict(db, input);
+      }
+      throw error;
+    }
 
     return {
       sessionId: input.sessionId,
@@ -549,15 +645,22 @@ export async function submitTrainingSession(
 
   if (!validation.valid) {
     const finishedAt = new Date();
-    await db
-      .update(trainingSessions)
-      .set({
-        status: "invalid",
-        finishedAt,
-        invalidReason: validation.reason,
-        submitIdempotencyKey: input.idempotencyKey,
-      })
-      .where(eq(trainingSessions.id, input.sessionId));
+    try {
+      await db
+        .update(trainingSessions)
+        .set({
+          status: "invalid",
+          finishedAt,
+          invalidReason: validation.reason,
+          submitIdempotencyKey: input.idempotencyKey,
+        })
+        .where(eq(trainingSessions.id, input.sessionId));
+    } catch (error) {
+      if (isPostgresUniqueViolation(error)) {
+        return replayOrMismatchOnSubmitKeyConflict(db, input);
+      }
+      throw error;
+    }
 
     await appendAuditEvent(db, {
       actorId: input.studentId,
@@ -565,7 +668,7 @@ export async function submitTrainingSession(
       resourceType: "training_session",
       resourceId: input.sessionId,
       requestId: input.requestId,
-      idempotencyKey: `audit:training-invalid:${input.idempotencyKey}`,
+      idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
       metadata: { reason: validation.reason },
     });
 
@@ -581,108 +684,131 @@ export async function submitTrainingSession(
   const computed = computeReactionMetrics(validation.trials);
   const metricRows = metricsToRows(input.sessionId, computed);
 
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext(${`${input.studentId}:${session.trainingKey}:${session.familyDate}`}))`,
-    );
-    await tx.execute(sql`SELECT id FROM training_sessions WHERE id = ${input.sessionId} FOR UPDATE`);
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`${input.studentId}:${session.trainingKey}:${session.familyDate}`}))`,
+      );
+      await tx.execute(
+        sql`SELECT id FROM training_sessions WHERE id = ${input.sessionId} FOR UPDATE`,
+      );
 
-    const [lockedSession] = await tx
-      .select()
-      .from(trainingSessions)
-      .where(eq(trainingSessions.id, input.sessionId))
-      .limit(1);
+      const [lockedSession] = await tx
+        .select()
+        .from(trainingSessions)
+        .where(eq(trainingSessions.id, input.sessionId))
+        .limit(1);
 
-    if (!lockedSession || lockedSession.status !== "active") {
-      throw new TrainingError("SESSION_INVALID_STATE", "Session is not active");
-    }
+      if (!lockedSession || lockedSession.status !== "active") {
+        throw new TrainingError("SESSION_INVALID_STATE", "Session is not active");
+      }
 
-    const [existingEffective] = await tx
-      .select({ id: trainingSessions.id })
-      .from(trainingSessions)
-      .where(
-        and(
-          eq(trainingSessions.studentId, input.studentId),
-          eq(trainingSessions.trainingKey, lockedSession.trainingKey),
-          eq(trainingSessions.familyDate, lockedSession.familyDate),
-          eq(trainingSessions.sessionKind, "effective"),
-          eq(trainingSessions.status, "completed"),
-        ),
-      )
-      .limit(1);
+      const [existingEffective] = await tx
+        .select({ id: trainingSessions.id })
+        .from(trainingSessions)
+        .where(
+          and(
+            eq(trainingSessions.studentId, input.studentId),
+            eq(trainingSessions.trainingKey, lockedSession.trainingKey),
+            eq(trainingSessions.familyDate, lockedSession.familyDate),
+            eq(trainingSessions.sessionKind, "effective"),
+            eq(trainingSessions.status, "completed"),
+          ),
+        )
+        .limit(1);
 
-    const sessionKind = existingEffective ? "practice" : "effective";
-    const finishedAt = new Date();
+      const sessionKind = existingEffective ? "practice" : "effective";
+      const finishedAt = new Date();
 
-    await tx
-      .update(trainingSessions)
-      .set({
-        status: "submitted",
-        submitIdempotencyKey: input.idempotencyKey,
-      })
-      .where(eq(trainingSessions.id, input.sessionId));
+      await tx
+        .update(trainingSessions)
+        .set({
+          status: "submitted",
+          submitIdempotencyKey: input.idempotencyKey,
+        })
+        .where(eq(trainingSessions.id, input.sessionId));
 
-    await tx
-      .update(trainingSessions)
-      .set({ status: "validated" })
-      .where(eq(trainingSessions.id, input.sessionId));
+      await tx
+        .update(trainingSessions)
+        .set({ status: "validated" })
+        .where(eq(trainingSessions.id, input.sessionId));
 
-    await tx
-      .update(trainingSessions)
-      .set({
-        status: "completed",
-        sessionKind,
-        finishedAt,
-      })
-      .where(eq(trainingSessions.id, input.sessionId));
+      await tx
+        .update(trainingSessions)
+        .set({
+          status: "completed",
+          sessionKind,
+          finishedAt,
+        })
+        .where(eq(trainingSessions.id, input.sessionId));
 
-    await tx.insert(trainingMetrics).values(metricRows);
+      await tx.insert(trainingMetrics).values(metricRows);
 
-    const metrics = metricRows.map((row) => ({
-      metricKey: row.metricKey,
-      value: Number(row.value),
-      unit: row.unit,
-      isValid: row.isValid === 1,
-      calculationVersion: row.calculationVersion,
-    }));
+      const metrics = metricRows.map((row) => ({
+        metricKey: row.metricKey,
+        value: Number(row.value),
+        unit: row.unit,
+        isValid: row.isValid === 1,
+        calculationVersion: row.calculationVersion,
+      }));
 
-    await upsertProfileProjection(tx, {
-      studentId: input.studentId,
-      trainingKey: lockedSession.trainingKey,
-      definitionVersion: lockedSession.definitionVersion,
-      ageBand: lockedSession.ageBand,
-      sessionId: input.sessionId,
-      metrics,
-    });
-
-    await appendAuditEvent(tx, {
-      actorId: input.studentId,
-      action: "training_session.completed",
-      resourceType: "training_session",
-      resourceId: input.sessionId,
-      requestId: input.requestId,
-      idempotencyKey: `audit:training-complete:${input.idempotencyKey}`,
-      metadata: {
-        sessionKind,
+      await upsertProfileProjection(tx, {
+        studentId: input.studentId,
         trainingKey: lockedSession.trainingKey,
-        familyDate: lockedSession.familyDate,
-      },
+        definitionVersion: lockedSession.definitionVersion,
+        ageBand: lockedSession.ageBand,
+        sessionId: input.sessionId,
+        metrics,
+      });
+
+      await appendAuditEvent(tx, {
+        actorId: input.studentId,
+        action: "training_session.completed",
+        resourceType: "training_session",
+        resourceId: input.sessionId,
+        requestId: input.requestId,
+        idempotencyKey: `audit:training-complete:${input.studentId}:${input.idempotencyKey}`,
+        metadata: {
+          sessionKind,
+          trainingKey: lockedSession.trainingKey,
+          familyDate: lockedSession.familyDate,
+        },
+      });
+
+      await appendOutboxEvent(tx, {
+        aggregateType: "training_session",
+        aggregateId: input.sessionId,
+        eventType: "training_session.completed",
+        dedupeKey: `outbox:training-complete:${input.studentId}:${input.idempotencyKey}`,
+        payload: {
+          sessionId: input.sessionId,
+          studentId: input.studentId,
+          trainingKey: lockedSession.trainingKey,
+          sessionKind,
+          familyDate: lockedSession.familyDate,
+        },
+      });
+
+      const [finalSession] = await tx
+        .select({ sessionKind: trainingSessions.sessionKind })
+        .from(trainingSessions)
+        .where(eq(trainingSessions.id, input.sessionId))
+        .limit(1);
+
+      return {
+        sessionId: input.sessionId,
+        status: "completed" as const,
+        sessionKind: finalSession?.sessionKind ?? sessionKind,
+        metrics,
+        idempotentReplay: false,
+      };
     });
-
-    const [finalSession] = await tx
-      .select({ sessionKind: trainingSessions.sessionKind })
-      .from(trainingSessions)
-      .where(eq(trainingSessions.id, input.sessionId))
-      .limit(1);
-
-    return {
-      sessionId: input.sessionId,
-      status: "completed" as const,
-      sessionKind: finalSession?.sessionKind ?? sessionKind,
-      metrics,
-      idempotentReplay: false,
-    };
-  });
+  } catch (error) {
+    if (isPostgresUniqueViolation(error)) {
+      return replayOrMismatchOnSubmitKeyConflict(db, input);
+    }
+    throw error;
+  }
 }
 
 export async function getTrainingSessionForStudent(
@@ -750,16 +876,15 @@ export async function getTrainingSummaryForParent(
       status: latestSession.status,
       sessionKind: latestSession.sessionKind,
       finishedAt: latestSession.finishedAt?.toISOString() ?? null,
-      metrics: metrics.filter((m) =>
-        ["median_reaction_ms", "accuracy"].includes(m.metricKey),
-      ),
+      metrics: metrics.filter((m) => ["median_reaction_ms", "accuracy"].includes(m.metricKey)),
     };
   }
 
   return {
     studentId,
     trainingKey,
-    definitionVersion: latestSession?.definitionVersion ?? projectionRows[0]?.definitionVersion ?? 1,
+    definitionVersion:
+      latestSession?.definitionVersion ?? projectionRows[0]?.definitionVersion ?? 1,
     ageBand: latestSession?.ageBand ?? projectionRows[0]?.ageBand ?? "9-12",
     familyDate: latestSession?.familyDate ?? toFamilyDate(),
     lastSession,

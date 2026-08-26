@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "@/db";
 import { invitationRedemptions, invitations, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashPassword, normalizeAccountKey } from "@/lib/crypto";
 import { IdentityError } from "@/modules/identity/errors";
 import { resolveInvitationByCode } from "@/modules/identity/invitation.service";
@@ -60,7 +61,11 @@ export async function registerParent(
     .limit(1);
 
   if (existingRedemption?.userId) {
-    const [user] = await db.select().from(users).where(eq(users.id, existingRedemption.userId)).limit(1);
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, existingRedemption.userId))
+      .limit(1);
     if (!user) {
       throw new IdentityError("USER_NOT_FOUND", "Registered user not found for idempotent replay");
     }
@@ -167,6 +172,18 @@ export async function registerParent(
       metadata: {
         role: "parent",
         contactType: contact.contactType,
+      },
+    });
+
+    await appendOutboxEvent(tx, {
+      aggregateType: "invitation",
+      aggregateId: invitation.invitationId,
+      eventType: "invitation.redeemed",
+      dedupeKey: `outbox:invite-redeem:${input.idempotencyKey}`,
+      payload: {
+        invitationId: invitation.invitationId,
+        userId: createdUser.id,
+        targetRole: invitation.targetRole,
       },
     });
 

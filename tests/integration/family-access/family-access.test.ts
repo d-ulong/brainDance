@@ -2,7 +2,13 @@ import { config } from "dotenv";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { auditEvents, guardianConsents, relationships, studentAssociationCodes, users } from "@/db/schema";
+import {
+  auditEvents,
+  guardianConsents,
+  relationships,
+  studentAssociationCodes,
+  users,
+} from "@/db/schema";
 import { hashAssociationCode } from "@/lib/crypto";
 import { login, validateSession } from "@/modules/identity/login.service";
 import { createInvitation } from "@/modules/identity/invitation.service";
@@ -15,17 +21,10 @@ import {
   getStudentProfileForParent,
   rejectRelationshipRequest,
 } from "@/modules/family-access/relationship-request.service";
-import {
-  bootstrapVerifiedParentWithInvite,
-  seedStudentUser,
-} from "../../helpers/family-access";
+import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import { bootstrapAdmin } from "../../helpers/identity";
-import {
-  closeTestDb,
-  getTestDb,
-  migrateTestDb,
-  resetIdentityTables,
-} from "../../helpers/db";
+import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
+import { ensureReactionDefinitions } from "../../helpers/training";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -42,6 +41,7 @@ describe.skipIf(!hasDb)("family access module", () => {
 
   beforeEach(async () => {
     await resetIdentityTables(db);
+    await ensureReactionDefinitions(db);
   });
 
   afterAll(async () => {
@@ -298,7 +298,10 @@ describe.skipIf(!hasDb)("family access module", () => {
   });
 
   it("rejects unverified parent relationship requests", async () => {
-    const { adminId } = await bootstrapAdmin(db, `admin-unverified-${crypto.randomUUID()}@test.local`);
+    const { adminId } = await bootstrapAdmin(
+      db,
+      `admin-unverified-${crypto.randomUUID()}@test.local`,
+    );
     const parentEmail = `unverified-${crypto.randomUUID()}@test.local`;
     const invite = await createInvitation(db, {
       adminId,

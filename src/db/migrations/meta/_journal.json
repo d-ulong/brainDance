@@ -36,6 +36,27 @@
       "when": 1787657526335,
       "tag": "0004_guardian_consents",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787664000000,
+      "tag": "0005_training_idempotency_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787667600000,
+      "tag": "0006_outbox_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787671200000,
+      "tag": "0007_controlled_student_password",
+      "breakpoints": true
     }
   ]
 }
