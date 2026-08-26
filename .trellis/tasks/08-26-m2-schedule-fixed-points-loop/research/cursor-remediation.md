@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**NO-GO**。基线：`05abce9`（2026-08-26）。
+> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R5）。基线：`912bc7f`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -21,6 +21,8 @@
 
 **验证**：`m2-schema-constraints.test.ts` 断言 `plans.current_version` 存在、`current_version_id` 不存在、FK 正确。
 
+**证据**：`682db06` + `design.md` §4.2/§5.1/§5.2 + `implement.md` §2.0/§2.0.6/§2.0.7 + `m2-schema-constraints.test.ts`
+
 ## R2 — plan_versions 的版本唯一性
 
 **位置**：`implement.md` §2.0；`design.md` §4.2；迁移约束测试。
@@ -31,6 +33,8 @@
 
 **验证**：迁移测试插入同一 `plan_id + version` 第二行必须失败；不同 plan 的同 version 可成功。
 
+**证据**：`682db06` + `implement.md` §2.0 + `design.md` §4.2 + `m2-schema-constraints.test.ts`
+
 ## R3 — schedule_events 的 skip reason
 
 **位置**：`design.md` §5.4b；`implement.md` §2.0.1；迁移约束测试。
@@ -40,6 +44,8 @@
 **必须修订**：新增 `reason text NULL`，仅 skip 可携带；complete 必为 NULL。将其纳入事件复合 CHECK，或在命令/数据库约束中等价保证该语义。
 
 **验证**：测试 skip 可持久化 reason；complete 带非 NULL reason 被拒绝（若采用 DB CHECK）；同键回放不覆盖既有 reason。
+
+**证据**：`682db06` + `design.md` §5.4b + `implement.md` §2.0.1 + `m2-schema-constraints.test.ts` + `schedule-skip.test.ts`
 
 ## R4 — M2 缩窄范围与空值语义显式化
 
@@ -54,9 +60,11 @@
 
 **验证**：迁移测试逐项断言列、FK、NOT NULL/NULL 语义；结算集成测试断言 `source_id=settlement_id`。
 
+**证据**：`682db06` + `design.md` §4.2「已批准 M2 范围缩窄」+ `implement.md` §2.0.2/§2.0.4/§2.0.7 + `m2-schema-constraints.test.ts` + `settlement-ledger.test.ts`
+
 ## R5 — C8：三条日程生成路径的字段验证
 
-**位置**：`design.md` §5.8A；`implement.md` §4.2、§4.2.2/§4.2.3；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C8。
+**位置**：`design.md` §5.8A；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C8。
 
 **问题**：算法已写入四个字段，但测试映射只笼统列 `owner_id/slot_key/source`，且 C8 被转移为 horizon/header 测试，未证明三条调用路径均能插入满足 DDL 的 `schedule_items`。
 
@@ -69,6 +77,8 @@
 | 独立 maintain | `maintain-horizon.test.ts` | 同上 |
 
 同时保留 `horizon-through.test.ts` 与 F22 的日期上界断言；它们不能替代上述字段断言。
+
+**证据**：`682db06` + `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
 
 ## 完成标准
 

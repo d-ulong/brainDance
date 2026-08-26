@@ -66,7 +66,12 @@
 | schedule_events UNIQUE | `(schedule_item_id, idempotency_key)` 资源级 |
 | schedule_events 状态 | `from_status`/`to_status`（非 event_type）；对齐 data-model |
 | 跨 actor 同 key | 409，不回放 |
-| completion_kind | schedule_events 复合 CHECK；fact_versions NOT NULL（complete） |
+| completion_kind | schedule_events 复合 CHECK（含 reason）；fact_versions NOT NULL（complete） |
+| schedule_events.reason | skip 可写；complete 必 NULL；同键回放不覆盖 |
+| plans.current_version | FK → plan_versions.id（非 current_version_id）；v1 同事务 UPDATE |
+| plan_versions | UNIQUE `(plan_id, version)` 与幂等键并存 |
+| M2 缩窄 | fact_versions.schedule_item_id NOT NULL；ledger settlement_id/source_id NOT NULL |
+| ledger source | M2：`source_type='settlement'` 且 `source_id=settlement_id` |
 | plan_kind | 对齐 data-model；非 plan_type |
 | horizon_maintains | 仅独立 POST；内联不写 |
 | maintain body | 空；固定 30 天 |
@@ -137,3 +142,8 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | fb5f05c 规格 F28 | 回放不 persist；no-op 仍 persist | design §5.8B 2/4/5；implement §4.2.2 |
 | fe5bc1a S-C4 | point_rules.active；fact/ledger 可空列 | implement §2.0.2/§2.0.3/§2.0.4 |
 | fe5bc1a C8 | horizonThrough 单元 + §3.1 七 Route 400 | horizon-through.test.ts；write-route-idempotency-header |
+| R1 | plans.current_version 统一 | implement §2.0/§2.0.6/§2.0.7；design §4.2/§5.1 | m2-schema-constraints.test.ts |
+| R2 | plan_versions UNIQUE (plan_id, version) | implement §2.0；design §4.2 | m2-schema-constraints.test.ts |
+| R3 | schedule_events.reason + 复合 CHECK | implement §2.0.1；design §5.4b | m2-schema-constraints + schedule-skip.test.ts |
+| R4 | M2 缩窄 NULL 语义 | design §4.2；implement §2.0.2/§2.0.4/§2.0.7 | m2-schema-constraints + settlement-ledger.test.ts |
+| R5 / C8 | 三路径 schedule_items 四字段 | design §5.8A；implement §4.2.4 | schedule-generation + formal-plan + maintain-horizon |
