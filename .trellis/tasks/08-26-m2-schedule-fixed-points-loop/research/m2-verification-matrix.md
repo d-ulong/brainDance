@@ -7,7 +7,7 @@
 | 类别 | 条目 |
 | --- | --- |
 | 功能 AC | 8 |
-| 失败路径 AC | 27（F1–F27） |
+| 失败路径 AC | 28（F1–F28） |
 | E2E | 1 spec × 2 projects（各完整 1–7） |
 | NF | NF-1–NF-8 |
 
@@ -56,6 +56,7 @@
 | F25 | **首次 balance +10；回放/冲突 balance 不变；跨 item 同 key** | settlement-ledger |
 | F26 | **maintain 并发同 scope+key → 1 generate/audit/outbox** | maintain-horizon |
 | F27 | **编辑 localTime 未变仍建 slot 快照并生成** | formal-plan |
+| F28 | **maintain no-op 仍 persistExpiredPastWindow；回放路径不 persist** | plan-end-date + maintain-horizon |
 
 ## 4. 幂等与 schema
 
@@ -63,6 +64,7 @@
 | --- | --- |
 | occurrence_key | `{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}` |
 | schedule_events UNIQUE | `(schedule_item_id, idempotency_key)` 资源级 |
+| schedule_events 状态 | `from_status`/`to_status`（非 event_type）；对齐 data-model |
 | 跨 actor 同 key | 409，不回放 |
 | completion_kind | schedule_events 复合 CHECK；fact_versions NOT NULL（complete） |
 | plan_kind | 对齐 data-model；非 plan_type |
@@ -129,3 +131,5 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | a55541a C10 | F26 maintain 并发；F27 slot 快照 | maintain-horizon；formal-plan |
 | a55541a C11 | maintain §5.8B 回放/占位 | design §5.8B；F14/F26 |
 | a55541a C12 | §5.2 无条件 slot | design §5.2；F27 |
+| 8003694 标准 C4 | 迁移 data-model 对齐 §2.0.7；from_status/to_status | implement §2.0.7；design §4.2 |
+| 8003694 规格 C11 | maintain no-op 仍 persistExpired | design §5.8B 步骤 5；F28 |

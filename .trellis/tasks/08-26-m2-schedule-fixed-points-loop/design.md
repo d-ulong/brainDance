@@ -66,20 +66,20 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 
 | 表 | 字段（幂等） | 约束 |
 | --- | --- | --- |
-| `plans` | `plan_kind`, `start_date`, `end_date`, `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(owner_id, student_id, create_idempotency_key)`；**部分 UNIQUE** `(student_id) WHERE status='active' AND plan_kind='formal'` |
-| `plans` | `deactivate_idempotency_key`, `deactivate_idempotency_payload_hash` | UNIQUE `(id, deactivate_idempotency_key)` |
-| `plan_versions` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(plan_id, create_idempotency_key)` |
+| `plans` | `plan_kind`, `goal_id`, `source_plan_id`, `current_version_id`, `start_date`, `end_date`, … | 对齐 `docs/data-model.md` §4；M2 `goal_id`/`source_plan_id` NULL |
+| `plans` | `create_idempotency_key`, … | UNIQUE `(owner_id, student_id, create_idempotency_key)`；**部分 UNIQUE** `(student_id) WHERE status='active' AND plan_kind='formal'` |
+| `plan_versions` | `version`, `schedule_rule`, `effective_from`, `effective_until`, `created_at` | 对齐 data-model；M2 幂等列 `create_idempotency_key`+hash |
 | `plan_schedule_slots` | `slot_key`, `local_time` | UNIQUE `(plan_version_id, slot_key)`；M2 固定 `default` + `20:00` |
-| `schedule_items` | `occurrence_key`, `status` | UNIQUE `occurrence_key`；CHECK status IN (`pending`,`completed`,`skipped`,`expired`,`cancelled`) |
-| `schedule_events` | `event_type`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | UNIQUE `(schedule_item_id, idempotency_key)` **不含 event_type**；CHECK event_type IN (`complete`,`skip`)；**复合 CHECK** `(event_type='complete' AND completion_kind IN ('on_time','late')) OR (event_type='skip' AND completion_kind IS NULL)` |
+| `schedule_items` | `owner_id`, `slot_key`, `source`, `plan_snapshot`, `occurrence_key`, `status` | 对齐 data-model §4；M2 `source='plan'` |
+| `schedule_events` | `from_status`, `to_status`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | 对齐 data-model §4（状态迁移）；**复合 CHECK** 见 implement §2.0.1 |
 | `fact_versions` | `idempotency_key`, `idempotency_payload_hash`, `completion_kind`, `occurred_at` | UNIQUE `(schedule_item_id, idempotency_key)` |
 | `schedule_horizon_maintains` | `idempotency_key`, `idempotency_payload_hash`, `actor_id` | UNIQUE `(student_id, actor_id, idempotency_key)` |
 | `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
 | `settlements` | `idempotency_key`, `settlement_period` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)`；`settlement_period` = `schedule_item.family_date` |
 | `point_ledger_entries` | `idempotency_key`（审计列，非 UNIQUE） | UNIQUE `settlement_id`；**无**全局 `UNIQUE(idempotency_key)` |
-| `point_balance_projection` | `balance` | PK `student_id`；`INSERT(student_id,balance) VALUES (:s,:amount)`；冲突 `balance += EXCLUDED.balance` |
+| `point_balance_projection` | `balance`, `last_ledger_entry_id` | PK `student_id`；`INSERT(student_id,balance)` + `EXCLUDED.balance` 累加 |
 
-逐表 DDL 与 `implement.md` §2.0 一一对应；迁移前须对照 §2.0.6 交叉表。
+逐表 DDL 与 `implement.md` §2.0 及 **§2.0.7 data-model 对齐表** 一致；禁止未文档化的模型漂移。
 
 ### 4.3 日程事件幂等 scope（阻断 #2 — 已选定）
 
@@ -90,7 +90,7 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 | 同 item + 同 key + 同 actor + 同 payload hash | **200 回放**该 event（及 complete 的 fact/settlement） |
 | 同 item + 同 key + **异 payload hash** | **409** |
 | 同 item + 同 key + **异 actor**（即使 payload 相同） | **409** — **绝不**回放另一操作者结果 |
-| 同 item + 同 key + 异 `event_type`（complete vs skip） | **409**（占同一幂等槽） |
+| 同 item + 同 key + 异 `to_status`（completed vs skipped） | **409**（占同一幂等槽） |
 
 实现：INSERT 前 SELECT；若已有行且 `actor_id` 或 hash 与当前请求不一致 → 409；若完全一致 → 回放。
 
@@ -198,8 +198,8 @@ audit `action` 示例：`formal_plan.created`、`schedule_item.completed`、`poi
    -- 锁后重查：并发同 key 第二请求不得因 status 已变而误 409
    IF existing:
      IF existing.actor_id != 当前 actor OR existing.idempotency_payload_hash != bodyHash
-        OR (complete 且 existing.event_type != 'complete')
-        OR (skip 且 existing.event_type != 'skip') → 409
+        OR (complete 且 existing.to_status != 'completed')
+        OR (skip 且 existing.to_status != 'skipped') → 409
      ELSE → 200 回放（complete 含 fact/settlement/ledger；skip 含 skip event）
 5. IF item.status != 'pending' → 409
 6. IF isPastCompletionWindow(item.family_date, now) → persistExpiredPastWindow → 409
@@ -293,7 +293,7 @@ Headers: Idempotency-Key
 
 步骤 1–5：§5.0 共用决策
 6. kind = deriveCompletionKind(now, item.family_date)
-7. INSERT schedule_events (complete, actor_id=student, completion_kind=kind, occurred_at=now, bodyHash)
+7. INSERT schedule_events (from_status=pending, to_status=completed, actor_id=student, completion_kind=kind, occurred_at=now, bodyHash)
 8. UPDATE schedule_items.status = completed
 9. INSERT fact_versions (student_id, schedule_item_id, fact_key='schedule.completed',
      source_kind='system', value={ completion_kind: kind }, occurred_at, asserted_at, recorded_at,
@@ -310,7 +310,7 @@ Headers: Idempotency-Key
 Body: { reason? }
 
 步骤 1–5：§5.0 共用决策
-6. INSERT schedule_events (skip, actor_id, completion_kind=NULL, reason?, bodyHash)
+6. INSERT schedule_events (from_status=pending, to_status=skipped, actor_id, completion_kind=NULL, reason?, bodyHash)
 7. UPDATE schedule_items.status = skipped
 8. audit + outbox(schedule.skipped) — 无 fact/settlement/ledger
 
@@ -342,10 +342,11 @@ settleForFact(fact_version_id) — 在 complete 事务内同步调用：
      ) ON CONFLICT (settlement_id) DO NOTHING
      RETURNING id
      → **仅当 RETURNING 有新行**：
-       INSERT INTO point_balance_projection (student_id, balance)
-       VALUES (:student_id, :amount)
+       INSERT INTO point_balance_projection (student_id, balance, last_ledger_entry_id)
+       VALUES (:student_id, :amount, :ledger_id)
        ON CONFLICT (student_id) DO UPDATE
        SET balance = point_balance_projection.balance + EXCLUDED.balance,
+           last_ledger_entry_id = EXCLUDED.last_ledger_entry_id,
            updated_at = now()
        -- :amount = +10；projection **无** amount 列；冲突时以 EXCLUDED.balance 累加
      → 若冲突（无 RETURNING）：SELECT 原 ledger 回放；**禁止** UPSERT balance
@@ -450,17 +451,20 @@ Transaction:
        IF row.hash != bodyHash → 409
        ELSE → **200 回放** row（**不** generate / audit / outbox）
   5. -- 仅步骤 4 RETURNING 成功者（首个占位）继续：
+     persistExpiredPastWindow(student_id)   -- **含 no-op**（items_created=0）；回放路径跳过
      through = horizonThrough(plans)
      IF plans.end_date IS NOT NULL AND currentFamilyDate > plans.end_date:
-       items_created = 0 → 跳至步骤 8
+       items_created = 0
      ELSE:
        from = max( currentVersion pending 最远 family_date+1, currentFamilyDate )
        IF from > through → items_created = 0
-       ELSE items_created = generateHorizonInline(plans, version, from, through); persistExpiredPastWindow
+       ELSE items_created = generateHorizonInline(plans, version, from, through)
   6. UPDATE schedule_horizon_maintains SET items_created = :n WHERE id = :maintain_id
   7. IF items_created > 0: audit + outbox(schedule.horizon_maintained)
   8. 返回 200 { items_created }
 ```
+
+**no-op 语义**：`items_created=0` 时仍执行步骤 5 的 `persistExpiredPastWindow`；**不** generate / audit / outbox（F8/F22/F28）。
 
 **并发语义**：同 `(student_id, actor_id, idempotency_key)` 并发请求 → 仅首个占位者 generate/audit/outbox；后到 **200 回放**，0 副作用（F14/F26）。
 
@@ -533,7 +537,7 @@ function effectiveStatus(item, now): Status {
 | 跨命令类型同 key | 允许 | F13 |
 | endDate 上界 min(endDate, today+30) | 200；实例不超出 endDate | F22 |
 | 缩短 endDate 取消 future pending | 200；§4.8b | F22 |
-| maintain 计划已结束 / from>through | 200 no-op；**无** horizon_maintained outbox | F22 |
+| maintain 计划已结束 / from>through | 200 no-op；persist expired；**无** horizon_maintained outbox | F22/F28 |
 | 缺 Idempotency-Key（七类写 Route） | **400** `IDEMPOTENCY_KEY_REQUIRED` | F23 |
 | complete/skip 并发同 key | 200 回放；仅 1 event/fact/ledger | F24 |
 | ledger 首次写入 balance +10 | 200 | F25 |
@@ -608,15 +612,15 @@ Route Handler 在鉴权前校验 header；不得进入 domain 层。响应体 `{
 | F1 | `schedule-auth.test.ts` |
 | F2 | `formal-plan.test.ts` |
 | F5, F6 | `schedule-query.test.ts` + unit effective-status |
-| F14, F26 | `maintain-horizon.test.ts` |
+| F14, F26, F28 | `maintain-horizon.test.ts` |
 | F16–F18, F20, F24 | `schedule-skip.test.ts` |
 | F9–F13, F20 | `command-idempotency.test.ts` |
-| F22 | `plan-end-date.test.ts` |
+| F22, F28 | `plan-end-date.test.ts` |
 | F23 | `write-route-idempotency-header.test.ts` |
 | F24 | `schedule-terminal-concurrency.test.ts` |
 | F25 | `settlement-ledger.test.ts` |
 | F27 | `formal-plan.test.ts` |
-| F1–F21, F22–F25 | 见上表及 `m2-verification-matrix.md` §3 |
+| F1–F21, F22–F28 | 见上表及 `m2-verification-matrix.md` §3 |
 
 ## 11. Web UI（M2）
 

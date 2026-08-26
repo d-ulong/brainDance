@@ -109,6 +109,7 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-F20**：同 item 同 key、异 actor（complete vs skip）→ 409，不回放。
 - [ ] **AC-M2-F21**：创建计划幂等回放 → 无第二次 inline horizon、无重复 plan.created outbox。
 - [ ] **AC-M2-F22**：endDate 上界 `min(endDate,today+30)`；缩短 endDate 调用 §4.8b 取消 pending；maintain 已结束或 from>through → no-op 且 **不发** `schedule.horizon_maintained` outbox。
+- [ ] **AC-M2-F28**：maintain no-op（`items_created=0`：计划已结束或 `from>through`）**仍**在步骤 5 调用 `persistExpiredPastWindow`；回放路径（步骤 2/4）**不** persist。
 - [ ] **AC-M2-F23**：七类写 Route 缺 `Idempotency-Key` → **400** `IDEMPOTENCY_KEY_REQUIRED`。
 - [ ] **AC-M2-F24**：complete/skip 并发同 key → 200 回放；仅 1 终态 event/fact/ledger。
 - [ ] **AC-M2-F25**：首次 complete balance 0→+10；同一 fact 回放 balance 不变；跨 item 同客户端 key 各自 +10。

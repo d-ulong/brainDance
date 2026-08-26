@@ -6,7 +6,7 @@
 
 | ID | 要求 | 闭合位置 | 测试 |
 | --- | --- | --- | --- |
-| C4 | `plan_kind`（非 plan_type）；events 复合 CHECK；point_rules 三表 DDL | `design.md` §4.2；`implement.md` §2.0.1/§2.0.3/§2.0.6 | `m2-schema-constraints.test.ts` |
+| C4 | 迁移与 `docs/data-model.md` §4–§5 对齐；§2.0.7 禁止漂移 | `design.md` §4.2；`implement.md` §2.0–§2.0.7 | `m2-schema-constraints.test.ts` |
 
 ## 规格轴
 
@@ -22,14 +22,14 @@
 | C8 | generateHorizonInline + horizonThrough | `design.md` §5.8A | F22 |
 | C9 | balance UPSERT：`INSERT(balance)` + `EXCLUDED.balance`；仅 ledger RETURNING 后 | `design.md` §5.5；`implement.md` §2.0.4 | F25 |
 | C10 | F26 maintain 并发；F27 slot 快照 | `implement.md` §4.2.1；矩阵 §3 | F26/F27 |
-| C11 | maintain §5.8B：hash 回放 + INSERT 占位 + 冲突读取 | `design.md` §5.8B | F14/F26 |
+| C11 | maintain §5.8B：hash 回放 + INSERT 占位 + 冲突读取；no-op 仍 persistExpired | `design.md` §5.8B | F14/F26/F28 |
 | C12 | §5.2 每 version 无条件 slot；localTime 未变复制 | `design.md` §5.2 | F27 |
 
 ## A. 首轮阻断 #1–#8（9c87d40）
 
 | ID | 要求 | 闭合位置 |
 | --- | --- | --- |
-| A1 | prd AC-M2-1~8、F1~F27 完整无占位 | `prd.md` §Acceptance Criteria |
+| A1 | prd AC-M2-1~8、F1~F28 完整无占位 | `prd.md` §Acceptance Criteria |
 | A2 | implement §5 M1 衔接、§6 检查清单、§7 禁止项 | `implement.md` |
 | A3 | schedule_events 资源级幂等；跨 actor 409 | `design.md` §4.3、§5.7 |
 | A4 | 编辑从 effective_from 生成至 horizonThrough | `design.md` §5.2、§5.8A |
@@ -53,7 +53,7 @@
 
 | ID | 要求 | 闭合位置 |
 | --- | --- | --- |
-| D1 | F1–F27 均在 design §6.1 或矩阵 | `design.md` §6.1；`m2-verification-matrix.md` §3 |
+| D1 | F1–F28 均在 design §6.1 或矩阵 | `design.md` §6.1；`m2-verification-matrix.md` §3 |
 | D2 | AC-M2-1~8 均有测试映射 | `design.md` §10；`implement.md` §4.2 |
 | D3 | E2E desktop + mobile-360 各 7 步 | `implement.md` §4.3；prd AC-M2-7 |
 | D4 | time-policy 扩展非新建 time/ | `design.md` §8；implement §7 |
