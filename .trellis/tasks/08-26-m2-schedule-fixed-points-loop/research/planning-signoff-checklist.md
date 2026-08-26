@@ -24,6 +24,8 @@
 | C10 | F26 maintain 并发；F27 slot 快照 | `implement.md` §4.2.1；矩阵 §3 | F26/F27 |
 | C11 | maintain §5.8B：hash 回放 + INSERT 占位 + 冲突读取；no-op 仍 persistExpired | `design.md` §5.8B | F14/F26/F28 |
 | C12 | §5.2 每 version 无条件 slot；**R7 顺序** localTime 未变从 oldVersionId 复制 | `design.md` §5.2 | F27 |
+| R9 | 编辑 **effectiveEndDate + updatedPlan** 为 cancel/horizon/generate 唯一输入 | `design.md` §5.2；`implement.md` §4.2.5 | F22：`plan-end-date.test.ts` + `formal-plan.test.ts`（缩短/扩展/未改 endDate） |
+| R10 | §5.1/§5.2/§5.6 命令算法无省略符；字段来源与保留语义完整 | `design.md` §5.1、§5.2、§5.6 | `schedule-generation.test.ts` + `formal-plan.test.ts` + `command-idempotency.test.ts`（F11–F13 启规则） |
 
 ## A. 首轮阻断 #1–#8（9c87d40）
 
@@ -45,7 +47,7 @@
 | --- | --- | --- |
 | B1 | design §5.3/5.5/5.6 完整步骤 | `design.md` |
 | B2 | design §5.7 全表含跨 actor 列 | `design.md` §5.7 |
-| B3 | 无 `...` SQL/路径占位 | `design.md` §5.4–5.5 |
+| B3 | 无 `...` SQL/路径占位 | `design.md` §5.1、§5.2、§5.6（R10）；§5.4–5.5 |
 | B4 | implement §3 完整 route/service 列表 | `implement.md` §3 |
 | B5 | prd 无「见 design §x」 | `prd.md` |
 

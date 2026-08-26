@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**NO-GO**。复审基线：`8b2ded8...af93cf6`（2026-08-26）。
+> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R10）。基线：`frozen-go-gate.md` @ `2792418`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -145,6 +145,8 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。
 
+**证据**：`__COMMIT_SHA__` + `design.md` §5.2 + `implement.md` §4.2.5 + `plan-end-date.test.ts` / `formal-plan.test.ts`
+
 ## R10 — B3/G2：命令算法不得含不可实施省略符
 
 **位置**：`design.md` §5.1、§5.2、§5.6；`planning-signoff-checklist.md` B3；`PLANNING-REVIEW.md` G2。
@@ -159,7 +161,9 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 不得用 `...`、`…`、`同前`、`等同理` 代替命令契约。
 
-**验证**：对上述算法区执行静态检查，`rg '(\.\.\.|…|同前|等同理)' design.md` 不得命中命令算法占位；并保留每个命令对应的测试映射。
+**验证**：对上述算法区执行静态检查，`rg '(\.\.\.|…|同前|等同理)' design.md` 在 §5.1/§5.2/§5.6 命令块内不得命中；并保留每个命令对应的测试映射。
+
+**证据**：`__COMMIT_SHA__` + `design.md` §5.1/§5.2/§5.6 + `implement.md` §4.2.5 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `command-idempotency.test.ts`
 
 ## 完成标准
 

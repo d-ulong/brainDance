@@ -440,6 +440,18 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | C8（补充） | `plan-end-date.test.ts` | F22 endDate 边界 + inline/maintain 生成范围 |
 | S-C4 | `write-route-idempotency-header.test.ts` | §3.1 七 Route 缺 header → 400 |
 
+### 4.2.5 Cursor 整改映射（R9–R10，`frozen-go-gate.md` FG-01/FG-02）
+
+| R-ID | 测试文件 | 断言 |
+| --- | --- | --- |
+| R9 / F22 | `plan-end-date.test.ts` | 编辑**缩短** endDate：`cancelPendingAfterEndDate` 使用新 endDate；future pending 在新结束日后 cancelled；新/保留 pending 不超过新 endDate |
+| R9 / F22 | `plan-end-date.test.ts` | 编辑**扩展** endDate：horizon/generate 使用扩展后 effectiveEndDate；可生成至新上界 |
+| R9 / F22 | `plan-end-date.test.ts` | 编辑**未改** endDate：cancel/horizon/generate 使用原 endDate（与 oldPlan 一致） |
+| R9 / F22 | `formal-plan.test.ts` | 编辑路径同上三场景；`horizonThrough(updatedPlan)` 与 `generateHorizonInline(updatedPlan, ...)` 不读 stale plan 对象 |
+| R10 | `schedule-generation.test.ts` | §5.1 创建：plans/plan_versions/slot 字段来源与 INSERT 列一致 |
+| R10 | `formal-plan.test.ts` | §5.2 编辑：title/description/endDate/localTime 保留/更新语义；updatedPlan 驱动 horizon |
+| R10 | `command-idempotency.test.ts` | §5.6 启规则：point_rules + point_rule_versions v1 字段与模板 effect 来源（F11–F13） |
+
 ### 4.3 E2E
 
 **Spec**：`tests/e2e/m2-schedule-points-flow.spec.ts`
@@ -495,6 +507,8 @@ pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm te
 - [ ] ledger **CHECK** `source_type='settlement' AND source_id=settlement_id`；**source_id FK → settlements**
 - [ ] `generateHorizonInline` 步骤 0：按传入 `version.id` 查 `plan_schedule_slots.default`（禁止读 plans.current_version）
 - [ ] 编辑 §5.2 **R7 顺序**：oldVersionId 读 slot → INSERT vN+1 slot → UPDATE current_version
+- [ ] 编辑 §5.2 **R9**：effectiveEndDate + updatedPlan 为 cancel/horizon/generate 唯一输入
+- [ ] §5.1/§5.2/§5.6 **R10**：命令算法无 `...`/`…`/`同前`/`等同理` 占位
 - [ ] cursor-remediation.md 证据行填写**实际 commit SHA**（非占位符）
 - [ ] maintain no-op（items_created=0）仍调用 persistExpiredPastWindow
 - [ ] `git diff --check` 通过

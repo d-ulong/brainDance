@@ -239,13 +239,49 @@ Body: { title, description?, localTime: "20:00", startDate, endDate? }
      → 命中且 hash 一致: **200 回放**（**跳过 4–10**；不二次维护、不重复 audit/outbox）
      → 命中且 hash 不一致: 409
   4. 仅未命中：assert 无其他 active formal plan
-  5. INSERT plans(plan_kind='formal', start_date, end_date, ...) + plan_versions v1
-     + plan_schedule_slots(v1, slot_key='default', local_time)
-     + UPDATE plans SET current_version = v1.id
-  6. through = horizonThrough(plans)
-  7. from = max(start_date, currentFamilyDate)
+  5. INSERT plans (
+       owner_id = 当前家长 user.id,
+       student_id = :studentId,
+       plan_kind = 'formal',
+       status = 'active',
+       title = body.title,
+       description = body.description ?? NULL,
+       start_date = body.startDate,
+       end_date = body.endDate ?? NULL,
+       goal_id = NULL,
+       source_plan_id = NULL,
+       create_idempotency_key = Idempotency-Key 头,
+       create_idempotency_payload_hash = bodyHash
+     )
+     INSERT plan_versions v1 (
+       plan_id = plans.id,
+       version = 1,
+       schedule_rule = { "frequency": "daily" },
+       effective_from = body.startDate,
+       effective_until = NULL,
+       create_idempotency_key = Idempotency-Key 头,
+       create_idempotency_payload_hash = bodyHash,
+       created_at = now()
+     )
+     INSERT plan_schedule_slots (
+       plan_version_id = v1.id,
+       slot_key = 'default',
+       local_time = body.localTime
+     )
+     UPDATE plans SET current_version = v1.id WHERE id = plans.id
+     createdPlan = {
+       id: plans.id,
+       owner_id, student_id, plan_kind, status,
+       title: body.title,
+       description: body.description ?? NULL,
+       start_date: body.startDate,
+       end_date: body.endDate ?? NULL,
+       current_version: v1.id
+     }
+  6. through = horizonThrough(createdPlan)
+  7. from = max(createdPlan.start_date, currentFamilyDate)
   8. IF from > through → 0 新实例
-     ELSE generateHorizonInline(plans, version=v1, from, through)
+     ELSE generateHorizonInline(createdPlan, version=v1, from, through)
   9. persistExpiredPastWindow(student_id)
  10. audit + outbox(plan.created)
 ```
@@ -262,27 +298,62 @@ Body: { title?, description?, localTime?, endDate? }
   3. SELECT plan_versions WHERE (plan_id, create_idempotency_key)
      → 命中且 hash 一致: **200 回放**该 version（跳过 4–11；不二次 inline horizon/outbox）
      → 命中且 hash 不一致: 409
-  4. SELECT plans FOR UPDATE WHERE id = :planId
-     oldVersionId = plans.current_version
+  4. SELECT plans FOR UPDATE WHERE id = :planId → oldPlan
+     oldVersionId = oldPlan.current_version
      slot_time = body.localTime
        ?? SELECT local_time FROM plan_schedule_slots
           WHERE plan_version_id = oldVersionId AND slot_key = 'default'
-     INSERT plan_versions vN+1（effective_from = nextFamilyDate(now)）
-     INSERT plan_schedule_slots(plan_version_id=vN+1, slot_key='default', local_time=slot_time)
-     UPDATE plans SET end_date = COALESCE(body.endDate, plans.end_date), title/description 等同理,
-                      current_version = vN+1.id
-     -- **顺序强制（R7/C12）**：先保存 oldVersionId 并读旧 slot → INSERT vN+1 + slot → 最后 UPDATE current_version
-  5. cancelPendingAfterEndDate(student_id, plans.end_date) — §4.8b
-  6. cancel future pending（旧 version，family_date >= effective_from）
-  7. through = horizonThrough(plans)
-  8. from = effective_from
+     effectiveEndDate = body.endDate ?? oldPlan.end_date
+     effectiveTitle = body.title ?? oldPlan.title
+     effectiveDescription = body.description ?? oldPlan.description
+     INSERT plan_versions vN+1 (
+       plan_id = oldPlan.id,
+       version = (SELECT version FROM plan_versions WHERE id = oldVersionId) + 1,
+       schedule_rule = (SELECT schedule_rule FROM plan_versions WHERE id = oldVersionId),
+       effective_from = nextFamilyDate(now),
+       effective_until = NULL,
+       create_idempotency_key = Idempotency-Key 头,
+       create_idempotency_payload_hash = bodyHash,
+       created_at = now()
+     )
+     INSERT plan_schedule_slots (
+       plan_version_id = vN+1.id,
+       slot_key = 'default',
+       local_time = slot_time
+     )
+     UPDATE plans SET
+       title = effectiveTitle,
+       description = effectiveDescription,
+       end_date = effectiveEndDate,
+       current_version = vN+1.id
+       WHERE id = oldPlan.id
+     updatedPlan = {
+       id: oldPlan.id,
+       owner_id: oldPlan.owner_id,
+       student_id: oldPlan.student_id,
+       plan_kind: oldPlan.plan_kind,
+       status: oldPlan.status,
+       title: effectiveTitle,
+       description: effectiveDescription,
+       start_date: oldPlan.start_date,
+       end_date: effectiveEndDate,
+       current_version: vN+1.id
+     }
+     -- **R7/C12 顺序**：先 oldVersionId 读 slot → INSERT vN+1 + slot → 最后 UPDATE current_version
+     -- **R9/F22**：cancel / horizon / generate **仅**使用 effectiveEndDate 与 updatedPlan，不依赖 ORM 刷新
+  5. cancelPendingAfterEndDate(oldPlan.student_id, effectiveEndDate) — §4.8b
+  6. cancel future pending（旧 version，family_date >= vN+1.effective_from）
+  7. through = horizonThrough(updatedPlan)
+  8. from = vN+1.effective_from
   9. IF from > through → 跳过 generate（0 新实例）
-     ELSE generateHorizonInline(plans, version=vN+1, from, through, ignoreCancelled=true)
- 10. persistExpiredPastWindow(student_id)
+     ELSE generateHorizonInline(updatedPlan, version=vN+1, from, through, ignoreCancelled=true)
+ 10. persistExpiredPastWindow(oldPlan.student_id)
  11. audit + outbox(plan.version_created) — **不含** horizon_maintained
 ```
 
-（步骤 4：R7 顺序 — oldVersionId 读 slot → vN+1 + slot 快照 → UPDATE current_version；再 horizon。F27 覆盖 localTime 未变仍建新 slot。）
+（步骤 4：R7 顺序 — oldVersionId 读 slot → vN+1 + slot 快照 → UPDATE current_version。R9 — effectiveEndDate/updatedPlan 为步骤 5–9 唯一 plan/endDate 输入。F27：localTime 未变仍建新 slot。）
+
+**字段保留/更新语义（R10）**：body 未传或为 null/undefined 的 `title`/`description`/`endDate`/`localTime` 分别保留 oldPlan 对应字段（`effectiveX = body.X ?? oldPlan.X`）；`localTime` 未传时从 oldVersionId 的 slot 复制（R7）。
 
 **禁止**：从「含已取消实例的全表 max(future family_date)」起算；那会导致新版本 0 实例。
 
@@ -390,7 +461,24 @@ Body: { templateId: "schedule_system_complete_v1" }
   3. SELECT point_rules WHERE (creator_parent_id, student_id, create_idempotency_key)
      → 命中且 hash 一致: **200 回放** rule
      → 命中且 hash 不一致: 409
-  4. INSERT point_rules(active=true, …) + point_rule_versions v1
+  4. INSERT point_rules (
+       student_id = :studentId,
+       creator_parent_id = 当前家长 user.id,
+       template_id = body.templateId,
+       active = true,
+       create_idempotency_key = Idempotency-Key 头,
+       create_idempotency_payload_hash = bodyHash,
+       created_at = now()
+     )
+     INSERT point_rule_versions v1 (
+       point_rule_id = point_rules.id,
+       version = 1,
+       parameters = {},
+       effect = SELECT effect_schema FROM point_rule_templates WHERE id = body.templateId,
+       priority = NULL,
+       effective_at = now(),
+       status = 'active'
+     )
   5. audit + outbox(point_rule.enabled)
 
 与「创建计划」为**独立步骤**；E2E 步骤 3 显式调用。
