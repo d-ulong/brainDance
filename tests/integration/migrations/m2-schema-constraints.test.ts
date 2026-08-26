@@ -9,7 +9,9 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { closeTestDb, getTestDb, migrateTestDb, type TestDb } from "../../helpers/db";
+import * as schema from "@/db/schema";
+
+import { type TestDb } from "../../helpers/db";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 
 config({ path: ".env.local" });
@@ -83,6 +85,35 @@ async function expectConstraintFailure(
       expect(failure.column).toBe(expected.column);
     }
   }
+}
+
+async function expectConstraintFailureOneOf(
+  executor: { execute: TestDb["execute"] },
+  statement: ReturnType<typeof sql>,
+  expected: { code: string; constraints: string[] },
+): Promise<void> {
+  try {
+    await executor.execute(statement);
+    throw new Error(`Expected SQLSTATE ${expected.code} but the statement succeeded`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Expected SQLSTATE")) {
+      throw error;
+    }
+    const failure = unwrapPgFailure(error);
+    expect(failure.code).toBe(expected.code);
+    expect(expected.constraints).toContain(failure.constraint);
+  }
+}
+
+async function getCheckConstraintDefs(db: TestDb, tableName: string): Promise<Map<string, string>> {
+  const rows = await db.execute(sql`
+    SELECT conname, pg_get_constraintdef(oid) AS def
+    FROM pg_constraint
+    WHERE conrelid = ${tableName}::regclass AND contype = 'c'
+  `);
+  return new Map(
+    (rows as unknown as { conname: string; def: string }[]).map((row) => [row.conname, row.def]),
+  );
 }
 
 async function listColumnContracts(
@@ -385,6 +416,34 @@ async function migrateFolder(connectionString: string, folder: string): Promise<
   }
 }
 
+type IsolatedM2Database = {
+  db: TestDb;
+  client: ReturnType<typeof postgres>;
+  admin: ReturnType<typeof postgres>;
+  dbName: string;
+};
+
+async function openIsolatedM2Database(): Promise<IsolatedM2Database> {
+  const rootUrl = process.env.DATABASE_URL!;
+  const dbName = `bd_m2_constraints_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
+  await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+  const databaseUrl = databaseUrlForName(rootUrl, dbName);
+  await migrateFolder(databaseUrl, "./src/db/migrations");
+  const client = postgres(databaseUrl, { max: 5 });
+  const db = drizzle(client, { schema }) as TestDb;
+  return { db, client, admin, dbName };
+}
+
+async function closeIsolatedM2Database(isolated: IsolatedM2Database): Promise<void> {
+  await isolated.client.end({ timeout: 5 });
+  await isolated.admin.unsafe(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${isolated.dbName}' AND pid <> pg_backend_pid()`,
+  );
+  await isolated.admin.unsafe(`DROP DATABASE IF EXISTS "${isolated.dbName}"`);
+  await isolated.admin.end({ timeout: 5 });
+}
+
 async function withTempDatabase(
   namePrefix: string,
   run: (databaseUrl: string) => Promise<void>,
@@ -431,47 +490,27 @@ function writeMainThrough0007Folder(): string {
 }
 
 describe.skipIf(!hasDb)("m2 schema constraints", () => {
-  const db = getTestDb();
+  let db: TestDb;
+  let isolatedDb: IsolatedM2Database | undefined;
 
   beforeAll(async () => {
-    await migrateTestDb();
-    await db.execute(sql`
-      ALTER TABLE schedule_events DROP CONSTRAINT IF EXISTS schedule_events_completion_reason_check
-    `);
-    await db.execute(sql`
-      ALTER TABLE schedule_events
-        ADD CONSTRAINT schedule_events_completion_reason_check
-        CHECK (
-          ("to_status" = 'completed' AND "completion_kind" IS NOT NULL AND "completion_kind" IN ('on_time', 'late') AND "reason" IS NULL)
-          OR ("to_status" = 'skipped' AND "completion_kind" IS NULL)
-        )
-    `);
-    await db.execute(sql`
-      DO $$ BEGIN
-        IF EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conname = 'schedule_events_to_status_check'
-        ) AND NOT EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conname = 'schedule_events_aa_to_status_check'
-        ) THEN
-          ALTER TABLE schedule_events
-            RENAME CONSTRAINT schedule_events_to_status_check TO schedule_events_aa_to_status_check;
-        END IF;
-      END $$;
-    `);
-  });
+    isolatedDb = await openIsolatedM2Database();
+    db = isolatedDb.db;
+  }, 120_000);
 
   beforeEach(async () => {
     await resetM2Tables(db);
   });
 
   afterAll(async () => {
-    await closeTestDb();
+    if (isolatedDb) {
+      await closeIsolatedM2Database(isolatedDb);
+    }
   });
 
   it("enforces full column nullability contracts from implement §2.0–§2.0.7", async () => {
     const required: Record<string, string[]> = {
+      goals: ["id", "student_id", "creator_id", "title", "status", "start_date"],
       plans: [
         "id",
         "student_id",
@@ -581,8 +620,18 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
         "idempotency_key",
       ],
       point_balance_projection: ["student_id", "balance", "updated_at"],
+      schedule_horizon_maintains: [
+        "id",
+        "student_id",
+        "actor_id",
+        "idempotency_key",
+        "idempotency_payload_hash",
+        "items_created",
+        "created_at",
+      ],
     };
     const nullable: Record<string, string[]> = {
+      goals: ["due_date", "closed_at"],
       plans: [
         "goal_id",
         "source_plan_id",
@@ -798,7 +847,56 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
     );
   });
 
+  it("enforces schedule_items occurrence_key unique", async () => {
+    const { parentId, studentId } = await seedParentStudent(db);
+    const { planId, versionId } = await seedFormalPlan(db, { parentId, studentId, key: "occ-dup" });
+    const occurrenceKey = "occ-occ-dup";
+    const scheduledAt = new Date("2026-01-01T12:00:00.000Z").toISOString();
+
+    await db.execute(sql`
+      INSERT INTO schedule_items (
+        plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
+        scheduled_at, status, source, occurrence_key
+      ) VALUES (
+        ${planId}::uuid, ${versionId}::uuid, ${studentId}::uuid, ${parentId}::uuid,
+        '2026-01-01', 'default', ${scheduledAt}::timestamptz, 'pending', 'plan',
+        ${occurrenceKey}
+      )
+    `);
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO schedule_items (
+          plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
+          scheduled_at, status, source, occurrence_key
+        ) VALUES (
+          ${planId}::uuid, ${versionId}::uuid, ${studentId}::uuid, ${parentId}::uuid,
+          '2026-01-02', 'default', ${scheduledAt}::timestamptz, 'pending', 'plan',
+          ${occurrenceKey}
+        )
+      `,
+      { code: "23505", constraint: "schedule_items_occurrence_key_unique" },
+    );
+  });
+
   it("isolates schedule item status CHECK and event CHECK positive/negative paths", async () => {
+    const checks = await getCheckConstraintDefs(db, "schedule_events");
+    expect(checks.has("schedule_events_from_status_check")).toBe(true);
+    expect(checks.get("schedule_events_from_status_check")).toContain("from_status");
+    expect(checks.get("schedule_events_from_status_check")).toContain("pending");
+
+    expect(checks.has("schedule_events_to_status_check")).toBe(true);
+    expect(checks.get("schedule_events_to_status_check")).toContain("to_status");
+    expect(checks.get("schedule_events_to_status_check")).toContain("completed");
+    expect(checks.get("schedule_events_to_status_check")).toContain("skipped");
+
+    expect(checks.has("schedule_events_completion_reason_check")).toBe(true);
+    const completionCheck = checks.get("schedule_events_completion_reason_check")!;
+    expect(completionCheck).toContain("completion_kind");
+    expect(completionCheck).toContain("reason IS NULL");
+    expect(completionCheck).toContain("skipped");
+
     const { parentId, studentId } = await seedParentStudent(db);
     const { planId, versionId } = await seedFormalPlan(db, { parentId, studentId, key: "events" });
     const itemId = await seedScheduleItem(db, {
@@ -848,7 +946,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       `,
       { code: "23514", constraint: "schedule_events_from_status_check" },
     );
-    await expectConstraintFailure(
+    await expectConstraintFailureOneOf(
       db,
       sql`
         INSERT INTO schedule_events (
@@ -859,7 +957,10 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           NULL, NULL, ${occurredAt}::timestamptz
         )
       `,
-      { code: "23514", constraint: "schedule_events_aa_to_status_check" },
+      {
+        code: "23514",
+        constraints: ["schedule_events_to_status_check", "schedule_events_completion_reason_check"],
+      },
     );
     await expectConstraintFailure(
       db,
