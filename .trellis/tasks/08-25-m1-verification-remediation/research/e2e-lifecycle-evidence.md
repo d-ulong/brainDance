@@ -1,32 +1,36 @@
 # E2E WebServer 生命周期 — 可复现证据
 
-> 分支 `fix/m1-verification-gaps` · 非交互式路径（Codex/CI 同款 `pnpm test:e2e` 脚本链）
+> 分支 `fix/m1-verification-gaps` · 非交互式路径由 **监督器** 统一管理
 
-## 修复要点
+## 架构
 
-1. **移除 tsx/pnpm wrapper**：Playwright `webServer.command` 直接 `node …/next start -p 3002`，由 Playwright 在非交互式退出时终止进程树。
-2. **`pnpm build` 前置**：Playwright 在 `globalSetup` 之前启动 webServer，build 移入 `package.json` 的 `test:e2e` 脚本链。
-3. **端口断言在 Playwright 完全退出之后**：`scripts/verify-e2e-port-free.mts`（非 globalTeardown，避免 teardown 顺序竞态）。
+`pnpm test:e2e` → `tsx scripts/run-e2e.mts`（监督器）
+
+```
+try:
+  pnpm build
+  启动 next start（监督器持有 PID）
+  等待 baseURL 就绪
+  E2E_SUPERVISED=true playwright test（无 Playwright webServer）
+finally:
+  taskkill / 进程组 SIGTERM（仅监督器启动的 PID）
+  assertPortFree(3002) — 无论 Playwright 成功/失败/中断均执行
+```
+
+Playwright 正常退出、非零退出、信号中断均由监督器 `finally` 清理，**不依赖** Playwright webServer teardown。
 
 ## 复现命令
 
 ```bash
 pnpm test:e2e
-pnpm test:e2e   # 连续第二次
+pnpm test:e2e   # 连续第二次（Codex 签署前必跑）
 ```
 
-## 实测结果（2026-08-26）
+## 实测结果（2026-08-26，监督器）
 
-| 轮次 | 测试 | 端口 3002 | 退出码 | 日志 |
-| --- | --- | --- | --- | --- |
-| 1 | 10 passed (1.4m) | `Port 3002: no LISTENING process` | 0 | `research/e2e-run1.log` |
-| 2 | 10 passed (1.3m) | `Port 3002: no LISTENING process` | 0 | `research/e2e-run2.log` |
+| 轮次 | 测试 | finally 端口检查 | 退出码 |
+| --- | --- | --- | --- |
+| 1 | 10 passed (1.3m) | `Port 3002: no LISTENING process` | 0 |
+| 2 | 10 passed (1.3m) | `Port 3002: no LISTENING process` | 0 |
 
-未 skip 用例、未手动 taskkill 无关进程。
-
-## 变更文件
-
-- `package.json` — `test:e2e` 脚本链
-- `playwright.config.ts` — 直接 next start + E2E env（无 NODE_ENV=development 污染）
-- `scripts/verify-e2e-port-free.mts` — 退出后端口检查
-- 删除 `scripts/e2e-web-server.mts`
+第二轮启动前 `assertPortFree` 通过（监督器 try 块首步），证明第一轮 finally 已释放端口。

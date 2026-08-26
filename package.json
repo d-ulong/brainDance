@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "pnpm build && playwright test && tsx scripts/verify-e2e-port-free.mts",
+    "test:e2e": "tsx scripts/run-e2e.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-m1.ts",
