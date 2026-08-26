@@ -145,7 +145,7 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。`horizon-through.test.ts` 断言 `end_date` 低于 30 天 cap 时返回该日期，NULL 时返回 cap。
 
-**证据**：`__COMMIT_SHA__` + `design.md` §5.2/§5.8A + `implement.md` §4.2.5 + `plan-end-date.test.ts` / `formal-plan.test.ts` / `horizon-through.test.ts`
+**证据**：`34697b8` + `design.md` §5.2/§5.8A + `implement.md` §4.2.5 + `plan-end-date.test.ts` / `formal-plan.test.ts` / `horizon-through.test.ts`
 
 ## R10 — B3/G2：命令算法不得含不可实施省略符
 
@@ -163,7 +163,7 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：对上述算法区执行静态检查，`rg '(\.\.\.|…|同前|等同理)' design.md` 在 §5.1/§5.2/§5.6 命令块内不得命中；并保留每个命令对应的测试映射。
 
-**证据**：`__COMMIT_SHA__` + `design.md` §5.1/§5.2/§5.6 + `implement.md` §4.2.5 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `command-idempotency.test.ts`
+**证据**：`34697b8` + `design.md` §5.1/§5.2/§5.6 + `implement.md` §4.2.5 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `command-idempotency.test.ts`
 
 ## 完成标准
 
