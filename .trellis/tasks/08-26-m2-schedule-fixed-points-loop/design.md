@@ -262,13 +262,16 @@ Body: { title?, description?, localTime?, endDate? }
   3. SELECT plan_versions WHERE (plan_id, create_idempotency_key)
      → 命中且 hash 一致: **200 回放**该 version（跳过 4–11；不二次 inline horizon/outbox）
      → 命中且 hash 不一致: 409
-  4. INSERT plan_versions vN+1（effective_from = nextFamilyDate(now)）
+  4. SELECT plans FOR UPDATE WHERE id = :planId
+     oldVersionId = plans.current_version
+     slot_time = body.localTime
+       ?? SELECT local_time FROM plan_schedule_slots
+          WHERE plan_version_id = oldVersionId AND slot_key = 'default'
+     INSERT plan_versions vN+1（effective_from = nextFamilyDate(now)）
+     INSERT plan_schedule_slots(plan_version_id=vN+1, slot_key='default', local_time=slot_time)
      UPDATE plans SET end_date = COALESCE(body.endDate, plans.end_date), title/description 等同理,
                       current_version = vN+1.id
-     slot_time = body.localTime ?? SELECT local_time FROM plan_schedule_slots
-                 WHERE plan_version_id = plans.current_version AND slot_key = 'default'
-     INSERT plan_schedule_slots(plan_version_id=vN+1, slot_key='default', local_time=slot_time)
-     -- **每个** plan_version **无条件**创建 slot 快照；localTime 未变则复制旧值
+     -- **顺序强制（R7/C12）**：先保存 oldVersionId 并读旧 slot → INSERT vN+1 + slot → 最后 UPDATE current_version
   5. cancelPendingAfterEndDate(student_id, plans.end_date) — §4.8b
   6. cancel future pending（旧 version，family_date >= effective_from）
   7. through = horizonThrough(plans)
@@ -279,7 +282,7 @@ Body: { title?, description?, localTime?, endDate? }
  11. audit + outbox(plan.version_created) — **不含** horizon_maintained
 ```
 
-（步骤 4：版本与 slot 快照先于 horizon 生成；F27 覆盖 localTime 未变仍建新 slot。）
+（步骤 4：R7 顺序 — oldVersionId 读 slot → vN+1 + slot 快照 → UPDATE current_version；再 horizon。F27 覆盖 localTime 未变仍建新 slot。）
 
 **禁止**：从「含已取消实例的全表 max(future family_date)」起算；那会导致新版本 0 实例。
 

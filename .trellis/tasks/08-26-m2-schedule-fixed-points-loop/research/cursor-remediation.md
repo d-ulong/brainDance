@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**NO-GO**。复审基线：`bce550a...d139440`（2026-08-26）。
+> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R8）。基线：`8b2ded8`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -21,7 +21,7 @@
 
 **验证**：`m2-schema-constraints.test.ts` 断言 `plans.current_version` 存在、`current_version_id` 不存在、FK 正确。
 
-**证据**：（见本提交 SHA） + `design.md` §4.2/§5.1/§5.2 + `implement.md` §2.0/§2.0.6/§2.0.7 + `m2-schema-constraints.test.ts`
+**证据**：`06a2aaf` + `design.md` §4.2/§5.1/§5.2 + `implement.md` §2.0/§2.0.6/§2.0.7 + `m2-schema-constraints.test.ts`
 
 ## R2 — plan_versions 的版本唯一性
 
@@ -33,7 +33,7 @@
 
 **验证**：迁移测试插入同一 `plan_id + version` 第二行必须失败；不同 plan 的同 version 可成功。
 
-**证据**：（见本提交 SHA） + `implement.md` §2.0 + `design.md` §4.2 + `m2-schema-constraints.test.ts`
+**证据**：`06a2aaf` + `implement.md` §2.0 + `design.md` §4.2 + `m2-schema-constraints.test.ts`
 
 ## R3 — schedule_events 的 skip reason
 
@@ -45,7 +45,7 @@
 
 **验证**：测试 skip 可持久化 reason；complete 带非 NULL reason 被拒绝（若采用 DB CHECK）；同键回放不覆盖既有 reason。
 
-**证据**：（见本提交 SHA） + `design.md` §5.4b + `implement.md` §2.0.1 + `m2-schema-constraints.test.ts` + `schedule-skip.test.ts`
+**证据**：`06a2aaf` + `design.md` §5.4b + `implement.md` §2.0.1 + `m2-schema-constraints.test.ts` + `schedule-skip.test.ts`
 
 ## R4 — M2 缩窄范围与空值语义显式化
 
@@ -62,7 +62,7 @@
 
 **验证**：迁移测试断言 CHECK 与 FK；负路径（错误 `source_type`、不匹配 `source_id`、无效 settlement FK）插入失败；M2 可空列接受 NULL；`settlement-ledger.test.ts` 断言正确结算流水成功。
 
-**证据**：（见本提交 SHA）+ `design.md` §4.2/§5.5 + `implement.md` §2.0.4/§2.0.7 + `m2-schema-constraints.test.ts` + `settlement-ledger.test.ts`
+**证据**：`d139440` + `design.md` §4.2/§5.5 + `implement.md` §2.0.4/§2.0.7 + `m2-schema-constraints.test.ts` + `settlement-ledger.test.ts`
 
 ## R5 — C8：三条日程生成路径的字段验证
 
@@ -80,7 +80,7 @@
 
 同时保留 `horizon-through.test.ts` 与 F22 的日期上界断言；它们不能替代上述字段断言。
 
-**证据**：（见本提交 SHA）+ `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + 三路径集成测试
+**证据**：`d139440` + `design.md` §5.8A + `implement.md` §4.2.4 + `planning-signoff-checklist.md` C8 + 三路径集成测试
 
 ## R6 — C8：生成器必须使用 version slot 快照时间
 
@@ -92,35 +92,31 @@
 
 **验证**：创建、编辑、maintain 三类测试均断言 `scheduled_at` 与 `occurrence_key` 使用该 `version` 的 slot `local_time`；编辑改时间后使用新版本时间。
 
-**证据**：（见本提交 SHA）+ `design.md` §5.8A + `implement.md` §4.2.4 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
+**证据**：`d139440` + `design.md` §5.8A + `implement.md` §4.2.4 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `maintain-horizon.test.ts`
 
 ## R7 — C2/C12：编辑时必须先读取旧 slot，再切换当前版本
 
-**位置**：`design.md` §5.2；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C2/C12。
+**位置**：`design.md` §5.2；`implement.md` §4.2.4；`planning-signoff-checklist.md` C2/C12。
 
-**问题**：现流程先执行 `UPDATE plans SET current_version=vN+1.id`，随后在未传 `localTime` 时从 `plans.current_version` 查询应复制的旧 slot。此时它已指向新 version，而新 slot 尚未插入，导致 localTime 无来源并破坏 F27。
+**问题**：现流程先 UPDATE `current_version=vN+1`，再从未传 localTime 时从 `plans.current_version` 查 slot；此时已指向新 version 而新 slot 未插入，破坏 F27。
 
-**必须修订**：在同一事务中固定以下顺序：
+**必须修订**：同一事务固定顺序：保存 oldVersionId → 从 oldVersionId 读 slot → INSERT vN+1 + slot → UPDATE current_version → horizon。
 
-1. 锁定 plan，保存 `oldVersionId = plans.current_version`；
-2. body 未传 `localTime` 时，按 `oldVersionId + slot_key='default'` 读取并锁定旧 `local_time`；
-3. INSERT vN+1；INSERT vN+1 的 default slot（未改时间复制旧值，改时间使用 body 值）；
-4. 最后 `UPDATE plans SET current_version=vN+1.id`；
-5. 以 vN+1 调用 horizon 生成。
+**验证**：`formal-plan.test.ts` 覆盖编辑未传 localTime（F27）与改 localTime 两路径。
 
-**验证**：`formal-plan.test.ts` 覆盖“编辑未传 localTime”成功，新 slot、`occurrence_key`、`scheduled_at` 均使用旧 slot 时间；仍保留“编辑改时间”使用新 slot 的断言。
+**证据**：`1919079` + `design.md` §5.2 + `implement.md` §4.2.4 + `formal-plan.test.ts`
 
 ## R8 — 整改证据必须填写实际提交 SHA
 
-**位置**：本文件 R1–R7 的“证据”行。
+**位置**：本文件 R1–R7 证据行。
 
-**问题**：现有证据写为“（见本提交 SHA）”，不满足本文件要求的“证据：commit + 文档 § + 测试文件”。
+**必须修订**：每项使用实际 commit SHA，不得保留占位文本。
 
-**必须修订**：将每一项替换为实际 commit SHA（R1–R6 对应已提交修订，R7 对应本次修订提交），并保留文档 § 与测试文件；不得保留占位文本。
+**证据**：`1919079` + 本文件 R1–R7 各证据行
 
 ## 完成标准
 
-1. R1–R8 全部关闭，并在本文件每个标题下补一行“证据：实际 commit SHA + 文档 § + 测试文件”。
+1. R1–R8 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 

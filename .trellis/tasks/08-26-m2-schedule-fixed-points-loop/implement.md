@@ -419,7 +419,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | F28 | `maintain-horizon.test.ts` | 计划已结束 maintain → items_created=0 **且** pending→expired |
 | F28 | `plan-end-date.test.ts` | from>through no-op **且** pending→expired；同 key 回放 **不** persist |
 
-### 4.2.4 Cursor 整改映射（R1–R6，`cursor-remediation.md`）
+### 4.2.4 Cursor 整改映射（R1–R8，`cursor-remediation.md`）
 
 | R-ID | 测试文件 | 断言 |
 | --- | --- | --- |
@@ -433,8 +433,9 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | R5 / C8 | `formal-plan.test.ts` | 编辑路径：四字段；改 localTime 后新 version 使用新 slot 时间 |
 | R5 / C8 | `maintain-horizon.test.ts` | maintain 路径：四字段 + 使用 current version slot 时间 |
 | R6 | `schedule-generation.test.ts` | `generateHorizonInline` 从传入 version 的 `plan_schedule_slots` 取 local_time |
-| R6 | `formal-plan.test.ts` | 编辑 localTime 未变复制旧 slot 时间；变更后使用新 slot |
+| R6 | `formal-plan.test.ts` | 编辑改 localTime 使用新 slot；**未传 localTime 从 oldVersionId 复制**（R7/F27） |
 | R6 | `maintain-horizon.test.ts` | maintain 传入 `plans.current_version` 对应 version，生成项使用该 version slot |
+| R7 | `formal-plan.test.ts` | 编辑未传 localTime：新 slot / occurrence_key / scheduled_at 使用 **oldVersionId** 的 local_time；current_version 在 slot INSERT 之后更新 |
 | C8（补充） | `horizon-through.test.ts` | `horizonThrough(plan, now)` 上界（**不替代**字段/slot 断言） |
 | C8（补充） | `plan-end-date.test.ts` | F22 endDate 边界 + inline/maintain 生成范围 |
 | S-C4 | `write-route-idempotency-header.test.ts` | §3.1 七 Route 缺 header → 400 |
@@ -493,7 +494,8 @@ pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm te
 - [ ] M2 缩窄：fact_versions.schedule_item_id NOT NULL；ledger settlement_id NOT NULL
 - [ ] ledger **CHECK** `source_type='settlement' AND source_id=settlement_id`；**source_id FK → settlements**
 - [ ] `generateHorizonInline` 步骤 0：按传入 `version.id` 查 `plan_schedule_slots.default`（禁止读 plans.current_version）
-- [ ] C8/R5 三路径字段断言；R6 三路径 slot 时间断言
+- [ ] 编辑 §5.2 **R7 顺序**：oldVersionId 读 slot → INSERT vN+1 slot → UPDATE current_version
+- [ ] cursor-remediation.md 证据行填写**实际 commit SHA**（非占位符）
 - [ ] maintain no-op（items_created=0）仍调用 persistExpiredPastWindow
 - [ ] `git diff --check` 通过
 

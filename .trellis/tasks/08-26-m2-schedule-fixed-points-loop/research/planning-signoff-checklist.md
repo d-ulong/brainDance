@@ -13,7 +13,7 @@
 | ID | 要求 | 闭合位置 | 测试 |
 | --- | --- | --- | --- |
 | C1 | occurrence_key 格式冻结 | `design.md` §4.6 | `occurrence-key.test.ts` |
-| C2 | plan_schedule_slots 每 version 快照 | `design.md` §4.2、§5.2 | F27 |
+| C2 | plan_schedule_slots 每 version 快照；**编辑先读 oldVersionId slot 再切 current_version** | `design.md` §4.2、§5.2 | F27 |
 | C3 | schedule_items 状态机 | `design.md` §4.7 | F3/F16/F17 |
 | C4 | persistExpired 用 isPastCompletionWindow | `design.md` §4.8 | F6/F7/F8 |
 | C5 | outbox 事件 + dedupe_key 表 | `design.md` §4.9 | F21 |
@@ -23,7 +23,7 @@
 | C9 | balance UPSERT：`INSERT(balance)` + `EXCLUDED.balance`；仅 ledger RETURNING 后 | `design.md` §5.5；`implement.md` §2.0.4 | F25 |
 | C10 | F26 maintain 并发；F27 slot 快照 | `implement.md` §4.2.1；矩阵 §3 | F26/F27 |
 | C11 | maintain §5.8B：hash 回放 + INSERT 占位 + 冲突读取；no-op 仍 persistExpired | `design.md` §5.8B | F14/F26/F28 |
-| C12 | §5.2 每 version 无条件 slot；localTime 未变复制 | `design.md` §5.2 | F27 |
+| C12 | §5.2 每 version 无条件 slot；**R7 顺序** localTime 未变从 oldVersionId 复制 | `design.md` §5.2 | F27 |
 
 ## A. 首轮阻断 #1–#8（9c87d40）
 

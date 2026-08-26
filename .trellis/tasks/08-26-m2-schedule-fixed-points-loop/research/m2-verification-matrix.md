@@ -149,3 +149,4 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | R4 | M2 缩窄 + ledger CHECK/FK | design §4.2/§5.5；implement §2.0.4/§2.0.7 | m2-schema-constraints（含负路径）+ settlement-ledger |
 | R5 / C8 | 三路径 schedule_items 四字段 | design §5.8A；implement §4.2.4 | schedule-generation + formal-plan + maintain-horizon |
 | R6 | generateHorizonInline 使用 version slot 快照 | design §5.8A 步骤 0；implement §3 | 三路径集成测试（occurrence_key/scheduled_at vs slot local_time） |
+| R7 | 编辑 §5.2 slot 读取顺序（oldVersionId → slot → current_version） | design §5.2；implement §4.2.4 | formal-plan.test.ts（F27 未传 localTime + 改时间） |
