@@ -10,7 +10,7 @@
 
 | 冻结 ID | 对应 | 失败位置 | 必须关闭的条件 | 验证 |
 | --- | --- | --- | --- | --- |
-| FG-01 | R9 / F22 | `design.md` §5.2 | `effectiveEndDate` 与 `updatedPlan` 是编辑后取消、horizon、生成的唯一输入；不依赖 UPDATE 后对象自动刷新。 | `plan-end-date.test.ts` + `formal-plan.test.ts`：缩短、扩展、未改结束日。 |
+| FG-01 | R9 / F22 | `design.md` §5.2、§5.8A | `effectiveEndDate` 与 `updatedPlan` 是编辑后取消、horizon、生成的唯一输入；`horizonThrough` 与领域对象统一使用 `end_date`，不依赖 UPDATE 后对象自动刷新。 | `plan-end-date.test.ts` + `formal-plan.test.ts`：缩短、扩展、未改结束日；`horizon-through.test.ts`：end_date/NULL。 |
 | FG-02 | R10 / B3 / G2 | `design.md` §5.1、§5.2、§5.6 | 三段命令算法没有 `...`、`…`、`同前`、`等同理`；各字段来源与保留/更新语义完整。 | 算法区静态检查零占位；保留命令测试映射。 |
 
 ## 已审计通过的范围

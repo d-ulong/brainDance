@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R10）。基线：`frozen-go-gate.md` @ `2792418`（2026-08-26）。
+> 状态：**NO-GO**。复审基线：`18c0961...f57d15e`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -128,7 +128,7 @@
 
 > 注意：`planning-signoff-checklist.md` 的 C6 是 `settlement_period = family_date`，不是 endDate 门禁；R9 仅使用稳定 ID 与 F22，禁止再称“C6 endDate”。
 
-**问题**：编辑流程写入 `plans.end_date` 后，后续仍以未说明是否已刷新的 `plans.end_date` 传给 `cancelPendingAfterEndDate()` 和 `horizonThrough()`。缩短 endDate 时，取消与新实例生成可能使用旧日期。
+**问题**：编辑流程写入 `plans.end_date` 后，后续仍以未说明是否已刷新的 `plans.end_date` 传给 `cancelPendingAfterEndDate()` 和 `horizonThrough()`。缩短 endDate 时，取消与新实例生成可能使用旧日期。复审还发现 `updatedPlan` 使用数据库字段 `end_date`，而 `horizonThrough` 当前读取 `plan.endDate`，会使有效结束日被忽略。
 
 **必须修订**：在锁定 plan 后明确计算 `effectiveEndDate`，并构造 `updatedPlan`：
 
@@ -141,11 +141,11 @@ through = horizonThrough(updatedPlan)
 generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 ```
 
-不得依赖 ORM/SQL UPDATE 后内存对象是否自动刷新。
+不得依赖 ORM/SQL UPDATE 后内存对象是否自动刷新。并统一 `horizonThrough` 的输入契约为数据库领域对象：`{ end_date?: string | null }`，函数内部只读取 `plan.end_date`；创建、编辑、maintain 均传该领域对象。不得让 `updatedPlan.end_date` 与 `horizonThrough(plan.endDate)` 混用。
 
-**验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。
+**验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。`horizon-through.test.ts` 断言 `end_date` 低于 30 天 cap 时返回该日期，NULL 时返回 cap。
 
-**证据**：`1fa8376` + `design.md` §5.2 + `implement.md` §4.2.5 + `plan-end-date.test.ts` / `formal-plan.test.ts`
+**复审结论（未关闭）**：`1fa8376` 已关闭 stale-object 问题，但未统一 `end_date` / `endDate`，故不能作为 R9 的最终证据。
 
 ## R10 — B3/G2：命令算法不得含不可实施省略符
 
