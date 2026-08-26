@@ -111,7 +111,9 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 - [ ] **AC-M2-F22**：endDate 上界 `min(endDate,today+30)`；缩短 endDate 调用 §4.8b 取消 pending；maintain 已结束或 from>through → no-op 且 **不发** `schedule.horizon_maintained` outbox。
 - [ ] **AC-M2-F23**：七类写 Route 缺 `Idempotency-Key` → **400** `IDEMPOTENCY_KEY_REQUIRED`。
 - [ ] **AC-M2-F24**：complete/skip 并发同 key → 200 回放；仅 1 终态 event/fact/ledger。
-- [ ] **AC-M2-F25**：ledger 冲突回放 balance 不变；不同 item 同客户端 key 各自 +10。
+- [ ] **AC-M2-F25**：首次 complete balance 0→+10；同一 fact 回放 balance 不变；跨 item 同客户端 key 各自 +10。
+- [ ] **AC-M2-F26**：maintain 并发同 `(student_id, actor_id, idempotency_key)` → 仅 1 次 generate/audit/outbox。
+- [ ] **AC-M2-F27**：编辑计划 localTime 未变 → 仍创建新 plan_version 的 `plan_schedule_slots` 快照并自 effective_from 生成实例。
 
 ## Non-Functional
 

@@ -7,7 +7,7 @@
 ## 审阅顺序（强制）
 
 1. `research/planning-signoff-checklist.md` — 逐项 PASS/FAIL（全部 PASS 方可 GO）
-2. `prd.md` — AC-M2-1~8、AC-M2-F1~F25
+2. `prd.md` — AC-M2-1~8、AC-M2-F1~F27
 3. `design.md` — §4~§6、§5.0/§5.8、§4.9 outbox、§11 Web UI
 4. `implement.md` — §2~§4、§6~§7
 5. `research/m2-verification-matrix.md` — AC/F 与测试映射

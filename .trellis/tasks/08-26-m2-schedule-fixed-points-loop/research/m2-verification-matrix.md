@@ -7,7 +7,7 @@
 | 类别 | 条目 |
 | --- | --- |
 | 功能 AC | 8 |
-| 失败路径 AC | 25（F1–F25） |
+| 失败路径 AC | 27（F1–F27） |
 | E2E | 1 spec × 2 projects（各完整 1–7） |
 | NF | NF-1–NF-8 |
 
@@ -42,7 +42,7 @@
 | F11 | complete 回放 | command-idempotency |
 | F12 | 同 key 不同 student | command-idempotency |
 | F13 | 跨命令类型同 key 允许 | command-idempotency |
-| F14 | maintain 回放；无 mount/GET 触发 | maintain-horizon |
+| F14 | maintain 回放；并发同 key 仅 1 副作用；无 mount | maintain-horizon |
 | F15 | late +10；窗口外无 ledger | complete + settlement |
 | F16 | complete/skip 同 key 409 | schedule-skip |
 | F17 | skip 无 ledger | schedule-skip |
@@ -53,7 +53,9 @@
 | F22 | **endDate / cancelPendingAfterEndDate / maintain no-op 无 outbox** | plan-end-date |
 | F23 | **缺 Idempotency-Key → 400** | write-route-idempotency-header |
 | F24 | **并发同 key 200 回放** | schedule-terminal-concurrency |
-| F25 | **ledger 冲突 balance 不变；跨 item 同 key** | settlement-ledger |
+| F25 | **首次 balance +10；回放/冲突 balance 不变；跨 item 同 key** | settlement-ledger |
+| F26 | **maintain 并发同 scope+key → 1 generate/audit/outbox** | maintain-horizon |
+| F27 | **编辑 localTime 未变仍建 slot 快照并生成** | formal-plan |
 
 ## 4. 幂等与 schema
 
@@ -62,7 +64,8 @@
 | occurrence_key | `{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}` |
 | schedule_events UNIQUE | `(schedule_item_id, idempotency_key)` 资源级 |
 | 跨 actor 同 key | 409，不回放 |
-| completion_kind | schedule_events + fact_versions 必填（complete） |
+| completion_kind | schedule_events 复合 CHECK；fact_versions NOT NULL（complete） |
+| plan_kind | 对齐 data-model；非 plan_type |
 | horizon_maintains | 仅独立 POST；内联不写 |
 | maintain body | 空；固定 30 天 |
 
@@ -120,4 +123,9 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | 3e6df81 标准 C4 | 逐表迁移 + §2.0.6 交叉表 | implement §2.0–§2.0.6 |
 | 3e6df81 标准 C6 | endDate + §4.8b + maintain no-op | design §4.8b、§5.8B；F22 |
 | 3e6df81 规格 C11 | horizonThrough 冻结 | design §8；implement §3 |
-| 3e6df81 规格 C12 | ledger RETURNING + balance UPSERT | design §5.5；F25 |
+| 3e6df81 规格 C12 | 每 version 无条件 slot 快照 | design §5.2；F27 |
+| a55541a C4 | plan_kind + events CHECK + point_rules DDL | implement §2.0.3；m2-schema-constraints |
+| a55541a C9 | balance EXCLUDED.balance UPSERT | design §5.5；F25 |
+| a55541a C10 | F26 maintain 并发；F27 slot 快照 | maintain-horizon；formal-plan |
+| a55541a C11 | maintain §5.8B 回放/占位 | design §5.8B；F14/F26 |
+| a55541a C12 | §5.2 无条件 slot | design §5.2；F27 |
