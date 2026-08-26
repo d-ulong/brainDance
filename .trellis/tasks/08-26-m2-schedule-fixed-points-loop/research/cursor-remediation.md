@@ -122,9 +122,11 @@
 
 **证据**：`677d74a` + 本文件 R1–R7 各证据行
 
-## R9 — C6/F22：编辑后的 endDate 必须作为取消与 horizon 的唯一输入
+## R9 — F22：编辑后的 endDate 必须作为取消与 horizon 的唯一输入
 
-**位置**：`design.md` §5.2；`implement.md` §4.2；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C6。
+**位置**：`design.md` §5.2；`implement.md` §4.2；`research/m2-verification-matrix.md`；F22 映射。
+
+> 注意：`planning-signoff-checklist.md` 的 C6 是 `settlement_period = family_date`，不是 endDate 门禁；R9 仅使用稳定 ID 与 F22，禁止再称“C6 endDate”。
 
 **问题**：编辑流程写入 `plans.end_date` 后，后续仍以未说明是否已刷新的 `plans.end_date` 传给 `cancelPendingAfterEndDate()` 和 `horizonThrough()`。缩短 endDate 时，取消与新实例生成可能使用旧日期。
 
@@ -143,9 +145,25 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。
 
+## R10 — B3/G2：命令算法不得含不可实施省略符
+
+**位置**：`design.md` §5.1、§5.2、§5.6；`planning-signoff-checklist.md` B3；`PLANNING-REVIEW.md` G2。
+
+**问题**：已有门禁禁止 `…`、`等同理` 等不可实施占位，但三段命令算法仍使用它们，实施者无法确定实际 INSERT/UPDATE 字段与来源。
+
+**必须修订**：
+
+1. §5.1 创建计划：明确 plans 的 owner/student/title/description/start/end/idempotency 字段、v1 与 slot 的写入来源；
+2. §5.2 编辑计划：明确 title/description/endDate 的保留与更新语义（并采用 R9 的 `updatedPlan`）；
+3. §5.6 启规则：明确 point_rule 的 student/creator/template/active/idempotency/hash，以及 v1 的版本/参数/effect/effective_at 写入来源。
+
+不得用 `...`、`…`、`同前`、`等同理` 代替命令契约。
+
+**验证**：对上述算法区执行静态检查，`rg '(\.\.\.|…|同前|等同理)' design.md` 不得命中命令算法占位；并保留每个命令对应的测试映射。
+
 ## 完成标准
 
-1. R1–R9 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
+1. R1–R10 全部关闭，并在本文件每个标题下补一行“证据：commit + 文档 § + 测试文件”。
 2. 更新 `research/m2-verification-matrix.md` 与 `research/planning-signoff-checklist.md`，使 C8 与 S-C4 可追溯到具体测试。
 3. 执行：
 
@@ -154,4 +172,4 @@ git diff --check
 git status --short
 ```
 
-4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R9 的逐项证据。不得自行宣布 GO。
+4. 提交一个聚焦的 docs commit；在 Trellis `m2-planning-rereview` 主题发布 R1–R10 的逐项证据。不得自行宣布 GO。

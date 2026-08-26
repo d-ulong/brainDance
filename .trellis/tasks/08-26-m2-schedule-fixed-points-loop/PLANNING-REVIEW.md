@@ -7,6 +7,7 @@
 > **Cursor 整改唯一来源**：当前存在阻断时，必须先阅读并仅按
 > [`research/cursor-remediation.md`](research/cursor-remediation.md) 的 R-ID 修订；
 > 旧 `planning-rereview-*.md` 仅保留审阅历史，不能作为整改范围依据。
+> 当前冻结范围见 [`research/frozen-go-gate.md`](research/frozen-go-gate.md)：仅 FG-01、FG-02 为放行阻断。
 
 ## 审阅顺序（强制）
 
