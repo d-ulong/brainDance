@@ -9,10 +9,15 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import * as schema from "@/db/schema";
-
 import { type TestDb } from "../../helpers/db";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
+import {
+  adminDatabaseUrl,
+  closeIsolatedM2Database,
+  databaseUrlForName,
+  openIsolatedM2Database,
+  type IsolatedM2Database,
+} from "./m2-isolated-database";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -352,18 +357,6 @@ async function seedSettlementGraph(db: TestDb, settlementCount: number) {
   };
 }
 
-function adminDatabaseUrl(connectionString: string): string {
-  const url = new URL(connectionString);
-  url.pathname = "/postgres";
-  return url.toString();
-}
-
-function databaseUrlForName(connectionString: string, name: string): string {
-  const url = new URL(connectionString);
-  url.pathname = `/${name}`;
-  return url.toString();
-}
-
 async function assertMigratedHead(connectionString: string): Promise<void> {
   const client = postgres(connectionString, { max: 1 });
   const db = drizzle(client);
@@ -414,34 +407,6 @@ async function migrateFolder(connectionString: string, folder: string): Promise<
   } finally {
     await client.end({ timeout: 5 });
   }
-}
-
-type IsolatedM2Database = {
-  db: TestDb;
-  client: ReturnType<typeof postgres>;
-  admin: ReturnType<typeof postgres>;
-  dbName: string;
-};
-
-async function openIsolatedM2Database(): Promise<IsolatedM2Database> {
-  const rootUrl = process.env.DATABASE_URL!;
-  const dbName = `bd_m2_constraints_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
-  const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
-  await admin.unsafe(`CREATE DATABASE "${dbName}"`);
-  const databaseUrl = databaseUrlForName(rootUrl, dbName);
-  await migrateFolder(databaseUrl, "./src/db/migrations");
-  const client = postgres(databaseUrl, { max: 5 });
-  const db = drizzle(client, { schema }) as TestDb;
-  return { db, client, admin, dbName };
-}
-
-async function closeIsolatedM2Database(isolated: IsolatedM2Database): Promise<void> {
-  await isolated.client.end({ timeout: 5 });
-  await isolated.admin.unsafe(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${isolated.dbName}' AND pid <> pg_backend_pid()`,
-  );
-  await isolated.admin.unsafe(`DROP DATABASE IF EXISTS "${isolated.dbName}"`);
-  await isolated.admin.end({ timeout: 5 });
 }
 
 async function withTempDatabase(
