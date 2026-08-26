@@ -379,7 +379,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | `derive-completion-kind.test.ts` | on_time / late |
 | `effective-status.test.ts` | 只读 expired |
 | `occurrence-key.test.ts` | key 格式 §4.6 |
-| `horizon-through.test.ts` | `horizonThrough` = min(endDate, today+30)；无 endDate |
+| `horizon-through.test.ts` | `horizonThrough` = min(`end_date`, today+30)；`end_date` NULL → cap |
 | `add-family-days.test.ts` | 家庭日 +N 边界 |
 
 ### 4.2 集成
@@ -448,6 +448,7 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | R9 / F22 | `plan-end-date.test.ts` | 编辑**扩展** endDate：horizon/generate 使用扩展后 effectiveEndDate；可生成至新上界 |
 | R9 / F22 | `plan-end-date.test.ts` | 编辑**未改** endDate：cancel/horizon/generate 使用原 endDate（与 oldPlan 一致） |
 | R9 / F22 | `formal-plan.test.ts` | 编辑路径同上三场景；`horizonThrough(updatedPlan)` 与 `generateHorizonInline(updatedPlan, ...)` 不读 stale plan 对象 |
+| R9 / F22 | `horizon-through.test.ts` | `horizonThrough({ end_date })`：`end_date` 低于 30 天 cap 时返回该日期；NULL 时返回 cap |
 | R10 | `schedule-generation.test.ts` | §5.1 创建：plans/plan_versions/slot 字段来源与 INSERT 列一致 |
 | R10 | `formal-plan.test.ts` | §5.2 编辑：title/description/endDate/localTime 保留/更新语义；updatedPlan 驱动 horizon |
 | R10 | `command-idempotency.test.ts` | §5.6 启规则：point_rules + point_rule_versions v1 字段与模板 effect 来源（F11–F13） |
@@ -507,7 +508,7 @@ pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm te
 - [ ] ledger **CHECK** `source_type='settlement' AND source_id=settlement_id`；**source_id FK → settlements**
 - [ ] `generateHorizonInline` 步骤 0：按传入 `version.id` 查 `plan_schedule_slots.default`（禁止读 plans.current_version）
 - [ ] 编辑 §5.2 **R7 顺序**：oldVersionId 读 slot → INSERT vN+1 slot → UPDATE current_version
-- [ ] 编辑 §5.2 **R9**：effectiveEndDate + updatedPlan 为 cancel/horizon/generate 唯一输入
+- [ ] 编辑 §5.2 **R9**：effectiveEndDate + updatedPlan 为 cancel/horizon/generate 唯一输入；`horizonThrough` 读 `plan.end_date`
 - [ ] §5.1/§5.2/§5.6 **R10**：命令算法无 `...`/`…`/`同前`/`等同理` 占位
 - [ ] cursor-remediation.md 证据行填写**实际 commit SHA**（非占位符）
 - [ ] maintain no-op（items_created=0）仍调用 persistExpiredPastWindow

@@ -509,16 +509,18 @@ Body: { templateId: "schedule_system_complete_v1" }
 | 写 `schedule_horizon_maintains` | **否** |
 | audit/outbox | **仅** plan.created / plan.version_created |
 | 幂等键 | **无**（跟随 create/edit 幂等；create **回放时不调用**） |
-| horizon | 固定 **30 天**；上界 `horizonThrough(plan) = min(endDate, currentFamilyDate + 30)` |
-| 生成范围 | 创建：`max(startDate, today)`→through；编辑：`effective_from`→through（当前 version） |
+| horizon | 固定 **30 天**；上界 `horizonThrough(plan) = min(plan.end_date, currentFamilyDate + 30)`（`end_date` NULL → cap） |
+| 生成范围 | 创建：`max(plan.start_date, today)`→through；编辑：`effective_from`→through（当前 version） |
+
+**领域对象契约（R9）**：`horizonThrough` / `generateHorizonInline` 的 `plan` 参数为数据库行或等价快照，字段名与列一致（`end_date`、`start_date` 等）；HTTP body 仍用 camelCase（`endDate`），仅在命令边界映射一次。
 
 **`horizonThrough(plan)`**：
 
 ```typescript
-function horizonThrough(plan: { endDate?: string }, now: Date): string {
+function horizonThrough(plan: { end_date?: string | null }, now: Date): string {
   const cap = addFamilyDays(currentFamilyDate(now), 30);
-  if (plan.endDate == null) return cap;
-  return plan.endDate < cap ? plan.endDate : cap;
+  if (plan.end_date == null) return cap;
+  return plan.end_date < cap ? plan.end_date : cap;
 }
 ```
 
@@ -532,7 +534,7 @@ generateHorizonInline(plan, version, from, through, ignoreCancelled):
   IF slot IS NULL → 内部错误（违反 C12：每 version 必有 slot 快照）
   localTime = slot.local_time
   for each family_date in [from .. through]:
-    if plan.endDate set and family_date > plan.endDate: continue
+    if plan.end_date IS NOT NULL AND family_date > plan.end_date: continue
     occurrence_key = "{plan.id}:{version.id}:{family_date}:daily:{localTime}"
     scheduled_at = toScheduledAt(family_date, localTime, Asia/Shanghai)
     INSERT schedule_items (
@@ -710,7 +712,7 @@ Route Handler 在鉴权前校验 header；不得进入 domain 层。响应体 `{
 
 `to-family-date.ts`, `resolve-age-band.ts`, `to-scheduled-at.ts`, `next-family-date.ts`, `family-date-range.ts`, `add-family-days.ts`, `horizon-through.ts`, `completion-window.ts`, `derive-completion-kind.ts`
 
-`horizon-through.ts` 导出 `horizonThrough(plan, now)` — §5.8A 唯一实现源；**禁止**在 Route/Service 重复计算上界。
+`horizon-through.ts` 导出 `horizonThrough(plan, now)` — §5.8A 唯一实现源；`plan` 契约为 `{ end_date?: string | null }`（数据库列名）；**禁止**在 Route/Service 重复计算上界。
 
 ## 9. 已批准决策
 

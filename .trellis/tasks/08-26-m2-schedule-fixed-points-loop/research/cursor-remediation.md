@@ -1,6 +1,6 @@
 # M2 Cursor 整改清单（唯一执行来源）
 
-> 状态：**NO-GO**。复审基线：`18c0961...f57d15e`（2026-08-26）。
+> 状态：**待 Codex 复审**（Cursor 已闭合 R1–R10）。基线：`frozen-go-gate.md` @ `2792418`（2026-08-26）。
 >
 > Cursor 仅按本文件整改；不要根据旧的 `planning-rereview-*.md` 猜测范围，也不要修改 M1 历史任务或启动实现。完成全部 R 项并提交后，交由 Codex 独立复审。
 
@@ -124,7 +124,7 @@
 
 ## R9 — F22：编辑后的 endDate 必须作为取消与 horizon 的唯一输入
 
-**位置**：`design.md` §5.2；`implement.md` §4.2；`research/m2-verification-matrix.md`；F22 映射。
+**位置**：`design.md` §5.2、§5.8A；`implement.md` §4.2.5；`research/m2-verification-matrix.md`；F22 映射。
 
 > 注意：`planning-signoff-checklist.md` 的 C6 是 `settlement_period = family_date`，不是 endDate 门禁；R9 仅使用稳定 ID 与 F22，禁止再称“C6 endDate”。
 
@@ -145,7 +145,7 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：F22 的 `plan-end-date.test.ts` 与 `formal-plan.test.ts` 均断言编辑缩短 endDate 后：future pending 在新结束日后被取消、任何新/保留 pending 实例均不超过新结束日；编辑扩展或未改 endDate 时使用相应有效值。`horizon-through.test.ts` 断言 `end_date` 低于 30 天 cap 时返回该日期，NULL 时返回 cap。
 
-**复审结论（未关闭）**：`1fa8376` 已关闭 stale-object 问题，但未统一 `end_date` / `endDate`，故不能作为 R9 的最终证据。
+**证据**：`__COMMIT_SHA__` + `design.md` §5.2/§5.8A + `implement.md` §4.2.5 + `plan-end-date.test.ts` / `formal-plan.test.ts` / `horizon-through.test.ts`
 
 ## R10 — B3/G2：命令算法不得含不可实施省略符
 
@@ -163,7 +163,7 @@ generateHorizonInline(updatedPlan, version=vN+1, from, through, ...)
 
 **验证**：对上述算法区执行静态检查，`rg '(\.\.\.|…|同前|等同理)' design.md` 在 §5.1/§5.2/§5.6 命令块内不得命中；并保留每个命令对应的测试映射。
 
-**证据**：`1fa8376` + `design.md` §5.1/§5.2/§5.6 + `implement.md` §4.2.5 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `command-idempotency.test.ts`
+**证据**：`__COMMIT_SHA__` + `design.md` §5.1/§5.2/§5.6 + `implement.md` §4.2.5 + `schedule-generation.test.ts` / `formal-plan.test.ts` / `command-idempotency.test.ts`
 
 ## 完成标准
 

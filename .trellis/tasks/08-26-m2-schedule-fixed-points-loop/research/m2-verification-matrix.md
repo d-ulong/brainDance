@@ -150,5 +150,5 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | R5 / C8 | 三路径 schedule_items 四字段 | design §5.8A；implement §4.2.4 | schedule-generation + formal-plan + maintain-horizon |
 | R6 | generateHorizonInline 使用 version slot 快照 | design §5.8A 步骤 0；implement §3 | 三路径集成测试（occurrence_key/scheduled_at vs slot local_time） |
 | R7 | 编辑 §5.2 slot 读取顺序（oldVersionId → slot → current_version） | design §5.2；implement §4.2.4 | formal-plan.test.ts（F27 未传 localTime + 改时间） |
-| R9 / FG-01 / F22 | 编辑 effectiveEndDate + updatedPlan；cancel/horizon/generate 不依赖 ORM 刷新 | design §5.2；implement §4.2.5 | plan-end-date.test.ts + formal-plan.test.ts（缩短/扩展/未改 endDate） |
+| R9 / FG-01 / F22 | 编辑 effectiveEndDate + updatedPlan；`horizonThrough`/`generateHorizonInline` 统一 `end_date` | design §5.2、§5.8A；implement §4.2.5 | plan-end-date + formal-plan + horizon-through |
 | R10 / FG-02 / B3 / G2 | §5.1/§5.2/§5.6 命令算法零占位；字段来源完整 | design §5.1、§5.2、§5.6 | schedule-generation + formal-plan + command-idempotency（F11–F13） |
