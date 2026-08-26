@@ -6,7 +6,7 @@
 
 | 阶段 | 内容 | 验证 |
 | --- | --- | --- |
-| **0** | 规划复审阻断 #1–#8 已闭合 | 本文档 + design §5.8 |
+| **0** | 规划复审 ee79298 缺口已闭合 | design §5–6 + implement §3 |
 | **1** | 迁移 0008–0013 | `pnpm db:migrate` |
 | **2** | 扩展 `src/modules/time-policy/` | `tests/unit/time-policy/` |
 | **3** | Schedule：CRUD、inline horizon、maintain-horizon、complete/skip | 集成测试 |
@@ -45,19 +45,32 @@ src/modules/time-policy/
   completion-window.ts, derive-completion-kind.ts
 src/modules/schedule/
   plan.service.ts
-  generate-horizon-inline.service.ts   # 创建/编辑；不写 horizon_maintains
-  maintain-horizon.service.ts          # 独立 POST 专用
+  generate-horizon-inline.service.ts
+  maintain-horizon.service.ts
   schedule-query.service.ts
   persist-expired.service.ts
   complete-schedule.service.ts
   skip-schedule.service.ts
-src/modules/settlement/ ...
-src/app/api/.../formal-plans/maintain-horizon/route.ts
-src/app/api/.../schedule-items/[itemId]/complete/route.ts
-src/app/api/.../schedule-items/[itemId]/skip/route.ts
-src/app/parent/students/[id]/plan/page.tsx   # 含「补齐日程」按钮
+  errors.ts
+src/modules/settlement/
+  point-rule.service.ts
+  settlement.service.ts
+  ledger.service.ts
+  errors.ts
+src/db/schema/schedule.ts
+src/db/schema/points.ts
+src/app/api/family/students/[studentId]/formal-plans/route.ts
+src/app/api/family/students/[studentId]/formal-plans/maintain-horizon/route.ts
+src/app/api/formal-plans/[planId]/route.ts
+src/app/api/formal-plans/[planId]/deactivate/route.ts
+src/app/api/schedule-items/[itemId]/complete/route.ts
+src/app/api/schedule-items/[itemId]/skip/route.ts
+src/app/api/family/students/[studentId]/point-rules/route.ts
+src/app/parent/students/[id]/plan/page.tsx
+src/app/student/schedule/page.tsx
 tests/unit/time-policy/
 tests/integration/schedule/
+tests/integration/settlement/
 tests/e2e/m2-schedule-points-flow.spec.ts
 ```
 

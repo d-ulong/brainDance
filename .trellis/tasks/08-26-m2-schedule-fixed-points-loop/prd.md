@@ -5,7 +5,7 @@
 | 项 | 值 |
 | --- | --- |
 | 任务 ID | `m2-schedule-fixed-points-loop` |
-| 基线 | `main` @ `42f25ea`；规划复审修订基于 `9c87d40` |
+| 基线 | `main` @ `ee79298`（本轮修订闭合 ee79298 复审缺口） |
 | 前置 | M1 已签署（历史任务只读） |
 | 门禁 | 书面确认 prd + design + implement 后方可实现 |
 
@@ -114,4 +114,4 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 ## Notes
 
 - 设计细节：`design.md`；实施：`implement.md`；矩阵：`research/m2-verification-matrix.md`。
-- 复审报告：`research/planning-rereview-9c87d40.md`。
+- 复审报告：`research/planning-rereview-9c87d40.md`（首轮）；`research/planning-rereview-ee79298.md`（ee79298 复审缺口）。

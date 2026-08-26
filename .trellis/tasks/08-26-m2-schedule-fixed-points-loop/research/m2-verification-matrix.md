@@ -1,6 +1,6 @@
 # M2 验收矩阵
 
-> 2026-08-26 复审修订（`planning-rereview-9c87d40.md` 阻断 #1–#8）。
+> 2026-08-26 第三轮修订（闭合 `planning-rereview-ee79298.md` 缺口）。
 
 ## 1. 总览
 
@@ -80,13 +80,10 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 
 ## 7. 复审阻断映射
 
-| 阻断 | 闭合位置 |
-| --- | --- |
-| #1 自包含 | prd.md 全文 AC；implement.md §5–7 |
-| #2 事件幂等 scope | design §4.3；矩阵 §4 |
-| #3 编辑 horizon | design §5.2；F19 |
-| #4 skip 窗口 | design §5.4b；F18 |
-| #5 completion_kind | design §4.4；AC-M2-3/4 |
-| #6 内联/独立边界 | design §5.8；F21 |
-| #7 显式按钮 | design §5.8C；NF-7 |
-| #8 格式 | implement 无尾随空格 |
+| 轮次 | 阻断 | 闭合位置 |
+| --- | --- | --- |
+| 首轮 #1–#8 | 见 `planning-rereview-9c87d40.md` | ee79298 主体 |
+| ee79298 #1 | design 自包含 | design §5.2–5.7、§4.5、§6.1 全文 |
+| ee79298 #2 | §5.7 幂等表 | design §5.7 + F9–F13,F20 |
+| ee79298 #3 | implement 布局 | implement §3 完整路径 |
+| ee79298 #4 | 失败路径 | design §6.1 ↔ F1–F21 |

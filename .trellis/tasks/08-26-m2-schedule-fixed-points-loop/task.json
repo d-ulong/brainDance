@@ -37,6 +37,6 @@
     "m1SignoffCommit": "feba95e",
     "mergeCommit": "8c35b11",
     "approvedDecisions": "D1-D8 2026-08-26",
-    "planRevision": "2026-08-26 rereview 9c87d40 blockers 1-8 closed in planning docs"
+    "planRevision": "2026-08-26 rereview ee79298 gaps closed in design §5-6 + implement §3"
   }
 }
