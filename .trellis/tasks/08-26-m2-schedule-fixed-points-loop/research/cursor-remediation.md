@@ -13,7 +13,7 @@
 
 ## R1 — plans 当前版本字段统一
 
-**位置**：`docs/data-model.md` §4；`design.md` §4.2、§5.2；`implement.md` §2.0、§2.0.6、§2.0.7。
+**位置**：`docs/data-model.md` §4；`design.md` §4.2、§5.1、§5.2；`implement.md` §2.0、§2.0.6、§2.0.7。
 
 **问题**：权威字段为 `plans.current_version`，规划迁移使用 `current_version_id`，仅以“→”映射，未形成可实施的统一契约。
 
@@ -41,7 +41,7 @@
 
 **问题**：skip 命令写入 `reason?`，但 `schedule_events` 表未定义该列。
 
-**必须修订**：新增 `reason text NULL`，仅 skip 可携带；complete 必为 NULL。将其纳入事件复合 CHECK，或在命令/数据库约束中等价保证该语义。
+**必须修订**：新增 `reason text NULL`，仅 skip 可携带；complete 必须为 NULL。将其纳入事件复合 CHECK，或在命令/数据库约束中等价保证该语义。
 
 **验证**：测试 skip 可持久化 reason；complete 带非 NULL reason 被拒绝（若采用 DB CHECK）；同键回放不覆盖既有 reason。
 
@@ -56,7 +56,7 @@
 1. `fact_versions.schedule_item_id`：M2 仅写 `schedule.completed` 系统事实，因此迁移为 NOT NULL；M3 人工事实/无日程事实恢复可空。这是已批准的 M2 范围缩窄。
 2. `point_ledger_entries.settlement_id`：M2 仅写结算来源流水，因此迁移为 NOT NULL；M3 手工奖励/冲销时恢复可空。这是已批准的 M2 范围缩窄。
 3. M2 结算流水必须写 `source_type='settlement'` 且 `source_id=settlement_id`；`created_by=NULL` 表示系统写入。`reverses_entry_id=NULL` 是 M2 无冲销的明确约束。
-4. 已补的 `confirmed_*`、`supersedes_*`、`voided_at`、`priority`、`reverses_entry_id`、`created_by` 的 NULL 含义也须在对齐表中逐项说明，不得只列字段。
+4. 已补的 `confirmed_*`、`supersedes_*`、`voided_at`、`priority`、`reverses_entry_id`、`created_by` 的 NULL 含义也须在对照表中逐项说明，不得只列字段。
 
 **必须修订（DDL 可执行）**：在 M2 ledger 迁移中增加 **CHECK** `source_type='settlement' AND source_id=settlement_id`；`source_id` **FK → settlements.id**（与 `settlement_id` 同指 settlement 行）。
 
@@ -96,23 +96,31 @@
 
 ## R7 — C2/C12：编辑时必须先读取旧 slot，再切换当前版本
 
-**位置**：`design.md` §5.2；`implement.md` §4.2.4；`planning-signoff-checklist.md` C2/C12。
+**位置**：`design.md` §5.2；`implement.md` §4.2.4；`research/m2-verification-matrix.md`；`planning-signoff-checklist.md` C2/C12。
 
-**问题**：现流程先 UPDATE `current_version=vN+1`，再从未传 localTime 时从 `plans.current_version` 查 slot；此时已指向新 version 而新 slot 未插入，破坏 F27。
+**问题**：现流程先执行 `UPDATE plans SET current_version=vN+1.id`，随后在未传 `localTime` 时从 `plans.current_version` 查询应复制的旧 slot。此时它已指向新 version，而新 slot 尚未插入，导致 localTime 无来源并破坏 F27。
 
-**必须修订**：同一事务固定顺序：保存 oldVersionId → 从 oldVersionId 读 slot → INSERT vN+1 + slot → UPDATE current_version → horizon。
+**必须修订**：在同一事务中固定以下顺序：
 
-**验证**：`formal-plan.test.ts` 覆盖编辑未传 localTime（F27）与改 localTime 两路径。
+1. 锁定 plan，保存 `oldVersionId = plans.current_version`；
+2. body 未传 `localTime` 时，按 `oldVersionId + slot_key='default'` 读取并锁定旧 `local_time`；
+3. INSERT vN+1；INSERT vN+1 的 default slot（未改时间复制旧值，改时间使用 body 值）；
+4. 最后 `UPDATE plans SET current_version=vN+1.id`；
+5. 以 vN+1 调用 horizon 生成。
 
-**证据**：`1919079` + `design.md` §5.2 + `implement.md` §4.2.4 + `formal-plan.test.ts`
+**验证**：`formal-plan.test.ts` 覆盖“编辑未传 localTime”成功，新 slot、`occurrence_key`、`scheduled_at` 均使用旧 slot 时间；仍保留“编辑改时间”使用新 slot 的断言。
+
+**证据**：`9e62abf` + `design.md` §5.2 + `implement.md` §4.2.4 + `formal-plan.test.ts`
 
 ## R8 — 整改证据必须填写实际提交 SHA
 
-**位置**：本文件 R1–R7 证据行。
+**位置**：本文件 R1–R7 的“证据”行。
 
-**必须修订**：每项使用实际 commit SHA，不得保留占位文本。
+**问题**：现有证据写为“（见本提交 SHA）”或 amend 前 SHA（如 `1919079`），不满足本文件要求的“证据：commit + 文档 § + 测试文件”。
 
-**证据**：`1919079` + 本文件 R1–R7 各证据行
+**必须修订**：将每一项替换为实际 commit SHA（R1–R6 对应已提交修订，R7 对应 `9e62abf`，R8 对应本证据修订提交），并保留文档 § 与测试文件；不得保留占位文本。
+
+**证据**：`2dbf6ce` + 本文件 R1–R7 各证据行
 
 ## 完成标准
 
