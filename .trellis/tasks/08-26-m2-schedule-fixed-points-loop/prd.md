@@ -5,7 +5,7 @@
 | 项 | 值 |
 | --- | --- |
 | 任务 ID | `m2-schedule-fixed-points-loop` |
-| 基线 | `main` @ `39e645e`（第六轮 consolidated signoff 包） |
+| 基线 | `main` @ `24feced`（第六轮 consolidated signoff 包） |
 | 前置 | M1 已签署（历史任务只读） |
 | 门禁 | 书面确认 prd + design + implement 后方可实现 |
 
