@@ -501,12 +501,12 @@ describe.skipIf(!hasDb)("formal plan", () => {
       );
     expect(editAudit).toHaveLength(1);
 
-    const [slot] = await db
+    const slots = await db
       .select()
       .from(planScheduleSlots)
-      .where(eq(planScheduleSlots.planVersionId, results[0]!.versionId))
-      .limit(1);
-    expect(slot).toBeDefined();
+      .where(eq(planScheduleSlots.planVersionId, results[0]!.versionId));
+    expect(slots).toHaveLength(1);
+    expect(slots[0]?.slotKey).toBe("default");
   });
 
   it("concurrent deactivate same key replays with single side effects (P3-R02)", async () => {
