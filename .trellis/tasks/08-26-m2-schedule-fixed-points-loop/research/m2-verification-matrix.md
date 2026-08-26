@@ -1,6 +1,6 @@
 # M2 验收矩阵
 
-> 2026-08-26 第三轮修订（闭合 `planning-rereview-ee79298.md` 缺口）。
+> 2026-08-26 第四轮修订（闭合 `planning-rereview-1b8c925.md` 缺口）。
 
 ## 1. 总览
 
@@ -87,3 +87,9 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | ee79298 #2 | §5.7 幂等表 | design §5.7 + F9–F13,F20 |
 | ee79298 #3 | implement 布局 | implement §3 完整路径 |
 | ee79298 #4 | 失败路径 | design §6.1 ↔ F1–F21 |
+| 1b8c925 #1 | 消除省略号 | design §5.4/5.5/5.8B；prd skip 路径 |
+| 1b8c925 #2 | schema 自包含 | design §4.2 settlements/fact hash 列 |
+| 1b8c925 #3 | 领域/架构 | design §2–§3 Module 表 |
+| 1b8c925 #4 | 过期只读 | design §6 TS + 路径表；F6 |
+| 1b8c925 #5 | 测试策略 | design §10 + implement §4 |
+| 1b8c925 #6 | 路由/seed | implement §2.1、§3 GET 路由 |

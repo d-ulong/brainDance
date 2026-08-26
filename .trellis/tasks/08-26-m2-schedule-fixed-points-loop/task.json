@@ -37,6 +37,6 @@
     "m1SignoffCommit": "feba95e",
     "mergeCommit": "8c35b11",
     "approvedDecisions": "D1-D8 2026-08-26",
-    "planRevision": "2026-08-26 rereview ee79298 gaps closed in design §5-6 + implement §3"
+    "planRevision": "2026-08-26 rereview 1b8c925 gaps: no ellipsis, full schema §2-6 §10"
   }
 }

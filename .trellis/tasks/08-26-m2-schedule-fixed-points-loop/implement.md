@@ -6,7 +6,7 @@
 
 | 阶段 | 内容 | 验证 |
 | --- | --- | --- |
-| **0** | 规划复审 ee79298 缺口已闭合 | design §5–6 + implement §3 |
+| **0** | 规划复审 1b8c925 缺口已闭合 | design §2–4、§6、§10 全文 |
 | **1** | 迁移 0008–0013 | `pnpm db:migrate` |
 | **2** | 扩展 `src/modules/time-policy/` | `tests/unit/time-policy/` |
 | **3** | Schedule：CRUD、inline horizon、maintain-horizon、complete/skip | 集成测试 |
@@ -20,12 +20,17 @@
 
 | 序号 | 文件 | 要点 |
 | --- | --- | --- |
-| 0008 | `plans_and_versions.sql` | create/deactivate key+hash |
-| 0009 | `schedule_items_events.sql` | `completion_kind`；UNIQUE `(schedule_item_id, idempotency_key)` |
-| 0010 | `fact_versions.sql` | idempotency_key, completion_kind |
-| 0011 | `points_templates_rules.sql` | templates, rules |
-| 0012 | `settlements_ledger_balance.sql` | ledger, balance |
-| 0013 | `schedule_horizon_maintains.sql` | 仅独立 maintain 命令 |
+| 0008 | `plans_and_versions.sql` | plans: create/deactivate key+hash；plan_versions: create key+hash |
+| 0009 | `schedule_items_events.sql` | completion_kind NOT NULL（complete）；UNIQUE (schedule_item_id, idempotency_key) |
+| 0010 | `fact_versions.sql` | idempotency_key, idempotency_payload_hash, completion_kind, occurred_at |
+| 0011 | `points_templates_rules.sql` | schedule_system_complete_v1 模板；point_rules key+hash |
+| 0012 | `settlements_ledger_balance.sql` | settlements UNIQUE (fact_version_id, rule_version_id, settlement_period) |
+| 0013 | `schedule_horizon_maintains.sql` | UNIQUE (student_id, actor_id, idempotency_key) |
+
+### 2.1 Seed
+
+- 迁移或 seed 脚本插入 `point_rule_templates`：`schedule_system_complete_v1`（+10，`rewardsLateCompletion: true`）。
+- E2E bootstrap：预置家长 + 关联学生；步骤 3 调用启规则 API。
 
 ### 2.2 回滚
 
@@ -66,6 +71,10 @@ src/app/api/formal-plans/[planId]/deactivate/route.ts
 src/app/api/schedule-items/[itemId]/complete/route.ts
 src/app/api/schedule-items/[itemId]/skip/route.ts
 src/app/api/family/students/[studentId]/point-rules/route.ts
+src/app/api/family/students/[studentId]/points/balance/route.ts
+src/app/api/family/students/[studentId]/points/ledger/route.ts
+src/app/api/family/students/[studentId]/formal-plans/current/route.ts
+src/app/api/family/students/[studentId]/schedule-items/route.ts
 src/app/parent/students/[id]/plan/page.tsx
 src/app/student/schedule/page.tsx
 tests/unit/time-policy/

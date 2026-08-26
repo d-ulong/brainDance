@@ -5,7 +5,7 @@
 | 项 | 值 |
 | --- | --- |
 | 任务 ID | `m2-schedule-fixed-points-loop` |
-| 基线 | `main` @ `ee79298`（本轮修订闭合 ee79298 复审缺口） |
+| 基线 | `main` @ `1b8c925`（第四轮：消除 design 省略号与 schema 缺口） |
 | 前置 | M1 已签署（历史任务只读） |
 | 门禁 | 书面确认 prd + design + implement 后方可实现 |
 
@@ -44,7 +44,7 @@
 
 ### 跳过（D6）
 
-- `POST .../skip`：学生或关联家长；窗口外 **同 complete**（persist expired → 409）；无积分；无 skip UI/E2E。
+- `POST /api/schedule-items/[itemId]/skip`：学生或关联家长；窗口外 **同 complete**（persist expired → 409）；无积分；无 skip UI/E2E。
 
 ### 幂等（D5）
 
@@ -114,4 +114,4 @@ Outbox Worker、死信、投影重建 CLI、人工事实确认/冲销、多家�
 ## Notes
 
 - 设计细节：`design.md`；实施：`implement.md`；矩阵：`research/m2-verification-matrix.md`。
-- 复审报告：`research/planning-rereview-9c87d40.md`（首轮）；`research/planning-rereview-ee79298.md`（ee79298 复审缺口）。
+- 复审报告：`research/planning-rereview-9c87d40.md`（首轮）、`research/planning-rereview-ee79298.md`（ee79298）、`research/planning-rereview-1b8c925.md`（1b8c925）。
