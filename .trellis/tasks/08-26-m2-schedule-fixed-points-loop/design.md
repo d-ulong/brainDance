@@ -415,7 +415,7 @@ Transaction:
      — 仅统计 **当前 version** 且 **status=pending** 的 items
   5. through = horizonThrough(plan)
   6. IF from > through → no-op（200；0 新实例）
-  7. ELSE generateHorizonInline(..., from, through)；persistExpiredPastWindow
+  7. ELSE generateHorizonInline(plan, version, from, through)；persistExpiredPastWindow
   8. INSERT schedule_horizon_maintains
   9. audit + outbox(schedule.horizon_maintained)
 ```
