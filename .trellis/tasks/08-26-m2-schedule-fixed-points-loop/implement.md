@@ -119,6 +119,8 @@
 | `idempotency_key`, `idempotency_payload_hash` | NOT NULL |
 | `completion_kind` | CHECK IN (`on_time`,`late`)；NOT NULL |
 | `occurred_at`, `asserted_at`, `recorded_at` | timestamptz NOT NULL |
+| `confirmed_at`, `confirmed_by` | timestamptz / UUID；NULL（M2 系统事实未确认） |
+| `supersedes_fact_version_id`, `voided_at` | UUID / timestamptz；NULL（M2 无更正） |
 
 | 约束 | UNIQUE `(schedule_item_id, idempotency_key)` |
 
@@ -145,12 +147,12 @@
 | `id` | UUID | PK |
 | `student_id`, `creator_parent_id` | UUID | FK → users；NOT NULL |
 | `template_id` | text | FK → point_rule_templates；NOT NULL |
-| `status` | text | CHECK IN (`active`,`inactive`)；M2 启用后 `active` |
+| `active` | boolean | NOT NULL DEFAULT false；启用后 `true`（对齐 data-model；**非** `status` 列） |
 | `create_idempotency_key`, `create_idempotency_payload_hash` | text | NOT NULL |
 | `created_at` | timestamptz | NOT NULL |
 
 | 约束 | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
-| 部分 UNIQUE | `(student_id) WHERE status = 'active'`（M2 每学生 ≤1 active rule） |
+| 部分 UNIQUE | `(student_id) WHERE active = true`（M2 每学生 ≤1 active rule） |
 
 **`point_rule_versions`**
 
@@ -190,7 +192,9 @@
 | `student_id`, `settlement_id` | UUID | FK；NOT NULL |
 | `amount` | int | NOT NULL（M2 固定 +10） |
 | `reason`, `source_type`, `explanation` | text | NOT NULL |
-| `source_id` | UUID | NULL（M2 未用；对齐 data-model 列） |
+| `source_id` | UUID | NULL（M2 未用） |
+| `reverses_entry_id` | UUID | FK → point_ledger_entries；NULL（M2 无冲销） |
+| `created_by` | UUID | FK → users；NULL（M2 系统 settlement 路径） |
 | `idempotency_key` | text | NOT NULL（审计；**非** UNIQUE scope） |
 
 | 约束 | UNIQUE `settlement_id` |
@@ -226,14 +230,14 @@
 | `plans` | student_id, owner_id, plan_kind, status, current_version | §2.0 → `current_version_id` | title, description, start/end_date, idempotency hash |
 | `plan_versions` | version, schedule_rule, effective_from, effective_until, created_at | §2.0 | create idempotency key+hash |
 | `plan_schedule_slots` | plan_version_id, slot_key, local_time | §2.0 | — |
-| `schedule_items` | owner_id, slot_key, source, occurrence_key, plan_snapshot | §2.0.1 | — |
+| `schedule_items` | owner_id, slot_key, source, occurrence_key, plan_snapshot | §2.0.1 | `slot_key='default'`；occurrence_key 字符串含 `daily:{localTime}` |
 | `schedule_events` | from_status, to_status, actor_id, occurred_at, idempotency_key | §2.0.1 | idempotency_payload_hash, completion_kind |
-| `fact_versions` | fact_key, source_kind, value, occurred_at, asserted_at, recorded_at | §2.0.2 | idempotency hash, completion_kind |
+| `fact_versions` | fact_key, source_kind, value, occurred_at, asserted_at, recorded_at | §2.0.2 | idempotency hash, completion_kind；confirmed/voided NULL |
 | `point_rule_templates` | event_type, parameter/effect/negative_effect_schema, stacking_mode, limits, active | §2.0.3 | — |
-| `point_rules` | student_id, creator_parent_id, template_id | §2.0.3 | create idempotency；status |
+| `point_rules` | student_id, creator_parent_id, template_id, **active** | §2.0.3 | create idempotency；**无 status 列** |
 | `point_rule_versions` | version, parameters, effect, effective_at | §2.0.3 | priority NULL |
 | `settlements` | settlement_period, result, explanation, idempotency_key | §2.0.4 | — |
-| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | settlement_id UNIQUE；source_id NULL |
+| `point_ledger_entries` | amount, reason, source_type, idempotency_key | §2.0.4 | settlement_id UNIQUE；source_id/reverses_entry_id/created_by NULL |
 | `point_balance_projection` | balance, last_ledger_entry_id, updated_at | §2.0.4 | — |
 
 迁移约束测试须覆盖上表「必填列」存在性及 CHECK（§2.2.1）。
@@ -249,7 +253,7 @@
 | `point_balance_projection` | §2.0.4 | last_ledger_entry_id |
 | `fact_versions` | §2.0.2 | source_kind, value, fact_key；item+key UNIQUE |
 | `point_rule_templates` | §2.0.3 | PK id；seed schedule_system_complete_v1 |
-| `point_rules` | §2.0.3 | creator+student+key UNIQUE；active 部分 UNIQUE |
+| `point_rules` | §2.0.3 | `active` boolean；creator+student+key UNIQUE；`WHERE active` 部分 UNIQUE |
 | `point_rule_versions` | §2.0.3 | (point_rule_id, version) UNIQUE |
 | `settlements` | §2.0.4 | `(fact_version_id, rule_version_id, settlement_period)` UNIQUE |
 | `point_ledger_entries` | §2.0.4 | UNIQUE settlement_id；**无**全局 idempotency UNIQUE |
@@ -276,7 +280,7 @@
 | data-model §2.0.7 必填列存在（含 fact_versions.source_kind/value） | §2.0.7 |
 | `plan_kind='formal'` + 部分 UNIQUE active formal | §2.0 |
 | `schedule_events` from_status/to_status 复合 CHECK | §2.0.1 |
-| `point_rules` UNIQUE + active 部分 UNIQUE | §2.0.3 |
+| `point_rules` UNIQUE + `active` 部分 UNIQUE | §2.0.3 |
 | `point_ledger_entries` UNIQUE settlement_id；无全局 idempotency UNIQUE | §2.0.4 |
 | `point_balance_projection` PK + last_ledger_entry_id + UPSERT | §2.0.4 |
 
@@ -340,6 +344,22 @@ tests/integration/api/
 tests/e2e/m2-schedule-points-flow.spec.ts
 ```
 
+### 3.1 七类写 Route（C8 / F23）
+
+| # | 方法 | 路径 | Idempotency-Key |
+| --- | --- | --- | --- |
+| 1 | POST | `/api/family/students/[studentId]/formal-plans` | **必填** |
+| 2 | PATCH | `/api/formal-plans/[planId]` | **必填** |
+| 3 | POST | `/api/formal-plans/[planId]/deactivate` | **必填** |
+| 4 | POST | `/api/family/students/[studentId]/formal-plans/maintain-horizon` | **必填** |
+| 5 | POST | `/api/schedule-items/[itemId]/complete` | **必填** |
+| 6 | POST | `/api/schedule-items/[itemId]/skip` | **必填** |
+| 7 | POST | `/api/family/students/[studentId]/point-rules` | **必填** |
+
+缺失或空白 → **400** `IDEMPOTENCY_KEY_REQUIRED`（`design.md` §7.1）。鉴权前校验；不得进入 domain。
+
+共享适配：`src/app/api/_lib/require-idempotency-key.ts`（规划占位；实现阶段创建）。
+
 ## 4. 测试矩阵
 
 ### 4.1 单元
@@ -350,6 +370,8 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | `derive-completion-kind.test.ts` | on_time / late |
 | `effective-status.test.ts` | 只读 expired |
 | `occurrence-key.test.ts` | key 格式 §4.6 |
+| `horizon-through.test.ts` | `horizonThrough` = min(endDate, today+30)；无 endDate |
+| `add-family-days.test.ts` | 家庭日 +N 边界 |
 
 ### 4.2 集成
 
@@ -387,6 +409,15 @@ tests/e2e/m2-schedule-points-flow.spec.ts
 | C4 | `m2-schema-constraints.test.ts` | §2.0.2 fact_versions source_kind/value；§5.8A INSERT 含 owner_id/slot_key/source |
 | F28 | `maintain-horizon.test.ts` | 计划已结束 maintain → items_created=0 **且** pending→expired |
 | F28 | `plan-end-date.test.ts` | from>through no-op **且** pending→expired；同 key 回放 **不** persist |
+
+### 4.2.3 最终放行复审映射（S-C4 + C8）
+
+| ID | 测试文件 | 断言 |
+| --- | --- | --- |
+| S-C4 | `m2-schema-constraints.test.ts` | §2.0.7 全表列；`point_rules.active`（非 status）；ledger/fact 可空列 |
+| C8 | `horizon-through.test.ts` | `horizonThrough(plan, now)` 上界；与 §5.8A 一致 |
+| C8 | `plan-end-date.test.ts` | F22 endDate 边界 + inline/maintain 生成范围 |
+| C8 | `write-route-idempotency-header.test.ts` | §3.1 七 Route 缺 header → 400 |
 
 ### 4.3 E2E
 
@@ -431,8 +462,8 @@ pnpm test && pnpm typecheck && pnpm lint && pnpm format && pnpm build && pnpm te
 - [ ] 跨 actor 同 key → 409
 - [ ] ledger UNIQUE 仅 `settlement_id`；balance 仅 INSERT RETURNING 时累加
 - [ ] complete/skip 锁后重查同 key event（并发同 key 200 回放）
-- [ ] horizonThrough = min(endDate, today+30)；maintain 已结束 no-op
-- [ ] 七类写 Route 缺 Idempotency-Key → 400
+- [ ] `point_rules.active` boolean（非 status 列）；data-model §5 对齐
+- [ ] horizonThrough 仅 `time-policy/horizon-through.ts`；§3.1 七 Route 缺 Idempotency-Key → 400
 - [ ] `plans.plan_kind`（非 plan_type）；events 复合 CHECK
 - [ ] 每 plan_version 无条件 `plan_schedule_slots` 快照
 - [ ] balance UPSERT 使用 EXCLUDED.balance（非 amount 列）

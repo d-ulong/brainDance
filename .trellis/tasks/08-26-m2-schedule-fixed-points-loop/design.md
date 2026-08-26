@@ -70,11 +70,11 @@ Browser（计划表单、补齐日程按钮、日程列表、完成按钮、积�
 | `plans` | `create_idempotency_key`, … | UNIQUE `(owner_id, student_id, create_idempotency_key)`；**部分 UNIQUE** `(student_id) WHERE status='active' AND plan_kind='formal'` |
 | `plan_versions` | `version`, `schedule_rule`, `effective_from`, `effective_until`, `created_at` | 对齐 data-model；M2 幂等列 `create_idempotency_key`+hash |
 | `plan_schedule_slots` | `slot_key`, `local_time` | UNIQUE `(plan_version_id, slot_key)`；M2 固定 `default` + `20:00` |
-| `schedule_items` | `owner_id`, `slot_key`, `source`, `plan_snapshot`, `occurrence_key`, `status` | 对齐 data-model §4；M2 `source='plan'` |
+| `schedule_items` | `owner_id`, `slot_key`, `source`, `plan_snapshot`, `occurrence_key`, `status` | 对齐 data-model §4；M2 `source='plan'`；`slot_key='default'` |
 | `schedule_events` | `from_status`, `to_status`, `idempotency_key`, `idempotency_payload_hash`, `actor_id`, `completion_kind` | 对齐 data-model §4（状态迁移）；**复合 CHECK** 见 implement §2.0.1 |
 | `fact_versions` | `fact_key`, `source_kind`, `value`, `occurred_at`, `asserted_at`, `recorded_at`, `idempotency_key`, … | UNIQUE `(schedule_item_id, idempotency_key)`；M2 `source_kind='system'` |
 | `schedule_horizon_maintains` | `idempotency_key`, `idempotency_payload_hash`, `actor_id` | UNIQUE `(student_id, actor_id, idempotency_key)` |
-| `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash` | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)` |
+| `point_rules` | `create_idempotency_key`, `create_idempotency_payload_hash`, **`active`** | UNIQUE `(creator_parent_id, student_id, create_idempotency_key)`；**部分 UNIQUE** `(student_id) WHERE active=true` |
 | `settlements` | `idempotency_key`, `settlement_period` | UNIQUE `(fact_version_id, rule_version_id, settlement_period)`；`settlement_period` = `schedule_item.family_date` |
 | `point_ledger_entries` | `idempotency_key`（审计列，非 UNIQUE） | UNIQUE `settlement_id`；**无**全局 `UNIQUE(idempotency_key)` |
 | `point_balance_projection` | `balance`, `last_ledger_entry_id` | PK `student_id`；`INSERT(student_id,balance)` + `EXCLUDED.balance` 累加 |
@@ -130,6 +130,7 @@ occurrence_key = "{plan_id}:{plan_version_id}:{family_date}:daily:{localTime}"
 
 - `family_date`：`YYYY-MM-DD`（Asia/Shanghai 日历日）
 - `localTime`：来自当前 `plan_version` 的 `plan_schedule_slots`（M2 单槽 `default`）
+- `schedule_items.slot_key` 列固定 **`default`**（对齐 `plan_schedule_slots.slot_key`）；`occurrence_key` **字符串**含 `daily:{localTime}` 以区分时间点
 - 生成：`generateHorizonInline` / 独立 maintain 均 `INSERT … ON CONFLICT (occurrence_key) DO NOTHING`
 
 ### 4.7 schedule_items 状态机
@@ -368,7 +369,7 @@ Body: { templateId: "schedule_system_complete_v1" }
   3. SELECT point_rules WHERE (creator_parent_id, student_id, create_idempotency_key)
      → 命中且 hash 一致: **200 回放** rule
      → 命中且 hash 不一致: 409
-  4. INSERT point_rules + point_rule_versions v1
+  4. INSERT point_rules(active=true, …) + point_rule_versions v1
   5. audit + outbox(point_rule.enabled)
 
 与「创建计划」为**独立步骤**；E2E 步骤 3 显式调用。
@@ -565,9 +566,19 @@ function effectiveStatus(item, now): Status {
 | GET | `/api/family/students/[id]/points/balance` | 家长、学生 |
 | GET | `/api/family/students/[id]/points/ledger?limit` | 家长、学生 |
 
-### 7.1 写 Route HTTP 契约（C8）
+### 7.1 写 Route HTTP 契约
 
-**七类写 Route**（创建/编辑/停用计划、maintain-horizon、complete、skip、启规则）均 **强制** `Idempotency-Key` 请求头（非空字符串）。
+**七类写 Route**均 **强制** `Idempotency-Key` 请求头（非空字符串）。
+
+| # | 方法 | 路径 |
+| --- | --- | --- |
+| 1 | POST | `/api/family/students/[id]/formal-plans` |
+| 2 | PATCH | `/api/formal-plans/[planId]` |
+| 3 | POST | `/api/formal-plans/[planId]/deactivate` |
+| 4 | POST | `/api/family/students/[id]/formal-plans/maintain-horizon` |
+| 5 | POST | `/api/schedule-items/[itemId]/complete` |
+| 6 | POST | `/api/schedule-items/[itemId]/skip` |
+| 7 | POST | `/api/family/students/[id]/point-rules` |
 
 | 条件 | HTTP | 错误码 |
 | --- | --- | --- |
@@ -600,7 +611,7 @@ Route Handler 在鉴权前校验 header；不得进入 domain 层。响应体 `{
 
 | 层级 | 范围 | 入口 |
 | --- | --- | --- |
-| 单元 | time-policy 窗口/kind；occurrence_key；effectiveStatus | `tests/unit/time-policy/` |
+| 单元 | time-policy 窗口/kind；occurrence_key；effectiveStatus；**horizonThrough** | `tests/unit/time-policy/` |
 | 集成 | 七类写命令幂等、horizon、complete/skip、settlement、outbox | `tests/integration/schedule/`、`settlement/` |
 | E2E | desktop-chromium + mobile-360 各完整 7 步 | `tests/e2e/m2-schedule-points-flow.spec.ts` |
 | 静态 | test、typecheck、lint、format、build | `pnpm test && pnpm typecheck && …` |
@@ -622,7 +633,8 @@ Route Handler 在鉴权前校验 header；不得进入 domain 层。响应体 `{
 | F16–F18, F20, F24 | `schedule-skip.test.ts` |
 | F9–F13, F20 | `command-idempotency.test.ts` |
 | F22, F28 | `plan-end-date.test.ts` |
-| F23 | `write-route-idempotency-header.test.ts` |
+| F23 | `write-route-idempotency-header.test.ts`（§3.1 七 Route） |
+| `horizon-through.test.ts` | C8 / F22 上界 |
 | F24 | `schedule-terminal-concurrency.test.ts` |
 | F25 | `settlement-ledger.test.ts` |
 | F27 | `formal-plan.test.ts` |
