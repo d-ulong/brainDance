@@ -54,39 +54,77 @@ function quotePgIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+type ForeignKeyQuadruple = {
+  sourceTable: string;
+  sourceColumn: string;
+  targetTable: string;
+  targetColumn: string;
+};
+
+type ForeignKeyIdentity = ForeignKeyQuadruple & {
+  constraintName: string;
+  constraintDef: string;
+  convalidated: boolean;
+};
+
 async function findForeignKeyConstraint(
   db: TestDb,
-  tableName: string,
-  columnName: string,
-): Promise<string> {
+  quadruple: ForeignKeyQuadruple,
+): Promise<ForeignKeyIdentity> {
   const rows = await db.execute(sql`
-    SELECT c.conname AS constraint_name
+    SELECT
+      c.conname AS constraint_name,
+      c.convalidated AS convalidated,
+      pg_get_constraintdef(c.oid) AS constraint_def
     FROM pg_constraint c
-    JOIN pg_class t ON c.conrelid = t.oid
-    JOIN pg_namespace n ON t.relnamespace = n.oid
-    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
-    WHERE n.nspname = 'public'
-      AND t.relname = ${tableName}
-      AND a.attname = ${columnName}
-      AND c.contype = 'f'
-    LIMIT 1
+    JOIN pg_class src ON c.conrelid = src.oid
+    JOIN pg_namespace src_ns ON src.relnamespace = src_ns.oid
+    JOIN pg_class tgt ON c.confrelid = tgt.oid
+    JOIN pg_namespace tgt_ns ON tgt.relnamespace = tgt_ns.oid
+    JOIN pg_attribute src_a ON src_a.attrelid = src.oid AND src_a.attnum = c.conkey[1]
+    JOIN pg_attribute tgt_a ON tgt_a.attrelid = tgt.oid AND tgt_a.attnum = c.confkey[1]
+    WHERE c.contype = 'f'
+      AND array_length(c.conkey, 1) = 1
+      AND array_length(c.confkey, 1) = 1
+      AND src_ns.nspname = 'public'
+      AND src.relname = ${quadruple.sourceTable}
+      AND src_a.attname = ${quadruple.sourceColumn}
+      AND tgt_ns.nspname = 'public'
+      AND tgt.relname = ${quadruple.targetTable}
+      AND tgt_a.attname = ${quadruple.targetColumn}
   `);
 
-  const constraintName = (rows[0] as { constraint_name: string } | undefined)?.constraint_name;
-  if (!constraintName) {
-    throw new Error(`Foreign key not found for ${tableName}.${columnName}`);
+  if (rows.length !== 1) {
+    throw new Error(
+      `Expected exactly one foreign key for ${quadruple.sourceTable}.${quadruple.sourceColumn} → ${quadruple.targetTable}.${quadruple.targetColumn}, found ${rows.length}`,
+    );
   }
 
-  return constraintName;
+  const row = rows[0] as {
+    constraint_name: string;
+    convalidated: boolean;
+    constraint_def: string;
+  };
+
+  return {
+    ...quadruple,
+    constraintName: row.constraint_name,
+    constraintDef: row.constraint_def,
+    convalidated: row.convalidated,
+  };
 }
 
-async function assertForeignKeyExists(db: TestDb, constraintName: string): Promise<void> {
-  const rows = await db.execute(sql`
-    SELECT 1 AS ok
-    FROM pg_constraint
-    WHERE conname = ${constraintName}
-  `);
-  expect(rows.length).toBe(1);
+async function assertForeignKeyExists(db: TestDb, beforeDrop: ForeignKeyIdentity): Promise<void> {
+  const restored = await findForeignKeyConstraint(db, {
+    sourceTable: beforeDrop.sourceTable,
+    sourceColumn: beforeDrop.sourceColumn,
+    targetTable: beforeDrop.targetTable,
+    targetColumn: beforeDrop.targetColumn,
+  });
+
+  expect(restored.constraintName).toBe(beforeDrop.constraintName);
+  expect(restored.convalidated).toBe(true);
+  expect(restored.constraintDef).toBe(beforeDrop.constraintDef);
 }
 
 async function dropForeignKey(
@@ -401,14 +439,15 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
       now: FIXED_NOW,
     });
 
-    const balanceLedgerFk = await findForeignKeyConstraint(
-      db,
-      "point_balance_projection",
-      "last_ledger_entry_id",
-    );
+    const balanceLedgerFk = await findForeignKeyConstraint(db, {
+      sourceTable: "point_balance_projection",
+      sourceColumn: "last_ledger_entry_id",
+      targetTable: "point_ledger_entries",
+      targetColumn: "id",
+    });
 
     await rollbackAfter(db, async (tx) => {
-      await dropForeignKey(tx, "point_balance_projection", balanceLedgerFk);
+      await dropForeignKey(tx, "point_balance_projection", balanceLedgerFk.constraintName);
       await tx.delete(pointLedgerEntries);
 
       const before = await captureSettlementState(tx, studentId);
@@ -633,11 +672,16 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
       now: FIXED_NOW,
     });
 
-    const factItemFk = await findForeignKeyConstraint(db, "fact_versions", "schedule_item_id");
+    const factItemFk = await findForeignKeyConstraint(db, {
+      sourceTable: "fact_versions",
+      sourceColumn: "schedule_item_id",
+      targetTable: "schedule_items",
+      targetColumn: "id",
+    });
     const missingItemId = "00000000-0000-4000-8000-000000009999";
 
     await rollbackAfter(db, async (tx) => {
-      await dropForeignKey(tx, "fact_versions", factItemFk);
+      await dropForeignKey(tx, "fact_versions", factItemFk.constraintName);
       await tx
         .update(factVersions)
         .set({ scheduleItemId: missingItemId })
