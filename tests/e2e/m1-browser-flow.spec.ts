@@ -171,8 +171,9 @@ test.describe("M1 browser flow", () => {
     await loginViaUi(page, parentEmail, parentPassword);
     await page.goto("/parent/students");
     await page
-      .locator('[data-testid^="linked-student-"]')
+      .locator("li")
       .filter({ hasText: studentUsername })
+      .getByRole("link", { name: "训练汇总" })
       .click();
     await expect(page.getByTestId("parent-metric-median_reaction_ms")).toBeVisible({
       timeout: 15_000,
