@@ -9,6 +9,11 @@ import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.ser
 import { ScheduleError } from "@/modules/schedule/errors";
 import { deriveCompletionKind } from "@/modules/time-policy/derive-completion-kind";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
+import {
+  loadSettlementReplayForFact,
+  settleForFact as defaultSettleForFact,
+  type SettleForFactResult,
+} from "@/modules/settlement/settlement.service";
 
 export type SettleForFactInput = {
   factVersionId: string;
@@ -20,7 +25,10 @@ export type SettleForFactInput = {
 };
 
 /** Phase 4 settlement seam — invoked in the same transaction as fact creation. */
-export type SettleForFactFn = (tx: Database, input: SettleForFactInput) => Promise<void>;
+export type SettleForFactFn = (
+  tx: Database,
+  input: SettleForFactInput,
+) => Promise<SettleForFactResult>;
 
 export type CompleteScheduleInput = {
   actorId: string;
@@ -37,6 +45,8 @@ export type CompleteScheduleResult = {
   eventId: string;
   factVersionId: string;
   completionKind: "on_time" | "late";
+  settlementId?: string;
+  ledgerEntryId?: string;
   idempotentReplay: boolean;
 };
 
@@ -108,11 +118,15 @@ async function loadCompleteReplay(
     throw new ScheduleError("STATE_CONFLICT", "Complete replay fact missing");
   }
 
+  const settlement = await loadSettlementReplayForFact(tx, fact.id);
+
   return {
     scheduleItemId,
     eventId: event.id,
     factVersionId: fact.id,
     completionKind: event.completionKind as "on_time" | "late",
+    settlementId: settlement?.settlementId,
+    ledgerEntryId: settlement?.ledgerEntryId,
     idempotentReplay: true,
   };
 }
@@ -219,16 +233,15 @@ export async function completeScheduleItem(
         throw new Error("Failed to create fact version");
       }
 
-      if (input.settleForFact) {
-        await input.settleForFact(tx, {
-          factVersionId: fact.id,
-          scheduleItemId: item.id,
-          studentId: item.studentId,
-          idempotencyKey: input.idempotencyKey,
-          completionKind,
-          familyDate: item.familyDate,
-        });
-      }
+      const settle = input.settleForFact ?? defaultSettleForFact;
+      const settlement = await settle(tx, {
+        factVersionId: fact.id,
+        scheduleItemId: item.id,
+        studentId: item.studentId,
+        idempotencyKey: input.idempotencyKey,
+        completionKind,
+        familyDate: item.familyDate,
+      });
 
       await appendAuditEvent(tx, {
         actorId: input.actorId,
@@ -258,6 +271,8 @@ export async function completeScheduleItem(
         eventId: event.id,
         factVersionId: fact.id,
         completionKind,
+        settlementId: settlement.settlementId,
+        ledgerEntryId: settlement.ledgerEntryId,
         idempotentReplay: false,
       };
     });

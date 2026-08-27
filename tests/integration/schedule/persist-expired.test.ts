@@ -10,6 +10,7 @@ import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.ser
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -110,6 +111,11 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
       )
       .limit(1);
 
+    await enableSchedulePointRule(db, {
+      parentId: pairA.parentId,
+      studentId: pairA.studentId,
+    });
+
     await completeScheduleItem(db, {
       actorId: pairA.studentId,
       scheduleItemId: todayItem!.id,
@@ -200,6 +206,8 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
 
     const selectedIds = await selectGate.opened;
     expect(selectedIds).toContain(raceItem!.id);
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
     await completeScheduleItem(db, {

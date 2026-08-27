@@ -10,6 +10,7 @@ import { ScheduleError } from "@/modules/schedule/errors";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -52,6 +53,8 @@ describe.skipIf(!hasDb)("schedule terminal concurrency", () => {
       WHERE student_id = '${studentId}'::uuid AND family_date = '2026-01-15'
       LIMIT 1
     `);
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     return { studentId, itemId: (items[0] as { id: string }).id };
   }

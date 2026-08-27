@@ -15,6 +15,7 @@ import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -101,6 +102,8 @@ describe.skipIf(!hasDb)("schedule outbox", () => {
 
     const completeItemId = (items[0] as { id: string }).id;
     const skipItemId = (items[1] as { id: string }).id;
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     await completeScheduleItem(db, {
       actorId: studentId,

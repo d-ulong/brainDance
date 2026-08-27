@@ -12,6 +12,7 @@ import { ScheduleError } from "@/modules/schedule/errors";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -61,12 +62,17 @@ describe.skipIf(!hasDb)("schedule complete", () => {
       throw new Error("Expected today schedule item");
     }
 
+    await enableSchedulePointRule(db, { parentId, studentId });
+
     return { parentId, studentId, itemId: item.id };
   }
 
   it("completes pending item with fact and on_time kind (AC-M2-3/F3)", async () => {
     const { studentId, itemId } = await seedTodayItem();
-    const settleSpy = vi.fn<SettleForFactFn>().mockResolvedValue(undefined);
+    const settleSpy = vi.fn<SettleForFactFn>().mockResolvedValue({
+      settlementId: "00000000-0000-4000-8000-000000000001",
+      ledgerEntryId: "00000000-0000-4000-8000-000000000002",
+    });
 
     const result = await completeScheduleItem(db, {
       actorId: studentId,
@@ -217,6 +223,8 @@ describe.skipIf(!hasDb)("schedule complete", () => {
       now: FIXED_NOW,
     });
 
+    await enableSchedulePointRule(db, { parentId, studentId });
+
     await db.execute(`
       INSERT INTO schedule_items (
         plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
@@ -245,17 +253,19 @@ describe.skipIf(!hasDb)("schedule complete", () => {
     expect(result.completionKind).toBe("late");
   });
 
-  it("does not write ledger in phase 3 (no settlement service)", async () => {
+  it("writes ledger when point rule is enabled", async () => {
     const { studentId, itemId } = await seedTodayItem();
 
-    await completeScheduleItem(db, {
+    const result = await completeScheduleItem(db, {
       actorId: studentId,
       scheduleItemId: itemId,
-      idempotencyKey: "complete-no-ledger",
+      idempotencyKey: "complete-with-ledger",
       now: FIXED_NOW,
     });
 
     const ledger = await db.select().from(pointLedgerEntries);
-    expect(ledger).toHaveLength(0);
+    expect(ledger).toHaveLength(1);
+    expect(result.ledgerEntryId).toBe(ledger[0]?.id);
+    expect(result.settlementId).toBe(ledger[0]?.settlementId);
   });
 });

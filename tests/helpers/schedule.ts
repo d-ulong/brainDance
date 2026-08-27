@@ -5,6 +5,7 @@ import {
   acceptRelationshipRequest,
   createRelationshipRequest,
 } from "@/modules/family-access/relationship-request.service";
+import { enablePointRule } from "@/modules/settlement/point-rule.service";
 
 import type { TestDb } from "./db";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "./family-access";
@@ -59,6 +60,19 @@ export async function bootstrapParentStudentRelationship(db: TestDb) {
   });
 
   return { parentId, studentId, suffix };
+}
+
+export async function enableSchedulePointRule(
+  db: TestDb,
+  input: { parentId: string; studentId: string; idempotencyKey?: string },
+) {
+  return enablePointRule(db, {
+    parentId: input.parentId,
+    studentId: input.studentId,
+    idempotencyKey: input.idempotencyKey ?? `enable-rule-${crypto.randomUUID()}`,
+    body: { templateId: "schedule_system_complete_v1" },
+    now: FIXED_NOW,
+  });
 }
 
 export const FIXED_NOW = new Date("2026-01-15T04:00:00.000Z");

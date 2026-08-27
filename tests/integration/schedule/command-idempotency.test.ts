@@ -13,6 +13,7 @@ import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -92,6 +93,8 @@ describe.skipIf(!hasDb)("command idempotency", () => {
       LIMIT 1
     `);
     const itemId = (items[0] as { id: string }).id;
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     const { completeScheduleItem } = await import("@/modules/schedule/complete-schedule.service");
     await completeScheduleItem(db, {
@@ -182,6 +185,8 @@ describe.skipIf(!hasDb)("command idempotency", () => {
 
     const completeItemId = (items[0] as { id: string }).id;
     const skipItemId = (items[1] as { id: string }).id;
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     await completeScheduleItem(db, {
       actorId: studentId,

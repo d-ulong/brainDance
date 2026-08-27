@@ -9,6 +9,7 @@ import { ScheduleError } from "@/modules/schedule/errors";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
+  enableSchedulePointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -140,6 +141,8 @@ describe.skipIf(!hasDb)("schedule auth", () => {
       SELECT id FROM schedule_items WHERE plan_id = '${created.planId}'::uuid LIMIT 1
     `);
     const itemId = (items[0] as { id: string }).id;
+
+    await enableSchedulePointRule(db, { parentId, studentId });
 
     await completeScheduleItem(db, {
       actorId: studentId,
