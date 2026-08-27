@@ -4,9 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   auditEvents,
+  factVersions,
   outboxEvents,
   pointBalanceProjection,
   pointLedgerEntries,
+  pointRuleVersions,
+  pointRules,
+  scheduleEvents,
   scheduleItems,
   settlements,
 } from "@/db/schema";
@@ -14,7 +18,10 @@ import { completeScheduleItem } from "@/modules/schedule/complete-schedule.servi
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { ScheduleError } from "@/modules/schedule/errors";
+import { appendLedgerForSettlement } from "@/modules/settlement/ledger.service";
 import { enablePointRule } from "@/modules/settlement/point-rule.service";
+import { settleForFact } from "@/modules/settlement/settlement.service";
+import { SettlementError } from "@/modules/settlement/errors";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
@@ -23,6 +30,9 @@ import {
   resetScheduleTables,
 } from "../../helpers/schedule";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
+import { seedStudentUser } from "../../helpers/family-access";
+import { createInvitation } from "@/modules/identity/invitation.service";
+import { bootstrapAdmin } from "../../helpers/identity";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -138,6 +148,35 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(balance?.lastLedgerEntryId).toBe(result.ledgerEntryId);
   });
 
+  it("derives settlement and ledger fields from fact and schedule item rows (P4-R01)", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const item = items.find((row) => row.familyDate === "2026-01-15");
+    if (!item) throw new Error("Expected item");
+
+    await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "settle-authoritative",
+      now: FIXED_NOW,
+    });
+
+    const [fact] = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.scheduleItemId, item.id));
+    const [settlement] = await db.select().from(settlements);
+    const [ledger] = await db.select().from(pointLedgerEntries);
+
+    expect(fact).toBeTruthy();
+    expect(settlement?.studentId).toBe(fact!.studentId);
+    expect(settlement?.studentId).toBe(item.studentId);
+    expect(settlement?.settlementPeriod).toBe(item.familyDate);
+    expect(settlement?.idempotencyKey).toBe(fact!.idempotencyKey);
+    expect(ledger?.studentId).toBe(fact!.studentId);
+    expect(ledger?.idempotencyKey).toBe(fact!.idempotencyKey);
+    expect(ledger?.explanation).toContain(`completion_kind=${fact!.completionKind}`);
+  });
+
   it("replays complete with same ledger and unchanged balance (F25)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
@@ -171,36 +210,166 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(balance?.balance).toBe(10);
   });
 
-  it("does not double-count balance on settlement/ledger conflict (C9)", async () => {
+  it("rejects complete replay when settlement is missing (P4-R02)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
     if (!item) throw new Error("Expected item");
 
-    const results = await Promise.allSettled([
+    await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "settle-missing-settlement",
+      now: FIXED_NOW,
+      settleForFact: async () => ({
+        settlementId: "00000000-0000-4000-8000-000000000001",
+        ledgerEntryId: "00000000-0000-4000-8000-000000000002",
+      }),
+    });
+
+    await expect(
       completeScheduleItem(db, {
         actorId: studentId,
         scheduleItemId: item.id,
-        idempotencyKey: "settle-concurrent",
+        idempotencyKey: "settle-missing-settlement",
         now: FIXED_NOW,
       }),
+    ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies ScheduleError["code"] });
+
+    expect(await db.select().from(settlements)).toHaveLength(0);
+    expect(await db.select().from(pointLedgerEntries)).toHaveLength(0);
+  });
+
+  it("rejects complete replay when ledger is missing (P4-R02)", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const item = items.find((row) => row.familyDate === "2026-01-15");
+    if (!item) throw new Error("Expected item");
+
+    await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "settle-missing-ledger",
+      now: FIXED_NOW,
+    });
+
+    await db.delete(pointBalanceProjection);
+    await db.delete(pointLedgerEntries);
+
+    await expect(
       completeScheduleItem(db, {
         actorId: studentId,
         scheduleItemId: item.id,
-        idempotencyKey: "settle-concurrent",
+        idempotencyKey: "settle-missing-ledger",
         now: FIXED_NOW,
       }),
-    ]);
+    ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies ScheduleError["code"] });
+  });
 
-    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+  it("settlement conflict replays existing ledger without duplicate writes (P4-R03/P4-R04)", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const item = items.find((row) => row.familyDate === "2026-01-15");
+    if (!item) throw new Error("Expected item");
 
-    const ledger = await db.select().from(pointLedgerEntries);
-    expect(ledger).toHaveLength(1);
+    const first = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "settle-conflict-replay",
+      now: FIXED_NOW,
+    });
+
+    const auditsBefore = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, "point_ledger.created"));
+    const outboxBefore = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "points.settled"));
+
+    const replay = await db.transaction(async (tx) =>
+      settleForFact(tx, { factVersionId: first.factVersionId }),
+    );
+
+    expect(replay.settlementId).toBe(first.settlementId);
+    expect(replay.ledgerEntryId).toBe(first.ledgerEntryId);
+    expect(await db.select().from(settlements)).toHaveLength(1);
+    expect(await db.select().from(pointLedgerEntries)).toHaveLength(1);
 
     const [balance] = await db
       .select()
       .from(pointBalanceProjection)
       .where(eq(pointBalanceProjection.studentId, studentId));
     expect(balance?.balance).toBe(10);
+
+    const auditsAfter = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, "point_ledger.created"));
+    const outboxAfter = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "points.settled"));
+    expect(auditsAfter).toHaveLength(auditsBefore.length);
+    expect(outboxAfter).toHaveLength(outboxBefore.length);
+  });
+
+  it("ledger conflict replays existing ledger without duplicate side effects (P4-R04)", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const item = items.find((row) => row.familyDate === "2026-01-15");
+    if (!item) throw new Error("Expected item");
+
+    const completed = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "ledger-conflict",
+      now: FIXED_NOW,
+    });
+
+    const [fact] = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.id, completed.factVersionId))
+      .limit(1);
+    if (!fact) throw new Error("Expected fact");
+
+    await db.delete(pointBalanceProjection);
+    await db.delete(pointLedgerEntries);
+    await db.delete(auditEvents).where(eq(auditEvents.action, "point_ledger.created"));
+    await db.delete(outboxEvents).where(eq(outboxEvents.eventType, "points.settled"));
+
+    const ledgerInput = {
+      studentId,
+      settlementId: completed.settlementId,
+      amount: 10,
+      completionKind: fact.completionKind as "on_time" | "late",
+      idempotencyKey: fact.idempotencyKey,
+      now: FIXED_NOW,
+    };
+
+    const first = await db.transaction(async (tx) => appendLedgerForSettlement(tx, ledgerInput));
+    const second = await db.transaction(async (tx) => appendLedgerForSettlement(tx, ledgerInput));
+
+    expect(first.ledgerEntryId).toBe(second.ledgerEntryId);
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(await db.select().from(pointLedgerEntries)).toHaveLength(1);
+
+    const [balance] = await db
+      .select()
+      .from(pointBalanceProjection)
+      .where(eq(pointBalanceProjection.studentId, studentId));
+    expect(balance?.balance).toBe(10);
+
+    const ledgerAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, "point_ledger.created"));
+    expect(ledgerAudits).toHaveLength(1);
+
+    const settledOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "points.settled"));
+    expect(settledOutbox).toHaveLength(1);
   });
 
   it("allows same client key across different schedule items (F13/F25)", async () => {
@@ -265,7 +434,7 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     const [ledger] = await db
       .select()
       .from(pointLedgerEntries)
-      .where(eq(pointLedgerEntries.id, result.ledgerEntryId!));
+      .where(eq(pointLedgerEntries.id, result.ledgerEntryId));
 
     expect(ledger?.sourceId).toBe(result.settlementId);
     expect(ledger?.settlementId).toBe(result.settlementId);
@@ -344,12 +513,12 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(ledger).toHaveLength(1);
   });
 
-  it("concurrent complete yields single event/fact/settlement/ledger/audit/outbox (F24)", async () => {
+  it("concurrent complete yields single event/fact/settlement/ledger/audit/outbox (F24/P4-R07)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
     if (!item) throw new Error("Expected item");
 
-    await Promise.all([
+    const results = await Promise.all([
       completeScheduleItem(db, {
         actorId: studentId,
         scheduleItemId: item.id,
@@ -364,11 +533,36 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
       }),
     ]);
 
+    expect(results).toHaveLength(2);
+    expect(results.some((result) => result.idempotentReplay)).toBe(true);
+    expect(results[0]!.settlementId).toBe(results[1]!.settlementId);
+    expect(results[0]!.ledgerEntryId).toBe(results[1]!.ledgerEntryId);
+    expect(results[0]!.eventId).toBe(results[1]!.eventId);
+    expect(results[0]!.factVersionId).toBe(results[1]!.factVersionId);
+
+    const events = await db
+      .select()
+      .from(scheduleEvents)
+      .where(eq(scheduleEvents.scheduleItemId, item.id));
+    expect(events).toHaveLength(1);
+
+    const facts = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.scheduleItemId, item.id));
+    expect(facts).toHaveLength(1);
+
     const settlementRows = await db.select().from(settlements);
     expect(settlementRows).toHaveLength(1);
 
     const ledgerRows = await db.select().from(pointLedgerEntries);
     expect(ledgerRows).toHaveLength(1);
+
+    const [balance] = await db
+      .select()
+      .from(pointBalanceProjection)
+      .where(eq(pointBalanceProjection.studentId, studentId));
+    expect(balance?.balance).toBe(10);
 
     const ledgerAudits = await db
       .select()
@@ -410,5 +604,189 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(replay.idempotentReplay).toBe(true);
     expect(replay.ruleId).toBe(first.ruleId);
     expect(replay.ruleVersionId).toBe(first.ruleVersionId);
+  });
+
+  it("rejects enable point rule for unverified parent (P4-R06)", async () => {
+    const { studentId } = await bootstrapParentStudentRelationship(db);
+    const { registerParent } = await import("@/modules/identity/registration.service");
+    const { adminId } = await bootstrapAdmin(
+      db,
+      `admin-unverified-${crypto.randomUUID()}@test.local`,
+    );
+    const invite = await createInvitation(db, {
+      adminId,
+      targetRole: "parent",
+      idempotencyKey: `invite-unverified-${crypto.randomUUID()}`,
+    });
+
+    const unverified = await registerParent(db, {
+      invitationCode: invite.codePlaintext,
+      displayName: "Unverified Parent",
+      email: `unverified-${crypto.randomUUID()}@test.local`,
+      password: "ParentPass123!Parent",
+      idempotencyKey: `register-unverified-${crypto.randomUUID()}`,
+    });
+
+    await expect(
+      enablePointRule(db, {
+        parentId: unverified.userId,
+        studentId,
+        idempotencyKey: "enable-unverified",
+        body: { templateId: "schedule_system_complete_v1" },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" satisfies SettlementError["code"] });
+  });
+
+  it("rejects enable point rule without relationship (P4-R06)", async () => {
+    const pairA = await bootstrapParentStudentRelationship(db);
+    const pairB = await bootstrapParentStudentRelationship(db);
+
+    await expect(
+      enablePointRule(db, {
+        parentId: pairA.parentId,
+        studentId: pairB.studentId,
+        idempotencyKey: "enable-no-relationship",
+        body: { templateId: "schedule_system_complete_v1" },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" satisfies SettlementError["code"] });
+  });
+
+  it("rejects enable point rule replay with mismatched payload hash (P4-R06)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    await enablePointRule(db, {
+      parentId,
+      studentId,
+      idempotencyKey: "enable-hash-mismatch",
+      body: { templateId: "schedule_system_complete_v1" },
+      now: FIXED_NOW,
+    });
+
+    await expect(
+      enablePointRule(db, {
+        parentId,
+        studentId,
+        idempotencyKey: "enable-hash-mismatch",
+        body: { templateId: "schedule_system_complete_v1", note: "different" } as {
+          templateId: "schedule_system_complete_v1";
+        },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" satisfies SettlementError["code"] });
+  });
+
+  it("rejects second active point rule for same student (P4-R06)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    await enablePointRule(db, {
+      parentId,
+      studentId,
+      idempotencyKey: "enable-first-rule",
+      body: { templateId: "schedule_system_complete_v1" },
+      now: FIXED_NOW,
+    });
+
+    await expect(
+      enablePointRule(db, {
+        parentId,
+        studentId,
+        idempotencyKey: "enable-second-rule",
+        body: { templateId: "schedule_system_complete_v1" },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies SettlementError["code"] });
+  });
+
+  it("snapshots v1 rule version fields from template (P4-R06)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const result = await enablePointRule(db, {
+      parentId,
+      studentId,
+      idempotencyKey: "enable-version-snapshot",
+      body: { templateId: "schedule_system_complete_v1" },
+      now: FIXED_NOW,
+    });
+
+    const [rule] = await db
+      .select()
+      .from(pointRules)
+      .where(eq(pointRules.id, result.ruleId))
+      .limit(1);
+    const [version] = await db
+      .select()
+      .from(pointRuleVersions)
+      .where(eq(pointRuleVersions.id, result.ruleVersionId))
+      .limit(1);
+
+    expect(rule?.active).toBe(true);
+    expect(version?.version).toBe(1);
+    expect(version?.status).toBe("active");
+    expect(version?.parameters).toEqual({});
+    expect(version?.effect).toEqual({ amount: 10, rewardsLateCompletion: true });
+  });
+
+  it("creates scoped audit/outbox when same client key is reused across students (P4-R05/P4-R06)", async () => {
+    const { parentId, studentId: studentA } = await bootstrapParentStudentRelationship(db);
+    const { studentId: studentB } = await seedStudentUser(db, {
+      username: `student_b_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const { issueAssociationCode } =
+      await import("@/modules/family-access/association-code.service");
+    const { acceptRelationshipRequest, createRelationshipRequest } =
+      await import("@/modules/family-access/relationship-request.service");
+
+    const code = await issueAssociationCode(db, {
+      studentId: studentB,
+      idempotencyKey: `issue-b-${crypto.randomUUID()}`,
+    });
+    const request = await createRelationshipRequest(db, {
+      parentId,
+      associationCodePlaintext: code.codePlaintext,
+      idempotencyKey: `req-b-${crypto.randomUUID()}`,
+    });
+    await acceptRelationshipRequest(db, {
+      studentId: studentB,
+      requestId: request.requestId,
+      idempotencyKey: `accept-b-${crypto.randomUUID()}`,
+    });
+
+    const sharedKey = "shared-enable-key";
+    const first = await enablePointRule(db, {
+      parentId,
+      studentId: studentA,
+      idempotencyKey: sharedKey,
+      body: { templateId: "schedule_system_complete_v1" },
+      now: FIXED_NOW,
+    });
+    const second = await enablePointRule(db, {
+      parentId,
+      studentId: studentB,
+      idempotencyKey: sharedKey,
+      body: { templateId: "schedule_system_complete_v1" },
+      now: FIXED_NOW,
+    });
+
+    const ruleAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, "point_rule.enabled"));
+    expect(ruleAudits).toHaveLength(2);
+    expect(ruleAudits.map((row) => row.resourceId).sort()).toEqual(
+      [first.ruleId, second.ruleId].sort(),
+    );
+
+    const ruleOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "point_rule.enabled"));
+    expect(ruleOutbox).toHaveLength(2);
+    expect(ruleOutbox.map((row) => row.aggregateId).sort()).toEqual(
+      [first.ruleId, second.ruleId].sort(),
+    );
   });
 });

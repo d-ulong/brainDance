@@ -223,7 +223,7 @@ export async function enablePointRule(
         resourceType: "point_rule",
         resourceId: rule.id,
         requestId: input.requestId ?? null,
-        idempotencyKey: `audit:point-rule-enabled:${input.idempotencyKey}`,
+        idempotencyKey: `audit:point-rule-enabled:${rule.id}`,
         metadata: { studentId: input.studentId, templateId: input.body.templateId },
       });
 

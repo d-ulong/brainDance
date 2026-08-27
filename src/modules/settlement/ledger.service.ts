@@ -4,6 +4,7 @@ import type { Database } from "@/db";
 import { pointBalanceProjection, pointLedgerEntries } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { SettlementError } from "@/modules/settlement/errors";
 
 export type AppendLedgerInput = {
   studentId: string;
@@ -21,6 +22,23 @@ export type AppendLedgerResult = {
 
 function buildLedgerExplanation(completionKind: "on_time" | "late"): string {
   return `+10 points for schedule completion, completion_kind=${completionKind}`;
+}
+
+export async function loadExistingLedgerForSettlement(
+  tx: Database,
+  settlementId: string,
+): Promise<{ id: string }> {
+  const [existing] = await tx
+    .select({ id: pointLedgerEntries.id })
+    .from(pointLedgerEntries)
+    .where(eq(pointLedgerEntries.settlementId, settlementId))
+    .limit(1);
+
+  if (!existing) {
+    throw new SettlementError("STATE_CONFLICT", "Settlement ledger missing");
+  }
+
+  return existing;
 }
 
 export async function appendLedgerForSettlement(
@@ -94,15 +112,7 @@ export async function appendLedgerForSettlement(
     return { ledgerEntryId: inserted.id, created: true };
   }
 
-  const [existing] = await tx
-    .select({ id: pointLedgerEntries.id })
-    .from(pointLedgerEntries)
-    .where(eq(pointLedgerEntries.settlementId, input.settlementId))
-    .limit(1);
-
-  if (!existing) {
-    throw new Error("Failed to load ledger entry after settlement conflict");
-  }
+  const existing = await loadExistingLedgerForSettlement(tx, input.settlementId);
 
   return { ledgerEntryId: existing.id, created: false };
 }

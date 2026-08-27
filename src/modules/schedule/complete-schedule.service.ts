@@ -9,6 +9,7 @@ import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.ser
 import { ScheduleError } from "@/modules/schedule/errors";
 import { deriveCompletionKind } from "@/modules/time-policy/derive-completion-kind";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
+import { SettlementError } from "@/modules/settlement/errors";
 import {
   loadSettlementReplayForFact,
   settleForFact as defaultSettleForFact,
@@ -17,11 +18,6 @@ import {
 
 export type SettleForFactInput = {
   factVersionId: string;
-  scheduleItemId: string;
-  studentId: string;
-  idempotencyKey: string;
-  completionKind: "on_time" | "late";
-  familyDate: string;
 };
 
 /** Phase 4 settlement seam — invoked in the same transaction as fact creation. */
@@ -45,8 +41,8 @@ export type CompleteScheduleResult = {
   eventId: string;
   factVersionId: string;
   completionKind: "on_time" | "late";
-  settlementId?: string;
-  ledgerEntryId?: string;
+  settlementId: string;
+  ledgerEntryId: string;
   idempotentReplay: boolean;
 };
 
@@ -118,15 +114,23 @@ async function loadCompleteReplay(
     throw new ScheduleError("STATE_CONFLICT", "Complete replay fact missing");
   }
 
-  const settlement = await loadSettlementReplayForFact(tx, fact.id);
+  let settlement: SettleForFactResult;
+  try {
+    settlement = await loadSettlementReplayForFact(tx, fact.id);
+  } catch (error) {
+    if (error instanceof SettlementError && error.code === "STATE_CONFLICT") {
+      throw new ScheduleError("STATE_CONFLICT", error.message);
+    }
+    throw error;
+  }
 
   return {
     scheduleItemId,
     eventId: event.id,
     factVersionId: fact.id,
     completionKind: event.completionKind as "on_time" | "late",
-    settlementId: settlement?.settlementId,
-    ledgerEntryId: settlement?.ledgerEntryId,
+    settlementId: settlement.settlementId,
+    ledgerEntryId: settlement.ledgerEntryId,
     idempotentReplay: true,
   };
 }
@@ -236,11 +240,6 @@ export async function completeScheduleItem(
       const settle = input.settleForFact ?? defaultSettleForFact;
       const settlement = await settle(tx, {
         factVersionId: fact.id,
-        scheduleItemId: item.id,
-        studentId: item.studentId,
-        idempotencyKey: input.idempotencyKey,
-        completionKind,
-        familyDate: item.familyDate,
       });
 
       await appendAuditEvent(tx, {

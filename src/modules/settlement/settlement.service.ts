@@ -1,9 +1,12 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { pointLedgerEntries, settlements } from "@/db/schema";
+import { factVersions, scheduleItems, settlements } from "@/db/schema";
 import type { SettleForFactInput } from "@/modules/schedule/complete-schedule.service";
-import { appendLedgerForSettlement } from "@/modules/settlement/ledger.service";
+import {
+  appendLedgerForSettlement,
+  loadExistingLedgerForSettlement,
+} from "@/modules/settlement/ledger.service";
 import {
   loadActivePointRuleForStudent,
   SCHEDULE_SYSTEM_COMPLETE_V1,
@@ -13,6 +16,14 @@ import { SettlementError } from "@/modules/settlement/errors";
 export type SettleForFactResult = {
   settlementId: string;
   ledgerEntryId: string;
+};
+
+type FactSettlementContext = {
+  factVersionId: string;
+  studentId: string;
+  completionKind: "on_time" | "late";
+  familyDate: string;
+  idempotencyKey: string;
 };
 
 function resolveRewardAmount(
@@ -30,6 +41,47 @@ function resolveRewardAmount(
 
 function buildSettlementExplanation(completionKind: "on_time" | "late"): string {
   return `Reward for schedule completion (${completionKind})`;
+}
+
+async function loadFactSettlementContext(
+  tx: Database,
+  factVersionId: string,
+): Promise<FactSettlementContext> {
+  const [fact] = await tx
+    .select()
+    .from(factVersions)
+    .where(eq(factVersions.id, factVersionId))
+    .limit(1);
+
+  if (!fact) {
+    throw new SettlementError("NOT_FOUND", "Fact version not found");
+  }
+
+  const [item] = await tx
+    .select()
+    .from(scheduleItems)
+    .where(eq(scheduleItems.id, fact.scheduleItemId))
+    .limit(1);
+
+  if (!item) {
+    throw new SettlementError("STATE_CONFLICT", "Schedule item missing for fact");
+  }
+
+  if (fact.studentId !== item.studentId) {
+    throw new SettlementError("STATE_CONFLICT", "Fact and schedule item student mismatch");
+  }
+
+  if (fact.completionKind !== "on_time" && fact.completionKind !== "late") {
+    throw new SettlementError("STATE_CONFLICT", "Fact completion kind is invalid");
+  }
+
+  return {
+    factVersionId: fact.id,
+    studentId: fact.studentId,
+    completionKind: fact.completionKind,
+    familyDate: item.familyDate,
+    idempotencyKey: fact.idempotencyKey,
+  };
 }
 
 async function findExistingSettlement(
@@ -53,7 +105,7 @@ async function findExistingSettlement(
     .limit(1);
 
   if (!existing) {
-    throw new Error("Failed to load settlement after conflict");
+    throw new SettlementError("STATE_CONFLICT", "Settlement conflict without existing row");
   }
 
   return existing;
@@ -63,7 +115,9 @@ export async function settleForFact(
   tx: Database,
   input: SettleForFactInput,
 ): Promise<SettleForFactResult> {
-  const activeRule = await loadActivePointRuleForStudent(tx, input.studentId);
+  const ctx = await loadFactSettlementContext(tx, input.factVersionId);
+
+  const activeRule = await loadActivePointRuleForStudent(tx, ctx.studentId);
 
   if (!activeRule) {
     throw new SettlementError("NO_ACTIVE_RULE", "No active point rule for student");
@@ -73,51 +127,58 @@ export async function settleForFact(
     throw new SettlementError("VALIDATION_ERROR", "Unsupported active point rule template");
   }
 
-  const amount = resolveRewardAmount(input.completionKind, activeRule.effect);
-  const explanation = buildSettlementExplanation(input.completionKind);
+  const amount = resolveRewardAmount(ctx.completionKind, activeRule.effect);
+  const explanation = buildSettlementExplanation(ctx.completionKind);
 
   const [insertedSettlement] = await tx
     .insert(settlements)
     .values({
-      studentId: input.studentId,
-      factVersionId: input.factVersionId,
+      studentId: ctx.studentId,
+      factVersionId: ctx.factVersionId,
       ruleVersionId: activeRule.ruleVersionId,
-      settlementPeriod: input.familyDate,
+      settlementPeriod: ctx.familyDate,
       result: "reward",
       explanation,
-      idempotencyKey: input.idempotencyKey,
+      idempotencyKey: ctx.idempotencyKey,
     })
     .onConflictDoNothing({
       target: [settlements.factVersionId, settlements.ruleVersionId, settlements.settlementPeriod],
     })
     .returning({ id: settlements.id });
 
-  const settlement =
-    insertedSettlement ??
-    (await findExistingSettlement(tx, {
-      factVersionId: input.factVersionId,
-      ruleVersionId: activeRule.ruleVersionId,
-      settlementPeriod: input.familyDate,
-    }));
+  if (insertedSettlement) {
+    const ledger = await appendLedgerForSettlement(tx, {
+      studentId: ctx.studentId,
+      settlementId: insertedSettlement.id,
+      amount,
+      completionKind: ctx.completionKind,
+      idempotencyKey: ctx.idempotencyKey,
+    });
 
-  const ledger = await appendLedgerForSettlement(tx, {
-    studentId: input.studentId,
-    settlementId: settlement.id,
-    amount,
-    completionKind: input.completionKind,
-    idempotencyKey: input.idempotencyKey,
+    return {
+      settlementId: insertedSettlement.id,
+      ledgerEntryId: ledger.ledgerEntryId,
+    };
+  }
+
+  const settlement = await findExistingSettlement(tx, {
+    factVersionId: ctx.factVersionId,
+    ruleVersionId: activeRule.ruleVersionId,
+    settlementPeriod: ctx.familyDate,
   });
+
+  const ledger = await loadExistingLedgerForSettlement(tx, settlement.id);
 
   return {
     settlementId: settlement.id,
-    ledgerEntryId: ledger.ledgerEntryId,
+    ledgerEntryId: ledger.id,
   };
 }
 
 export async function loadSettlementReplayForFact(
   tx: Database,
   factVersionId: string,
-): Promise<SettleForFactResult | null> {
+): Promise<SettleForFactResult> {
   const [settlement] = await tx
     .select({ id: settlements.id })
     .from(settlements)
@@ -125,18 +186,10 @@ export async function loadSettlementReplayForFact(
     .limit(1);
 
   if (!settlement) {
-    return null;
+    throw new SettlementError("STATE_CONFLICT", "Complete replay settlement missing");
   }
 
-  const [ledger] = await tx
-    .select({ id: pointLedgerEntries.id })
-    .from(pointLedgerEntries)
-    .where(eq(pointLedgerEntries.settlementId, settlement.id))
-    .limit(1);
-
-  if (!ledger) {
-    return null;
-  }
+  const ledger = await loadExistingLedgerForSettlement(tx, settlement.id);
 
   return {
     settlementId: settlement.id,
