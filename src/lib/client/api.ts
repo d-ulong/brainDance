@@ -2,15 +2,28 @@ export function newIdempotencyKey(prefix = "web"): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+type ApiErrorBody = {
+  error?: string | { code?: string; message: string };
+  code?: string;
+};
+
+function parseApiErrorBody(body: ApiErrorBody): { message: string; code?: string } {
+  if (typeof body.error === "object" && body.error !== null) {
+    return { message: body.error.message, code: body.error.code };
+  }
+  return { message: body.error ?? "Request failed", code: body.code };
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
 
-  constructor(status: number, body: { error?: string; code?: string }) {
-    super(body.error ?? `Request failed with status ${status}`);
+  constructor(status: number, body: ApiErrorBody) {
+    const parsed = parseApiErrorBody(body);
+    super(parsed.message || `Request failed with status ${status}`);
     this.name = "ApiError";
     this.status = status;
-    this.code = body.code;
+    this.code = parsed.code;
   }
 }
 

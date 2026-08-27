@@ -59,17 +59,30 @@ export default function ParentStudentsPage() {
       ) : (
         <ul className="flex flex-col gap-3">
           {students.map((student) => (
-            <li key={student.studentId}>
-              <Link
-                href={`/parent/students/${student.studentId}/training`}
-                data-testid={`linked-student-${student.studentId}`}
-                className="block rounded-xl border border-neutral-300 bg-white px-4 py-3 hover:bg-neutral-50"
-              >
-                <p className="font-medium">{student.displayName}</p>
-                <p className="text-sm text-neutral-500">
-                  @{student.username ?? student.studentId.slice(0, 8)}
-                </p>
-              </Link>
+            <li
+              key={student.studentId}
+              className="rounded-xl border border-neutral-300 bg-white p-4"
+            >
+              <p className="font-medium">{student.displayName}</p>
+              <p className="text-sm text-neutral-500">
+                @{student.username ?? student.studentId.slice(0, 8)}
+              </p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Link
+                  href={`/parent/students/${student.studentId}/plan`}
+                  data-testid={`student-plan-${student.studentId}`}
+                  className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"
+                >
+                  学习计划
+                </Link>
+                <Link
+                  href={`/parent/students/${student.studentId}/training`}
+                  data-testid={`linked-student-${student.studentId}`}
+                  className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"
+                >
+                  训练汇总
+                </Link>
+              </div>
             </li>
           ))}
         </ul>

@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { PointsTodayCard } from "@/components/m2/points-today-card";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
-import { fetchSession, type SessionInfo } from "@/lib/client/api";
+import { apiFetch, fetchSession, type SessionInfo } from "@/lib/client/api";
 
 function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -65,15 +66,7 @@ export default function HomePage() {
   }
 
   if (session.role === "parent") {
-    return (
-      <PageShell title="BrainDance" subtitle="家长中心" showLogout>
-        <nav className="flex flex-col gap-3">
-          <NavLink href="/parent/students/new">创建学生账号</NavLink>
-          <NavLink href="/parent/link">关联学生</NavLink>
-          <NavLink href="/parent/students">查看已关联学生</NavLink>
-        </nav>
-      </PageShell>
-    );
+    return <ParentHome />;
   }
 
   if (session.mustChangePassword) {
@@ -87,9 +80,54 @@ export default function HomePage() {
 
   return (
     <PageShell title="BrainDance" subtitle="学生中心" showLogout>
+      <PointsTodayCard studentId={session.userId} />
       <nav className="flex flex-col gap-3">
+        <NavLink href="/student/schedule">今日日程</NavLink>
         <NavLink href="/student/link">关联家长</NavLink>
         <NavLink href="/student/training/reaction">反应力训练</NavLink>
+      </nav>
+    </PageShell>
+  );
+}
+
+type LinkedStudent = {
+  studentId: string;
+  displayName: string;
+};
+
+function ParentHome() {
+  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<LinkedStudent[]>([]);
+
+  useEffect(() => {
+    void apiFetch<{ students: LinkedStudent[] }>("/api/family/students")
+      .then((result) => setStudents(result.students))
+      .catch(() => setStudents([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <PageShell title="BrainDance" subtitle="家长中心" showLogout>
+      {loading ? (
+        <LoadingState label="加载学生与积分…" />
+      ) : students.length === 0 ? (
+        <Alert tone="info">关联学生后，可在此查看积分与今日任务。</Alert>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {students.map((student) => (
+            <PointsTodayCard
+              key={student.studentId}
+              studentId={student.studentId}
+              studentName={student.displayName}
+              planHref={`/parent/students/${student.studentId}/plan`}
+            />
+          ))}
+        </div>
+      )}
+      <nav className="flex flex-col gap-3">
+        <NavLink href="/parent/students/new">创建学生账号</NavLink>
+        <NavLink href="/parent/link">关联学生</NavLink>
+        <NavLink href="/parent/students">查看已关联学生</NavLink>
       </nav>
     </PageShell>
   );
