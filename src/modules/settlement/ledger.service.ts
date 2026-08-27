@@ -20,6 +20,10 @@ export type AppendLedgerResult = {
   created: boolean;
 };
 
+export type AppendLedgerTestHooks = {
+  beforeLedgerInsert?: () => Promise<void>;
+};
+
 function buildLedgerExplanation(completionKind: "on_time" | "late"): string {
   return `+10 points for schedule completion, completion_kind=${completionKind}`;
 }
@@ -44,8 +48,13 @@ export async function loadExistingLedgerForSettlement(
 export async function appendLedgerForSettlement(
   tx: Database,
   input: AppendLedgerInput,
+  options?: { testHooks?: AppendLedgerTestHooks },
 ): Promise<AppendLedgerResult> {
   const explanation = buildLedgerExplanation(input.completionKind);
+
+  if (options?.testHooks?.beforeLedgerInsert) {
+    await options.testHooks.beforeLedgerInsert();
+  }
 
   const [inserted] = await tx
     .insert(pointLedgerEntries)

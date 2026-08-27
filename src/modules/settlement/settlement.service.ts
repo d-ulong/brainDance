@@ -43,6 +43,10 @@ function buildSettlementExplanation(completionKind: "on_time" | "late"): string 
   return `Reward for schedule completion (${completionKind})`;
 }
 
+export type SettleForFactTestHooks = {
+  beforeSettlementInsert?: () => Promise<void>;
+};
+
 async function loadFactSettlementContext(
   tx: Database,
   factVersionId: string,
@@ -84,6 +88,8 @@ async function loadFactSettlementContext(
   };
 }
 
+export { loadFactSettlementContext };
+
 async function findExistingSettlement(
   tx: Database,
   input: {
@@ -114,6 +120,7 @@ async function findExistingSettlement(
 export async function settleForFact(
   tx: Database,
   input: SettleForFactInput,
+  options?: { testHooks?: SettleForFactTestHooks },
 ): Promise<SettleForFactResult> {
   const ctx = await loadFactSettlementContext(tx, input.factVersionId);
 
@@ -129,6 +136,10 @@ export async function settleForFact(
 
   const amount = resolveRewardAmount(ctx.completionKind, activeRule.effect);
   const explanation = buildSettlementExplanation(ctx.completionKind);
+
+  if (options?.testHooks?.beforeSettlementInsert) {
+    await options.testHooks.beforeSettlementInsert();
+  }
 
   const [insertedSettlement] = await tx
     .insert(settlements)
