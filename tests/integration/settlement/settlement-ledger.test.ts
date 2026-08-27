@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { ScheduleError } from "@/modules/schedule/errors";
 import { appendLedgerForSettlement } from "@/modules/settlement/ledger.service";
 import { enablePointRule } from "@/modules/settlement/point-rule.service";
-import { loadFactSettlementContext, settleForFact } from "@/modules/settlement/settlement.service";
+import { settleForFact } from "@/modules/settlement/settlement.service";
 import { SettlementError } from "@/modules/settlement/errors";
 import { requireDatabaseUrl } from "@/lib/env";
 import {
@@ -48,6 +48,70 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
+const TEST_SENTINEL = "TEST_SENTINEL_ROLLBACK";
+
+function quotePgIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+async function findForeignKeyConstraint(
+  db: TestDb,
+  tableName: string,
+  columnName: string,
+): Promise<string> {
+  const rows = await db.execute(sql`
+    SELECT c.conname AS constraint_name
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON t.relnamespace = n.oid
+    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (c.conkey)
+    WHERE n.nspname = 'public'
+      AND t.relname = ${tableName}
+      AND a.attname = ${columnName}
+      AND c.contype = 'f'
+    LIMIT 1
+  `);
+
+  const constraintName = (rows[0] as { constraint_name: string } | undefined)?.constraint_name;
+  if (!constraintName) {
+    throw new Error(`Foreign key not found for ${tableName}.${columnName}`);
+  }
+
+  return constraintName;
+}
+
+async function assertForeignKeyExists(db: TestDb, constraintName: string): Promise<void> {
+  const rows = await db.execute(sql`
+    SELECT 1 AS ok
+    FROM pg_constraint
+    WHERE conname = ${constraintName}
+  `);
+  expect(rows.length).toBe(1);
+}
+
+async function dropForeignKey(
+  tx: TestDb,
+  tableName: string,
+  constraintName: string,
+): Promise<void> {
+  await tx.execute(
+    sql.raw(
+      `ALTER TABLE ${quotePgIdent(tableName)} DROP CONSTRAINT ${quotePgIdent(constraintName)}`,
+    ),
+  );
+}
+
+async function rollbackAfter(
+  db: TestDb,
+  fn: (tx: Parameters<Parameters<TestDb["transaction"]>[0]>[0]) => Promise<void>,
+): Promise<void> {
+  await expect(
+    db.transaction(async (tx) => {
+      await fn(tx);
+      throw new Error(TEST_SENTINEL);
+    }),
+  ).rejects.toThrow(TEST_SENTINEL);
+}
 
 function createGate<T>() {
   let open!: (value: T) => void;
@@ -325,40 +389,48 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(before.settledOutbox).toHaveLength(0);
   });
 
-  it("rejects complete replay when ledger is missing without mutating state (P4-R2-03)", async () => {
+  it("rejects complete replay when ledger is missing without mutating state (P4-R3-03)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
     if (!item) throw new Error("Expected item");
 
-    await completeScheduleItem(db, {
+    const completed = await completeScheduleItem(db, {
       actorId: studentId,
       scheduleItemId: item.id,
       idempotencyKey: "settle-missing-ledger",
       now: FIXED_NOW,
     });
 
-    await db
-      .update(pointBalanceProjection)
-      .set({ lastLedgerEntryId: null })
-      .where(eq(pointBalanceProjection.studentId, studentId));
-    await db.delete(pointLedgerEntries);
+    const balanceLedgerFk = await findForeignKeyConstraint(
+      db,
+      "point_balance_projection",
+      "last_ledger_entry_id",
+    );
 
-    const before = await captureSettlementState(db, studentId);
-    expect(before.settlements).toHaveLength(1);
-    expect(before.ledgers).toHaveLength(0);
-    expect(before.balance).not.toBeNull();
+    await rollbackAfter(db, async (tx) => {
+      await dropForeignKey(tx, "point_balance_projection", balanceLedgerFk);
+      await tx.delete(pointLedgerEntries);
 
-    await expect(
-      completeScheduleItem(db, {
-        actorId: studentId,
-        scheduleItemId: item.id,
-        idempotencyKey: "settle-missing-ledger",
-        now: FIXED_NOW,
-      }),
-    ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies ScheduleError["code"] });
+      const before = await captureSettlementState(tx, studentId);
+      expect(before.settlements).toHaveLength(1);
+      expect(before.ledgers).toHaveLength(0);
+      expect(before.balance?.balance).toBe(10);
+      expect(before.balance?.lastLedgerEntryId).toBe(completed.ledgerEntryId);
 
-    const after = await captureSettlementState(db, studentId);
-    expect(after).toEqual(before);
+      await expect(
+        completeScheduleItem(tx, {
+          actorId: studentId,
+          scheduleItemId: item.id,
+          idempotencyKey: "settle-missing-ledger",
+          now: FIXED_NOW,
+        }),
+      ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies ScheduleError["code"] });
+
+      const after = await captureSettlementState(tx, studentId);
+      expect(after).toEqual(before);
+    });
+
+    await assertForeignKeyExists(db, balanceLedgerFk);
   });
 
   it("concurrent settlement INSERT replays under unique constraint (P4-R2-01)", async () => {
@@ -503,18 +575,21 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(settledOutbox[0]?.dedupeKey).toBe(`points.settled:${completed.settlementId}`);
   });
 
-  it("rejects loadFactSettlementContext when fact is missing (P4-R2-02)", async () => {
+  it("rejects settleForFact when fact is missing (P4-R3-02)", async () => {
+    const { studentId } = await seedPlanWithRule();
+    const before = await captureSettlementState(db, studentId);
+
     await expect(
       db.transaction(async (tx) =>
-        loadFactSettlementContext(tx, "00000000-0000-4000-8000-000000009999"),
+        settleForFact(tx, { factVersionId: "00000000-0000-4000-8000-000000009999" }),
       ),
     ).rejects.toMatchObject({ code: "NOT_FOUND" satisfies SettlementError["code"] });
 
-    expect(await db.select().from(settlements)).toHaveLength(0);
-    expect(await db.select().from(pointLedgerEntries)).toHaveLength(0);
+    const after = await captureSettlementState(db, studentId);
+    expect(after).toEqual(before);
   });
 
-  it("rejects loadFactSettlementContext when fact and item student mismatch (P4-R2-02)", async () => {
+  it("rejects settleForFact when fact and item student mismatch (P4-R3-02)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
     if (!item) throw new Error("Expected item");
@@ -539,15 +614,46 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     const before = await captureSettlementState(db, studentId);
 
     await expect(
-      db.transaction(async (tx) => loadFactSettlementContext(tx, completed.factVersionId)),
+      db.transaction(async (tx) => settleForFact(tx, { factVersionId: completed.factVersionId })),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies SettlementError["code"] });
 
     const after = await captureSettlementState(db, studentId);
-    expect(after.settlements).toEqual(before.settlements);
-    expect(after.ledgers).toEqual(before.ledgers);
-    expect(after.balance).toEqual(before.balance);
-    expect(after.ledgerAudits).toEqual(before.ledgerAudits);
-    expect(after.settledOutbox).toEqual(before.settledOutbox);
+    expect(after).toEqual(before);
+  });
+
+  it("rejects settleForFact when schedule item is unavailable (P4-R3-01)", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const item = items.find((row) => row.familyDate === "2026-01-15");
+    if (!item) throw new Error("Expected item");
+
+    const completed = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "fact-item-unavailable",
+      now: FIXED_NOW,
+    });
+
+    const factItemFk = await findForeignKeyConstraint(db, "fact_versions", "schedule_item_id");
+    const missingItemId = "00000000-0000-4000-8000-000000009999";
+
+    await rollbackAfter(db, async (tx) => {
+      await dropForeignKey(tx, "fact_versions", factItemFk);
+      await tx
+        .update(factVersions)
+        .set({ scheduleItemId: missingItemId })
+        .where(eq(factVersions.id, completed.factVersionId));
+
+      const before = await captureSettlementState(tx, studentId);
+
+      await expect(
+        settleForFact(tx, { factVersionId: completed.factVersionId }),
+      ).rejects.toMatchObject({ code: "STATE_CONFLICT" satisfies SettlementError["code"] });
+
+      const after = await captureSettlementState(tx, studentId);
+      expect(after).toEqual(before);
+    });
+
+    await assertForeignKeyExists(db, factItemFk);
   });
 
   it("documents completion_kind CHECK prevents invalid fact fixture (P4-R2-02)", async () => {

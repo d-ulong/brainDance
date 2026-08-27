@@ -88,8 +88,6 @@ async function loadFactSettlementContext(
   };
 }
 
-export { loadFactSettlementContext };
-
 async function findExistingSettlement(
   tx: Database,
   input: {
