@@ -17,7 +17,11 @@ import { POST as enablePointRuleRoute } from "@/app/api/family/students/[student
 import { GET as getPointsBalanceRoute } from "@/app/api/family/students/[studentId]/points/balance/route";
 import { GET as getPointsLedgerRoute } from "@/app/api/family/students/[studentId]/points/ledger/route";
 import * as planService from "@/modules/schedule/plan.service";
+import * as maintainService from "@/modules/schedule/maintain-horizon.service";
+import * as completeService from "@/modules/schedule/complete-schedule.service";
+import * as skipService from "@/modules/schedule/skip-schedule.service";
 import * as scheduleQuery from "@/modules/schedule/schedule-query.service";
+import * as pointRuleService from "@/modules/settlement/point-rule.service";
 import * as ledgerService from "@/modules/settlement/ledger.service";
 import {
   bootstrapParentStudentRelationship,
@@ -36,10 +40,12 @@ function todayFamilyDate() {
   return toFamilyDate(new Date());
 }
 
+const VALIDATION_ERROR_ENVELOPE = {
+  error: { code: "VALIDATION_ERROR", message: "Validation failed" },
+};
+
 function expectValidationEnvelope(payload: unknown) {
-  expect(payload).toMatchObject({
-    error: { code: "VALIDATION_ERROR", message: "Validation failed" },
-  });
+  expect(payload).toEqual(VALIDATION_ERROR_ENVELOPE);
 }
 
 async function createPlanViaRoute(
@@ -201,6 +207,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
     it("returns 400 for invalid studentId path param", async () => {
       const linked = await bootstrapLinkedParentStudent(db);
       withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(maintainService, "maintainHorizon");
 
       const response = await maintainHorizonRoute(
         new Request(
@@ -212,6 +219,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(response.status).toBe(400);
       expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
@@ -359,6 +367,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
     it("returns 400 for invalid planId path param", async () => {
       const linked = await bootstrapLinkedParentStudent(db);
       withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(planService, "editFormalPlan");
 
       const response = await editFormalPlanRoute(
         new Request("http://localhost/api/formal-plans/not-a-uuid", {
@@ -374,6 +383,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(response.status).toBe(400);
       expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
@@ -434,6 +444,24 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
       expect(response.status).toBe(404);
       expect(await response.json()).toMatchObject({ error: { code: "NOT_FOUND" } });
     });
+
+    it("returns 400 for invalid planId path param", async () => {
+      const linked = await bootstrapLinkedParentStudent(db);
+      withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(planService, "deactivateFormalPlan");
+
+      const response = await deactivateFormalPlanRoute(
+        new Request("http://localhost/api/formal-plans/not-a-uuid/deactivate", {
+          method: "POST",
+          headers: { "Idempotency-Key": "route-deactivate-bad-id" },
+        }),
+        { params: Promise.resolve({ planId: "not-a-uuid" }) },
+      );
+
+      expect(response.status).toBe(400);
+      expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 
   describe("GET /schedule-items", () => {
@@ -483,6 +511,23 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(response.status).toBe(400);
       expectValidationEnvelope(await response.json());
+    });
+
+    it("returns 400 for invalid studentId path param", async () => {
+      const linked = await bootstrapLinkedParentStudent(db);
+      withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(scheduleQuery, "queryScheduleItems");
+
+      const response = await getScheduleItemsRoute(
+        new Request(
+          `http://localhost/api/family/students/not-a-uuid/schedule-items?from=${todayFamilyDate()}&to=${todayFamilyDate()}`,
+        ),
+        { params: Promise.resolve({ studentId: "not-a-uuid" }) },
+      );
+
+      expect(response.status).toBe(400);
+      expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
@@ -552,6 +597,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
     it("returns 400 for invalid itemId path param", async () => {
       const linked = await bootstrapLinkedParentStudent(db);
       withSessionCookie(linked.studentSession);
+      const spy = vi.spyOn(completeService, "completeScheduleItem");
 
       const response = await completeScheduleRoute(
         new Request("http://localhost/api/schedule-items/not-a-uuid/complete", {
@@ -563,6 +609,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(response.status).toBe(400);
       expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
 
     it("returns 404 for unknown itemId (domain error)", async () => {
@@ -641,6 +688,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
     it("returns 400 for invalid itemId path param", async () => {
       const linked = await bootstrapLinkedParentStudent(db);
       withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(skipService, "skipScheduleItem");
 
       const response = await skipScheduleRoute(
         new Request("http://localhost/api/schedule-items/not-a-uuid/skip", {
@@ -652,6 +700,7 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(response.status).toBe(400);
       expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 
@@ -750,6 +799,28 @@ describe.skipIf(!hasDb)("m2 api routes", () => {
 
       expect(second.status).toBe(409);
       expect(await second.json()).toMatchObject({ error: { code: "STATE_CONFLICT" } });
+    });
+
+    it("returns 400 for invalid studentId path param", async () => {
+      const linked = await bootstrapLinkedParentStudent(db);
+      withSessionCookie(linked.parentSession);
+      const spy = vi.spyOn(pointRuleService, "enablePointRule");
+
+      const response = await enablePointRuleRoute(
+        new Request("http://localhost/api/family/students/not-a-uuid/point-rules", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "Idempotency-Key": "route-rule-bad-id",
+          },
+          body: JSON.stringify({ templateId: "schedule_system_complete_v1" }),
+        }),
+        { params: Promise.resolve({ studentId: "not-a-uuid" }) },
+      );
+
+      expect(response.status).toBe(400);
+      expectValidationEnvelope(await response.json());
+      expect(spy).not.toHaveBeenCalled();
     });
   });
 

@@ -15,6 +15,8 @@ Round 1 的生产实现、Standards 及 P5-R01/R02/R03/R05/R07/R08 已通过。�
 
 ### P5-R2-01 — 闭合 11 Route 路径参数 400 与短路证据（P1 / Spec）
 
+- 状态：**完成**
+
 - 文件：
   - `tests/integration/api/m2-routes.test.ts`
   - `.trellis/tasks/08-26-m2-schedule-fixed-points-loop/research/phase5-implementation-record.md`
