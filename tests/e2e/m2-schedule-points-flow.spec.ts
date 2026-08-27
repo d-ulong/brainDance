@@ -1,61 +1,13 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
 import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
 
-type Fixture = {
-  parentEmail: string;
-  parentPassword: string;
-  studentUsername: string;
-  studentPassword: string;
-  studentId: string;
-};
-
-function loadFixture(): Fixture {
-  const fixturePath = path.join(process.cwd(), "tests/e2e/.fixture.json");
-  return JSON.parse(readFileSync(fixturePath, "utf8")) as Fixture;
-}
+import { loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
 
 function isMaintainHorizonPost(url: string, method: string): boolean {
   return method === "POST" && url.includes("/formal-plans/maintain-horizon");
 }
 
-async function fillField(page: Page, testId: string, value: string) {
-  const input = page.getByTestId(testId);
-  await expect(input).toBeVisible();
-  await input.click();
-  const inputType = await input.getAttribute("type");
-  if (inputType === "date") {
-    await input.fill(value);
-  } else {
-    await input.fill("");
-    await input.pressSequentially(value, { delay: 15 });
-  }
-  await expect(input).toHaveValue(value);
-}
-
-async function loginViaUi(page: Page, identifier: string, password: string) {
-  await page.goto("/login");
-  await expect(page.getByRole("button", { name: "登录" })).toBeEnabled();
-  await fillField(page, "login-identifier", identifier);
-  await fillField(page, "login-password", password);
-
-  const loginResponse = page.waitForResponse(
-    (resp) => resp.url().includes("/api/auth/login") && resp.request().method() === "POST",
-  );
-  await page.getByRole("textbox", { name: "密码" }).press("Enter");
-  const response = await loginResponse;
-  expect(response.ok(), await response.text()).toBeTruthy();
-
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 20_000 });
-}
-
-async function logoutViaUi(page: Page) {
-  const logoutButton = page.getByRole("button", { name: "退出" });
-  if (await logoutButton.isVisible()) {
-    await logoutButton.click();
-    await page.waitForURL("**/login");
-  }
+function assertMaintainHorizonPostCount(posts: Request[], expected: number) {
+  expect(posts.length).toBe(expected);
 }
 
 async function loginViaApi(request: APIRequestContext, identifier: string, password: string) {
@@ -109,12 +61,12 @@ test.describe("M2 schedule and points flow", () => {
     page,
     request,
   }) => {
-    const fixture = loadFixture();
-    const maintainPostsDuringLoad: Request[] = [];
+    const fixture = loadE2eFixture();
+    const maintainPosts: Request[] = [];
 
     page.on("request", (req) => {
       if (isMaintainHorizonPost(req.url(), req.method())) {
-        maintainPostsDuringLoad.push(req);
+        maintainPosts.push(req);
       }
     });
 
@@ -127,22 +79,22 @@ test.describe("M2 schedule and points flow", () => {
     await page.goto(`/parent/students/${fixture.studentId}/plan`);
     await expect(page.getByTestId("create-plan-button")).toBeVisible({ timeout: 15_000 });
 
-    await expect.poll(() => maintainPostsDuringLoad.length, { timeout: 5_000 }).toBe(0);
+    await expect.poll(() => maintainPosts.length, { timeout: 5_000 }).toBe(0);
 
     await page.getByTestId("create-plan-button").click();
     await expect(page.getByTestId("plan-action-message")).toContainText("计划已创建", {
       timeout: 20_000,
     });
     await expect(page.getByText("当前计划")).toBeVisible();
-
-    expect(maintainPostsDuringLoad.length).toBe(0);
+    assertMaintainHorizonPostCount(maintainPosts, 0);
 
     await page.getByTestId("enable-point-rule-button").click();
     await expect(page.getByTestId("plan-action-message")).toContainText("积分规则", {
       timeout: 15_000,
     });
+    assertMaintainHorizonPostCount(maintainPosts, 0);
 
-    const maintainPostsBeforeClick = maintainPostsDuringLoad.length;
+    const maintainPostsBeforeClick = maintainPosts.length;
     const maintainResponse = page.waitForResponse(
       (resp) =>
         isMaintainHorizonPost(resp.url(), resp.request().method()) &&
@@ -152,11 +104,12 @@ test.describe("M2 schedule and points flow", () => {
     const maintainResult = await maintainResponse;
     expect(maintainResult.ok(), await maintainResult.text()).toBeTruthy();
 
-    const maintainRequests = maintainPostsDuringLoad.slice(maintainPostsBeforeClick);
+    const maintainRequests = maintainPosts.slice(maintainPostsBeforeClick);
     expect(maintainRequests).toHaveLength(1);
     const maintainKey = maintainRequests[0]?.headers()["idempotency-key"];
     expect(maintainKey).toBeTruthy();
     expect(String(maintainKey).length).toBeGreaterThan(0);
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     await expect(page.getByTestId("plan-action-message")).toContainText("补齐日程", {
       timeout: 15_000,
@@ -181,6 +134,7 @@ test.describe("M2 schedule and points flow", () => {
     await expect(page.getByTestId(`points-today-card-${fixture.studentId}`)).toBeVisible({
       timeout: 15_000,
     });
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     const pendingItem = page.locator('[data-testid^="student-schedule-item-"]').filter({
       has: page.locator('[data-testid^="complete-button-"]'),
@@ -206,6 +160,7 @@ test.describe("M2 schedule and points flow", () => {
     await expect(page.getByTestId(`item-status-${itemId}`)).toHaveText("已完成");
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
     await expect(page.getByTestId("today-task-status")).toContainText("已完成");
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     if (test.info().project.name === "mobile-360") {
       await assertNoHorizontalScroll(page);
@@ -214,11 +169,13 @@ test.describe("M2 schedule and points flow", () => {
     await page.reload();
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
     await expect(page.getByTestId(`item-status-${itemId}`)).toHaveText("已完成");
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     await logoutViaUi(page);
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/schedule");
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     const replayResponse = await page.request.post(`/api/schedule-items/${itemId}/complete`, {
       headers: {
@@ -230,6 +187,7 @@ test.describe("M2 schedule and points flow", () => {
     expect(replayResponse.ok(), await replayResponse.text()).toBeTruthy();
     const replayBody = (await replayResponse.json()) as { idempotentReplay: boolean };
     expect(replayBody.idempotentReplay).toBe(true);
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
     const balanceAfterReplay = await fetchBalance(request, fixture.studentId);
@@ -241,7 +199,10 @@ test.describe("M2 schedule and points flow", () => {
     await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
     await page.goto(`/parent/students/${fixture.studentId}/plan`);
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
+    await expect(page.getByTestId(`schedule-item-${itemId}`)).toContainText("已完成");
+    await expect(page.getByTestId("today-task-status")).toContainText("已完成");
     await expect(page.getByText("最近积分记录").locator("..")).toContainText("+10");
+    assertMaintainHorizonPostCount(maintainPosts, 1);
 
     if (test.info().project.name === "mobile-360") {
       await assertNoHorizontalScroll(page);

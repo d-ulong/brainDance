@@ -1,62 +1,9 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
 import { expect, test } from "@playwright/test";
 
-type Fixture = {
-  adminEmail: string;
-  adminPassword: string;
-};
-
-function loadFixture(): Fixture {
-  const fixturePath = path.join(process.cwd(), "tests/e2e/.fixture.json");
-  return JSON.parse(readFileSync(fixturePath, "utf8")) as Fixture;
-}
+import { fillField, loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
 
 function uniqueSuffix(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function logoutViaUi(page: import("@playwright/test").Page) {
-  const logoutButton = page.getByRole("button", { name: "退出" });
-  if (await logoutButton.isVisible()) {
-    await logoutButton.click();
-    await page.waitForURL("**/login");
-  }
-}
-
-async function fillField(page: import("@playwright/test").Page, testId: string, value: string) {
-  const input = page.getByTestId(testId);
-  await expect(input).toBeVisible();
-  await input.click();
-  const inputType = await input.getAttribute("type");
-  if (inputType === "date") {
-    await input.fill(value);
-  } else {
-    await input.fill("");
-    await input.pressSequentially(value, { delay: 15 });
-  }
-  await expect(input).toHaveValue(value);
-}
-
-async function loginViaUi(
-  page: import("@playwright/test").Page,
-  identifier: string,
-  password: string,
-) {
-  await page.goto("/login");
-  await expect(page.getByRole("button", { name: "登录" })).toBeEnabled();
-  await fillField(page, "login-identifier", identifier);
-  await fillField(page, "login-password", password);
-
-  const loginResponse = page.waitForResponse(
-    (resp) => resp.url().includes("/api/auth/login") && resp.request().method() === "POST",
-  );
-  await page.getByRole("textbox", { name: "密码" }).press("Enter");
-  const response = await loginResponse;
-  expect(response.ok(), await response.text()).toBeTruthy();
-
-  await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 20_000 });
 }
 
 async function completeTraining(page: import("@playwright/test").Page) {
@@ -81,7 +28,7 @@ test.describe("M1 browser flow", () => {
   test.setTimeout(180_000);
 
   test("full M1 path via UI controls", async ({ page }) => {
-    const fixture = loadFixture();
+    const fixture = loadE2eFixture();
     const suffix = uniqueSuffix();
     const parentEmail = `e2e-parent-${suffix}@test.local`;
     const parentPassword = "ParentPass123!Parent";
@@ -199,7 +146,7 @@ test.describe("M1 browser flow", () => {
   });
 
   test("has no horizontal scroll on 360px viewport", async ({ page }) => {
-    const fixture = loadFixture();
+    const fixture = loadE2eFixture();
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "BrainDance" })).toBeVisible();
 
