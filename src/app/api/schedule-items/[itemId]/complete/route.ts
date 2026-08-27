@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireStudentSessionForWrites } from "@/lib/auth-request";
@@ -17,7 +18,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { db, dbUser } = await requireStudentSessionForWrites();
-    const { itemId } = await context.params;
+    const { itemId: rawItemId } = await context.params;
+    const itemId = m2UuidParamSchema.parse(rawItemId);
 
     let body: Record<string, unknown> = {};
     const contentType = request.headers.get("content-type") ?? "";

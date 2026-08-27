@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { editFormalPlanBodySchema, m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
-import { editFormalPlanBodySchema } from "@/app/api/_lib/m2-schemas";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireVerifiedParentSession } from "@/lib/auth-request";
 import { editFormalPlan } from "@/modules/schedule/plan.service";
@@ -18,7 +18,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const { db, dbUser } = await requireVerifiedParentSession();
-    const { planId } = await context.params;
+    const { planId: rawPlanId } = await context.params;
+    const planId = m2UuidParamSchema.parse(rawPlanId);
     const body = editFormalPlanBodySchema.parse(await request.json());
 
     const result = await editFormalPlan(db, {

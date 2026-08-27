@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { m2UuidParamSchema, skipScheduleBodySchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
-import { skipScheduleBodySchema } from "@/app/api/_lib/m2-schemas";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession } from "@/lib/auth-request";
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
@@ -18,7 +18,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { db, dbUser } = await requireAuthenticatedSession();
-    const { itemId } = await context.params;
+    const { itemId: rawItemId } = await context.params;
+    const itemId = m2UuidParamSchema.parse(rawItemId);
 
     let parsedBody: { reason?: string | null } = {};
     const contentType = request.headers.get("content-type") ?? "";

@@ -11,31 +11,6 @@ import { issueAssociationCode } from "@/modules/family-access/association-code.s
 
 import { setMockSessionCookie } from "./auth-mock";
 
-export async function loginAsParent(db: TestDb, email?: string) {
-  const resolvedEmail = email ?? `parent_${crypto.randomUUID().slice(0, 8)}@test.local`;
-  const { parentId } = await bootstrapVerifiedParentWithInvite(db, resolvedEmail);
-  const session = await login(db, {
-    identifier: resolvedEmail,
-    password: "ParentPass123!Parent",
-    idempotencyKey: `login-parent:${resolvedEmail}`,
-  });
-  setMockSessionCookie(session.sessionCookie.value);
-  return { parentId, email: resolvedEmail, session };
-}
-
-export async function loginAsStudent(db: TestDb, input?: { username?: string; password?: string }) {
-  const username = input?.username ?? `student_${crypto.randomUUID().slice(0, 8)}`;
-  const password = input?.password ?? "StudentPass123!Student";
-  const { studentId } = await seedStudentUser(db, { username, password });
-  const session = await login(db, {
-    identifier: username,
-    password,
-    idempotencyKey: `login-student:${username}`,
-  });
-  setMockSessionCookie(session.sessionCookie.value);
-  return { studentId, username, password, session };
-}
-
 export async function bootstrapLinkedParentStudent(db: TestDb) {
   const suffix = crypto.randomUUID().slice(0, 8);
   const email = `parent_${suffix}@test.local`;

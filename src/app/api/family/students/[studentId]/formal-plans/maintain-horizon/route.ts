@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireVerifiedParentSession } from "@/lib/auth-request";
@@ -17,7 +18,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { db, dbUser } = await requireVerifiedParentSession();
-    const { studentId } = await context.params;
+    const { studentId: rawStudentId } = await context.params;
+    const studentId = m2UuidParamSchema.parse(rawStudentId);
 
     const result = await maintainHorizon(db, {
       actorId: dbUser.id,

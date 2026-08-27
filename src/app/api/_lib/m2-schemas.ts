@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const m2UuidParamSchema = z.string().uuid();
+
 export const createFormalPlanBodySchema = z.object({
   title: z.string().min(1).max(256),
   description: z.string().max(2000).nullable().optional(),

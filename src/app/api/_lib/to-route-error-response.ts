@@ -1,11 +1,15 @@
 import { ZodError } from "zod";
 
 import { toErrorResponse } from "@/lib/http-errors";
-import { FamilyAccessError } from "@/modules/family-access/errors";
-import { IdentityError } from "@/modules/identity/errors";
 import { ScheduleError, type ScheduleErrorCode } from "@/modules/schedule/errors";
 import { SettlementError, type SettlementErrorCode } from "@/modules/settlement/errors";
-import { TrainingError } from "@/modules/training/errors";
+
+export type M2ErrorBody = {
+  error: {
+    code?: string;
+    message: string;
+  };
+};
 
 function scheduleErrorToStatus(code: ScheduleErrorCode): number {
   switch (code) {
@@ -40,41 +44,40 @@ function settlementErrorToStatus(code: SettlementErrorCode): number {
   }
 }
 
+function flatToNested(body: { error: string; code?: string }): M2ErrorBody {
+  return {
+    error: {
+      code: body.code,
+      message: body.error,
+    },
+  };
+}
+
 export function toRouteErrorResponse(error: unknown): {
   status: number;
-  body: { error: string; code?: string };
+  body: M2ErrorBody;
 } {
   if (error instanceof ZodError) {
     return {
       status: 400,
-      body: { error: "Validation failed", code: "VALIDATION_ERROR" },
+      body: { error: { code: "VALIDATION_ERROR", message: "Validation failed" } },
     };
   }
 
   if (error instanceof ScheduleError) {
     return {
       status: scheduleErrorToStatus(error.code),
-      body: { error: error.message, code: error.code },
+      body: { error: { code: error.code, message: error.message } },
     };
   }
 
   if (error instanceof SettlementError) {
     return {
       status: settlementErrorToStatus(error.code),
-      body: { error: error.message, code: error.code },
+      body: { error: { code: error.code, message: error.message } },
     };
   }
 
-  if (
-    error instanceof IdentityError ||
-    error instanceof FamilyAccessError ||
-    error instanceof TrainingError
-  ) {
-    return toErrorResponse(error);
-  }
-
-  return {
-    status: 500,
-    body: { error: "Internal server error" },
-  };
+  const { status, body } = toErrorResponse(error);
+  return { status, body: flatToNested(body) };
 }

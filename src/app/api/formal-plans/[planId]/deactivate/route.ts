@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireVerifiedParentSession } from "@/lib/auth-request";
@@ -17,7 +18,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { db, dbUser } = await requireVerifiedParentSession();
-    const { planId } = await context.params;
+    const { planId: rawPlanId } = await context.params;
+    const planId = m2UuidParamSchema.parse(rawPlanId);
 
     const result = await deactivateFormalPlan(db, {
       ownerId: dbUser.id,

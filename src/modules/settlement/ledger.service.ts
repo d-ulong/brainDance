@@ -1,10 +1,76 @@
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { pointBalanceProjection, pointLedgerEntries } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { SettlementError } from "@/modules/settlement/errors";
+
+export type PointsBalanceDto = {
+  balance: number;
+  lastLedgerEntryId: string | null;
+  updatedAt: Date | null;
+};
+
+export type PointsLedgerEntryDto = {
+  id: string;
+  settlementId: string;
+  amount: number;
+  reason: string;
+  sourceType: string;
+  sourceId: string;
+  explanation: string;
+};
+
+/**
+ * Read-only balance projection query.
+ */
+export async function queryPointsBalance(
+  db: Database,
+  studentId: string,
+): Promise<PointsBalanceDto> {
+  const [row] = await db
+    .select({
+      balance: pointBalanceProjection.balance,
+      lastLedgerEntryId: pointBalanceProjection.lastLedgerEntryId,
+      updatedAt: pointBalanceProjection.updatedAt,
+    })
+    .from(pointBalanceProjection)
+    .where(eq(pointBalanceProjection.studentId, studentId))
+    .limit(1);
+
+  return {
+    balance: row?.balance ?? 0,
+    lastLedgerEntryId: row?.lastLedgerEntryId ?? null,
+    updatedAt: row?.updatedAt ?? null,
+  };
+}
+
+/**
+ * Read-only ledger query.
+ */
+export async function queryPointsLedger(
+  db: Database,
+  studentId: string,
+  limit: number,
+): Promise<PointsLedgerEntryDto[]> {
+  const rows = await db
+    .select({
+      id: pointLedgerEntries.id,
+      settlementId: pointLedgerEntries.settlementId,
+      amount: pointLedgerEntries.amount,
+      reason: pointLedgerEntries.reason,
+      sourceType: pointLedgerEntries.sourceType,
+      sourceId: pointLedgerEntries.sourceId,
+      explanation: pointLedgerEntries.explanation,
+    })
+    .from(pointLedgerEntries)
+    .where(eq(pointLedgerEntries.studentId, studentId))
+    .orderBy(desc(pointLedgerEntries.id))
+    .limit(limit);
+
+  return rows;
+}
 
 export type AppendLedgerInput = {
   studentId: string;

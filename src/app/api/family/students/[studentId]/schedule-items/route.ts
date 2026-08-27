@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { scheduleItemsQuerySchema } from "@/app/api/_lib/m2-schemas";
+import { m2UuidParamSchema, scheduleItemsQuerySchema } from "@/app/api/_lib/m2-schemas";
 import { requireStudentReadAccess } from "@/app/api/_lib/student-read-access";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession } from "@/lib/auth-request";
@@ -13,7 +13,8 @@ type RouteContext = {
 export async function GET(request: Request, context: RouteContext) {
   try {
     const { db, dbUser } = await requireAuthenticatedSession();
-    const { studentId } = await context.params;
+    const { studentId: rawStudentId } = await context.params;
+    const studentId = m2UuidParamSchema.parse(rawStudentId);
     const url = new URL(request.url);
     const query = scheduleItemsQuerySchema.parse({
       from: url.searchParams.get("from"),

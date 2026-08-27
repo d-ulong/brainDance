@@ -15,6 +15,8 @@
 
 ### P5-R01 — 统一修正 M2 错误响应体（P1 / Spec）
 
+- 状态：**完成**
+
 - 文件：
   - `src/app/api/_lib/require-idempotency-key.ts`
   - `src/app/api/_lib/to-route-error-response.ts`
@@ -26,6 +28,8 @@
 
 ### P5-R02 — 有效 Idempotency-Key 必须原样传递（P1 / Spec）
 
+- 状态：**完成**
+
 - 文件：`src/app/api/_lib/require-idempotency-key.ts`、七类写 Route、`tests/integration/api/write-route-idempotency-header.test.ts`
 - 依据：`phase5-execution-directive.md` §5：“有效 header 原样传递给对应命令”。
 - 问题：当前 `raw?.trim()` 的结果被作为 key 返回，改变了非空 header 的值。
@@ -33,6 +37,8 @@
 - 验证：七类写 Route 各自使用带前后空格但非空的有效 header，spy 精确断言 domain 收到原始字符串。
 
 ### P5-R03 — 补齐 F23 七 Route × 两类无效 header 证据（P1 / Spec）
+
+- 状态：**完成**
 
 - 文件：`tests/integration/api/write-route-idempotency-header.test.ts`
 - 依据：`phase5-execution-directive.md` §5；`prd.md` AC-M2-F23；`design.md` §7.1。
@@ -42,6 +48,8 @@
 
 ### P5-R04 — 动态路径参数实施稳定 DTO 校验（P1 / Spec）
 
+- 状态：**完成**
+
 - 文件：`src/app/api/_lib/m2-schemas.ts`、全部含 `[studentId]` / `[planId]` / `[itemId]` 的 M2 Route、API 测试
 - 依据：`phase5-execution-directive.md` §3、§5 要求参数校验与稳定错误映射。
 - 问题：路径参数直接进入 domain/DB；非法 UUID 可能成为驱动异常并返回 500。
@@ -49,6 +57,8 @@
 - 验证：至少分别覆盖 `studentId`、`planId`、`itemId` 非法值，并证明 domain/查询未调用。
 
 ### P5-R05 — 恢复 Module Interface 边界（P2 / Spec + Architecture）
+
+- 状态：**完成**
 
 - 文件：
   - 删除 `src/app/api/_lib/m2-read-queries.ts`
@@ -60,6 +70,8 @@
 - 验证：`src/app/api` 的 M2 Route/适配层不再直接 import 这些业务表；现有及新增 GET API 测试通过并保持零写库。
 
 ### P5-R06 — 补齐 11 个 Route 的 Phase 5 API 验收矩阵（P1 / Spec）
+
+- 状态：**完成**
 
 - 文件：`tests/integration/api/m2-routes.test.ts`（可在 `tests/integration/api/` 内按职责拆分）及实施记录
 - 依据：`phase5-execution-directive.md` §5：“design.md §7 API 清单中的 M2 Route 均存在，并按角色、DTO、状态码和稳定错误码调用正确领域接口”；API 测试须覆盖成功路径、鉴权、DTO/参数错误、稳定领域错误映射。
@@ -76,6 +88,8 @@
 
 ### P5-R07 — 简化 legacy error mapper 委派（P2 / Standards）
 
+- 状态：**完成**
+
 - 文件：`src/app/api/_lib/to-route-error-response.ts`
 - 依据：AGENTS.md §2（优先复用已有实现、最小充分方案）；baseline smell：Duplicated Code / Divergent Change。
 - 问题：当前重复识别 `IdentityError | FamilyAccessError | TrainingError`，并复制 `toErrorResponse` 的 unknown fallback；后续 legacy mapper 扩展会发生漂移。
@@ -83,6 +97,8 @@
 - 验证：针对 legacy 鉴权错误与 unknown error 的 mapper/Route 测试证明 status 与嵌套 envelope 正确。
 
 ### P5-R08 — 删除未使用的测试 helper（P3 / Standards）
+
+- 状态：**完成**
 
 - 文件：`tests/integration/api/helpers/session.ts`
 - 依据：AGENTS.md §2 YAGNI、§3 focused changes；baseline smell：Speculative Generality。

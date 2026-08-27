@@ -1,8 +1,61 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { scheduleItems } from "@/db/schema";
+import { planScheduleSlots, plans, scheduleItems } from "@/db/schema";
 import { effectiveStatus } from "@/modules/schedule/effective-status";
+
+export type CurrentFormalPlanDto = {
+  planId: string;
+  versionId: string;
+  title: string;
+  description: string | null;
+  startDate: string;
+  endDate: string | null;
+  status: string;
+  localTime: string | null;
+};
+
+/**
+ * Read-only current formal plan query. Never updates rows or calls maintain.
+ */
+export async function queryCurrentFormalPlan(
+  db: Database,
+  studentId: string,
+): Promise<CurrentFormalPlanDto | null> {
+  const [plan] = await db
+    .select()
+    .from(plans)
+    .where(
+      and(eq(plans.studentId, studentId), eq(plans.planKind, "formal"), eq(plans.status, "active")),
+    )
+    .limit(1);
+
+  if (!plan || !plan.currentVersion) {
+    return null;
+  }
+
+  const [slot] = await db
+    .select({ localTime: planScheduleSlots.localTime })
+    .from(planScheduleSlots)
+    .where(
+      and(
+        eq(planScheduleSlots.planVersionId, plan.currentVersion),
+        eq(planScheduleSlots.slotKey, "default"),
+      ),
+    )
+    .limit(1);
+
+  return {
+    planId: plan.id,
+    versionId: plan.currentVersion,
+    title: plan.title,
+    description: plan.description,
+    startDate: plan.startDate,
+    endDate: plan.endDate,
+    status: plan.status,
+    localTime: slot?.localTime ? slot.localTime.slice(0, 5) : null,
+  };
+}
 
 export type ScheduleItemDto = {
   id: string;
