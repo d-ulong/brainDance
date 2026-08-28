@@ -17,4 +17,3 @@
 ## Boundary
 
 This GO authorizes only the wrap-up directive committed with this sign-off. It does not approve, stage, commit, restore, or otherwise alter the six owner parallel files; nor does it authorize merge, push, deployment, branch deletion, or new development.
-
