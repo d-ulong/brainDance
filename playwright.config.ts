@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
 config({ path: ".env.local" });
 config({ path: ".env" });
 
-const e2ePort = process.env.PLAYWRIGHT_PORT ?? "3002";
+const e2ePort = process.env.PLAYWRIGHT_PORT ?? "3003";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${e2ePort}`;
 const supervised = process.env.E2E_SUPERVISED === "true";
 

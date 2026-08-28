@@ -9,7 +9,7 @@ type Fixture = {
   studentId: string;
 };
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3002";
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3003";
 const fixture = JSON.parse(
   readFileSync(path.join(process.cwd(), "tests/e2e/.fixture.json"), "utf8"),
 ) as Fixture;

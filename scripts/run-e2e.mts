@@ -8,7 +8,7 @@ import { assertPortFree, killProcessTree, logPortStatus } from "./e2e-port.mts";
 config({ path: ".env.local" });
 config({ path: ".env" });
 
-const port = process.env.PLAYWRIGHT_PORT ?? "3002";
+const port = process.env.PLAYWRIGHT_PORT ?? "3003";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${port}`;
 const sessionSecret =
   process.env.SESSION_SECRET ?? "test-session-secret-at-least-32-characters-long";
