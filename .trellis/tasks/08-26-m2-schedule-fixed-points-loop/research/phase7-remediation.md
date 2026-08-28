@@ -1,9 +1,9 @@
 # Phase 7 Consolidated Remediation
 
-> Active task: `.trellis/tasks/08-26-m2-schedule-fixed-points-loop`  
-> Target branch: `feat/m2-schedule-fixed-points-loop`  
-> Review baseline: `a474e72dc7d36f91d36708f3703435ec7c2482c1`  
-> Reviewed Cursor SHA: `0ca5208f9ddb86325005febb63197ac29817b480`  
+> Active task: `.trellis/tasks/08-26-m2-schedule-fixed-points-loop`
+> Target branch: `feat/m2-schedule-fixed-points-loop`
+> Review baseline: `a474e72dc7d36f91d36708f3703435ec7c2482c1`
+> Reviewed Cursor SHA: `0ca5208f9ddb86325005febb63197ac29817b480`
 > Decision: **NO-GO — remediation only**
 
 ## Scope and rules

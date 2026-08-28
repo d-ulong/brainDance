@@ -1,20 +1,6 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
-type Fixture = {
-  parentEmail: string;
-  parentPassword: string;
-  studentUsername: string;
-  studentPassword: string;
-  studentId: string;
-};
-
-function loadFixture(): Fixture {
-  const fixturePath = path.join(process.cwd(), "tests/e2e/.fixture.json");
-  return JSON.parse(readFileSync(fixturePath, "utf8")) as Fixture;
-}
+import { loadE2eFixture } from "./ui-helpers";
 
 async function login(request: APIRequestContext, identifier: string, password: string) {
   const response = await request.post("/api/auth/login", {
@@ -62,7 +48,7 @@ test.describe("training acceptance", () => {
   test("student results survive refresh and parent can read summary after re-login", async ({
     request,
   }) => {
-    const fixture = loadFixture();
+    const fixture = loadE2eFixture();
 
     await login(request, fixture.studentUsername, fixture.studentPassword);
 
