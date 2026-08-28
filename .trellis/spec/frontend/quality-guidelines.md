@@ -24,13 +24,13 @@ Before submitting UI changes: run lint/typecheck/build and relevant E2E specs.
 
 ### E2E setup
 
-Config: `playwright.config.ts`
+Config: `playwright.config.ts`; entry: `pnpm test:e2e` → `scripts/run-e2e.mts` (`package.json`)
 
 - Test dir: `tests/e2e/`
 - **Two projects**: `desktop-chromium` and `mobile-360` (360×800 viewport)
 - Single worker, not fully parallel — avoids shared server/DB races
 - Default run **ignores** `m1-evidence-capture.spec.ts` (screenshot evidence script)
-- Starts Next production server on port 3002 unless `E2E_SUPERVISED=true`
+- **Ports:** `pnpm dev` defaults to **3002** (`package.json`). `pnpm test:e2e` supervises its default server on **3003** (`playwright.config.ts`, `scripts/run-e2e.mts`). `PLAYWRIGHT_PORT` and `PLAYWRIGHT_BASE_URL` explicitly override the E2E defaults in `playwright.config.ts` and `scripts/run-e2e.mts`.
 - Fixture users: `tests/e2e/.fixture.json` loaded by `loadE2eFixture()` in `tests/e2e/ui-helpers.ts`
 
 Key specs:
