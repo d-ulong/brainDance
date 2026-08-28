@@ -14,7 +14,7 @@ Use when deciding where to store data in pages and components.
 
 ### No global client state library
 
-The project does **not** use Redux, Zustand, Jotai, Context-based stores, or React Query. All UI state is **component-local** via React `useState`.
+The project does **not** use Redux, Zustand, Jotai, Context-based stores, or React Query. UI state is **component-local** using React primitives — primarily `useState` for render-driving values and `useRef` for mutable or timing state that should not trigger re-renders.
 
 Server/session state is loaded on demand through fetch helpers, not synchronized through a global cache.
 
@@ -27,6 +27,9 @@ Server/session state is loaded on demand through fetch helpers, not synchronized
 | Fetched lists/objects | `useState` + `useEffect` load | `items`, `students`, `balance` |
 | Session gate | `fetchSession()` in `useEffect`, redirect via `useRouter` | `src/app/page.tsx`, schedule page |
 | Refresh after mutation | Re-call load function or bump key | `loadSchedule(studentId)` after complete; `setCardRefreshKey(k => k+1)` to remount `PointsTodayCard` |
+| Timing / imperative mutable state (no re-render) | `useRef` | `sequenceRef`, `stimulusShownAtRef`, `startedRef` in `src/app/student/training/reaction/page.tsx` — event sequence counter, stimulus timestamp, and one-shot start guard |
+
+Use `useState` when the UI must re-render on change. Use `useRef` when values are read/written inside callbacks or timing logic without needing a render update.
 
 ### Session handling
 
@@ -89,7 +92,8 @@ Label mapping helper: `scheduleStatusLabel()` in `src/lib/client/m2-api.ts`.
 ## Verification
 
 ```bash
-pnpm test:e2e tests/e2e/m2-schedule-points-flow.spec.ts
-pnpm test:e2e tests/e2e/m1-browser-flow.spec.ts
+pnpm test:e2e
 pnpm typecheck
 ```
+
+E2E coverage for state patterns: `tests/e2e/m2-schedule-points-flow.spec.ts`, `tests/e2e/m1-browser-flow.spec.ts`.

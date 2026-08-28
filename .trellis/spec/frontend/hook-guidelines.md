@@ -59,15 +59,11 @@ There is **no React Query, SWR, or similar**. Async work is:
 
 Client fetch helpers: `src/lib/client/api.ts`, `src/lib/client/m2-api.ts`.
 
-### When to extract a custom hook
+### Custom hooks — not present today
 
-Not required by current codebase size. If extraction becomes warranted:
+The repository has no shared custom hooks and no extraction threshold or return-shape convention to follow. Stateful logic stays inline in the page or component file using the React built-ins listed above.
 
-- Place under `src/hooks/use-<name>.ts` (directory does not exist yet — create when first hook is shared by 2+ pages).
-- Name with `use` prefix per React rules.
-- Keep hooks thin: call existing `lib/client` helpers, return `{ data, loading, error, refetch }` shape consistent with `PointsTodayCard` / page patterns.
-
-Until then, **copy the inline `useEffect` + `useState` + `useCallback` pattern** from existing pages rather than introducing a new abstraction.
+If a future task introduces the first shared hook, that task must explicitly define its file location, naming, return shape, and tests. This bootstrap document does not pre-approve a `src/hooks/` layout or a fixed API contract.
 
 ---
 
@@ -86,5 +82,7 @@ Until then, **copy the inline `useEffect` + `useState` + `useCallback` pattern**
 rg -n "^export (function|const) use[A-Z]" src/
 
 pnpm typecheck
-pnpm test:e2e tests/e2e/training-flow.spec.ts
+pnpm test:e2e
 ```
+
+E2E coverage for inline hook patterns: `tests/e2e/training-flow.spec.ts`.

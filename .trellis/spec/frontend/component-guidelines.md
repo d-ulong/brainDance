@@ -123,8 +123,7 @@ Architecture target viewports (`docs/architecture.md` §6): 360px, 768px, 1024px
 ```bash
 pnpm lint
 pnpm build
-pnpm test:e2e tests/e2e/home.spec.ts
-pnpm test:e2e tests/e2e/m2-schedule-points-flow.spec.ts
+pnpm test:e2e
 ```
 
-Visual/responsive evidence: `tests/e2e/m1-evidence-capture.spec.ts` (ignored in default Playwright run but documents capture approach).
+E2E coverage for components and layout: `tests/e2e/home.spec.ts`, `tests/e2e/m2-schedule-points-flow.spec.ts`. Visual/responsive evidence: `tests/e2e/m1-evidence-capture.spec.ts` (ignored in default Playwright run but documents capture approach).

@@ -115,7 +115,7 @@ src/
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm test:e2e tests/e2e/home.spec.ts
+pnpm test:e2e
 ```
 
-Reference E2E navigation helpers: `tests/e2e/ui-helpers.ts`.
+E2E coverage for page layout: `tests/e2e/home.spec.ts`. Reference E2E navigation helpers: `tests/e2e/ui-helpers.ts`.

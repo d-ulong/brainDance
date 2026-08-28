@@ -16,7 +16,7 @@ Backend responsibilities are split across four top-level areas under `src/`:
 
 | Area | Path | Responsibility |
 |------|------|----------------|
-| Route handlers | `src/app/api/**/route.ts` | HTTP entry: auth, Zod parsing, idempotency headers, call services, map errors |
+| Route handlers | `src/app/api/**/route.ts` | HTTP entry: auth, Zod parsing, idempotency headers, service delegation (preferred), map errors |
 | Domain modules | `src/modules/<domain>/` | Business logic, authorization, transactions, audit/outbox side effects |
 | Database | `src/db/` | Drizzle client, schema definitions, SQL migrations |
 | Shared libs | `src/lib/` | Auth helpers, HTTP error mappers, env, crypto, postgres helpers |
@@ -27,7 +27,18 @@ Domain modules mirror architecture modules documented in `docs/architecture.md` 
 
 - One file per HTTP method at `src/app/api/<resource>/route.ts` or nested dynamic segments such as `src/app/api/schedule-items/[itemId]/skip/route.ts`.
 - Shared route helpers live in `src/app/api/_lib/` (Zod schemas, idempotency guard, M2 error mapper).
-- Routes stay thin: validate input, call `require*Session()`, delegate to a `*.service.ts`, return `NextResponse.json`.
+
+**Preferred direction for new behavior:** validate input, call `require*Session()`, delegate transactional business rules and domain invariants to a `*.service.ts`, return `NextResponse.json` or `Response.json`. Schema/domain invariants and transactional side effects belong in `src/modules/`, not in route handlers.
+
+**Observed M1 exceptions (do not copy for new work):** several existing routes still perform route-local Drizzle reads or orchestration instead of pushing every read through a service:
+
+| Route | Route-local behavior |
+|-------|---------------------|
+| `src/app/api/auth/register/route.ts` | After `registerParent`, runs `db.select().from(users)` to shape the response body |
+| `src/app/api/auth/session/route.ts` | `GET` runs `db.select().from(users)` for session payload fields |
+| `src/app/api/relationship-requests/route.ts` | `GET` queries `relationshipRequests` directly for the student's pending list |
+
+These are legacy M1 seams, not a pattern to extend. New routes should follow the M2-style service delegation in `src/app/api/schedule-items/[itemId]/skip/route.ts`.
 
 Reference routes:
 
@@ -123,7 +134,7 @@ src/
 
 ## Anti-Patterns
 
-- **Business logic in route handlers** — keep routes to parsing, auth, and response mapping; put rules in `src/modules/`.
+- **Business logic in route handlers** — schema/domain invariants and transactional behavior belong in `src/modules/`. New routes should not add route-local query orchestration like the M1 exceptions above; keep routes to parsing, auth, and response mapping.
 - **Direct cross-module table writes** — callers use another module's service or shared authorization helper, not ad-hoc updates to foreign tables.
 - **Bypassing auth helpers** — do not read cookies or Lucia sessions manually in routes; use `src/lib/auth-request.ts`.
 - **Schema changes without migration** — always add a SQL migration under `src/db/migrations/`; do not rely on `drizzle-kit push` in this project.

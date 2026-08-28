@@ -112,8 +112,12 @@ Reference: `src/app/api/schedule-items/[itemId]/skip/route.ts`.
 ### Input validation
 
 - Route-level Zod schemas in route files (M1) or `src/app/api/_lib/m2-schemas.ts` (M2 shared schemas).
-- Unhandled `ZodError` in M2 routes becomes 400 via `toRouteErrorResponse`.
-- M1 routes should catch Zod explicitly or rely on service-layer validation that throws `IdentityError("VALIDATION_ERROR", ...)`.
+
+**M2 behavior (implemented):** unhandled `ZodError` in M2 routes becomes 400 via `toRouteErrorResponse` (`ZodError` → `VALIDATION_ERROR`).
+
+**M1 behavior (known inconsistency):** M1 routes such as `src/app/api/auth/login/route.ts` call `bodySchema.parse(...)` inside a `try/catch` that maps errors through `toErrorResponse`. That mapper (`src/lib/http-errors.ts::toErrorResponse`) handles only `IdentityError`, `FamilyAccessError`, and `TrainingError` — it does **not** map `ZodError`. An uncaught parse failure therefore falls through to the generic **500** `{ error: "Internal server error" }` path. This is observed current behavior, not an established "catch Zod → 400" convention.
+
+Changing M1 validation responses to 400 requires a separately authorized behavior task and regression tests; do not treat it as already implemented.
 
 ### Idempotency header errors
 
