@@ -19,7 +19,7 @@ This directive contains every actionable finding from the fixed-SHA Standards an
 
 Do not modify product code, tests, configuration, dependencies, scripts, indexes, other spec files, the PRD checklist, task metadata, journal, archives, or Git history. Do not finish or archive the Bootstrap task. Make one focused remediation commit and state only “submitted for Codex final review”.
 
-The six currently dirty paths listed in BG-R06 are not authorized remediation files. Do not stage or commit them with this task.
+The owner has confirmed that the six currently dirty paths listed in BG-R06 are separately requested parallel changes. They are not Bootstrap remediation files. Preserve their working-tree content byte-for-byte and do not stage or commit them with this task.
 
 ## 2. Findings
 
@@ -63,17 +63,17 @@ The six currently dirty paths listed in BG-R06 are not authorized remediation fi
 - **Required change:** replace every ineffective per-file command with the supported full `pnpm test:e2e` command. Where a document wants a focused file, describe the file as coverage evidence rather than claiming the current supervisor supports focused selection. Do not modify the E2E runner in this task.
 - **Verification:** `rg -n "pnpm test:e2e\\s+tests/" .trellis/spec/backend .trellis/spec/frontend` returns no matches, and all remaining commands are supported by the committed scripts.
 
-### BG-R06 — Handoff worktree contains six unauthorized changes (P1)
+### BG-R06 — Preserve six owner-authorized parallel changes outside this remediation (P1)
 
 - **Basis:** the execution directive allowed only spec/PRD paths and required a clean worktree; AGENTS §§3–5 require focused commits and truthful handoff state.
 - **Location:** uncommitted `.env.example`, `package.json`, `playwright.config.ts`, `scripts/capture-desktop-parent-evidence.mts`, `scripts/run-e2e.mts`, and `scripts/verify-e2e-port-free.mts`.
-- **Issue:** the files change the development port from 3000 to 3002 and E2E defaults from 3002 to 3003. They are outside fixed commit `4b1a91a...` but make the Bootstrap handoff dirty and cannot be silently attributed, discarded, staged, or accepted.
-- **Required change:** before editing, determine from Cursor's own task history whether these six changes were created by this Bootstrap execution. If Cursor created them, restore exactly these six paths to `4b1a91a...` without touching any other path, then proceed. If they pre-existed, belong to the user, or ownership is uncertain, do not modify them and stop with a blocker asking the owner to preserve or remove them. Never stage or commit them in the Bootstrap remediation.
-- **Verification:** the final worktree is clean and the remediation commit contains only the six authorized spec documents. If safe cleanup cannot be established, no remediation commit is created and the blocker lists all six paths.
+- **Issue:** the files change the development port from 3000 to 3002 and E2E defaults from 3002 to 3003. They are outside fixed commit `4b1a91a...`. The owner has now explicitly identified them as separately requested parallel work, so they must remain present but excluded from this remediation.
+- **Required change:** do not edit, restore, stage, commit, stash, or otherwise alter these six files. Before and after the remediation, capture `git diff -- <six paths>` and confirm the patch is identical. Stage only the six authorized spec documents by exact path; never use `git add .` or `git add -A`.
+- **Verification:** the remediation commit contains only the six authorized spec documents; the final working tree contains exactly the same six owner-authorized paths with the same diff and no additional paths. A non-clean status containing only these six paths is expected and is not a blocker.
 
 ## 3. Required verification and handoff
 
-After satisfying BG-R06 safely, run:
+After recording the six-path owner diff for BG-R06, run:
 
 ```powershell
 rg -n "Document your project's|To be filled|TODO: fill|placeholder|TBD|待填写|待补" .trellis/spec/backend .trellis/spec/frontend
@@ -81,6 +81,7 @@ rg -n "pnpm test:e2e\s+tests/" .trellis/spec/backend .trellis/spec/frontend
 pnpm format
 git diff --check
 git diff -- .trellis/spec/backend/directory-structure.md .trellis/spec/backend/error-handling.md .trellis/spec/frontend/component-guidelines.md .trellis/spec/frontend/directory-structure.md .trellis/spec/frontend/hook-guidelines.md .trellis/spec/frontend/state-management.md
+git diff -- .env.example package.json playwright.config.ts scripts/capture-desktop-parent-evidence.mts scripts/run-e2e.mts scripts/verify-e2e-port-free.mts
 git status --short --branch
 ```
 
@@ -88,6 +89,7 @@ Commit exactly once, then run:
 
 ```powershell
 git diff --check 4b1a91aa1d8f78910b222a80461f243453285504..HEAD
+git diff -- .env.example package.json playwright.config.ts scripts/capture-desktop-parent-evidence.mts scripts/run-e2e.mts scripts/verify-e2e-port-free.mts
 git status --short --branch
 ```
 
@@ -101,5 +103,6 @@ Resolved IDs: BG-R01, BG-R02, BG-R03, BG-R04, BG-R05, BG-R06
 Changed files: <one per line>
 Commands: <raw concise result per required command>
 Unverified: <none or exact boundary>
-Blockers: <none or concrete blocker, including all ownership-uncertain dirty paths>
+Owner parallel paths: <confirm the same six paths remain unstaged and byte-for-byte unchanged>
+Blockers: <none or concrete blocker>
 ```
