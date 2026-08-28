@@ -35,3 +35,24 @@
 ### Next Steps
 
 - 初始化或进入实际 Git 仓库后提交本次文档变更；再按 M0 验收开始 M1。
+
+
+## Session 2: M2 schedule fixed points loop complete
+
+**Date**: 2026-08-28
+**Task**: M2 schedule fixed points loop complete
+**Branch**: `feat/m2-schedule-fixed-points-loop`
+
+### Summary
+
+Codex fixed-SHA review accepted M2; all final quality gates passed; task archived.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3e909668884642701c8257a2a253615b33f1683b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
