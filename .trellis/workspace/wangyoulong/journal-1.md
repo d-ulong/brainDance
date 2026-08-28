@@ -56,3 +56,27 @@ Codex fixed-SHA review accepted M2; all final quality gates passed; task archive
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Bootstrap Guidelines and port separation complete
+
+**Date**: 2026-08-28
+**Task**: Bootstrap Guidelines and port separation complete
+**Branch**: `feat/m2-schedule-fixed-points-loop`
+
+### Summary
+
+Project-specific Trellis specs and the 3002 development / 3003 E2E port separation were independently reviewed and accepted.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b1a91aa1d8f78910b222a80461f243453285504` | (see git log) |
+| `8ec971f6967c96b4d71f55b6b5661ba07e0d2f3c` | (see git log) |
+| `d47732bfc8fa22318fa3ea9893372bba9a386efc` | (see git log) |
+| `7ea190a40dfd3733d004e2ec21109ed47cb89ba7` | (see git log) |
+
+### Status
+
+[OK] **Completed**
