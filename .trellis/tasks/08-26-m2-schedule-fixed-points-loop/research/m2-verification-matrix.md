@@ -1,6 +1,7 @@
 # M2 验收矩阵
 
 > 2026-08-26 第六轮 consolidated signoff（闭合 e6ece0f 后全部已知缺口 + 复审入口包）。
+> **Phase 8 对账（2026-08-28）：** 执行基线 `184d82964281d50e2cab1faaac053b9612cecf6c`；产品实现 SHA `9422c5fb6daf604ffeb6e7c527600f9d7562b391`；状态 **submitted for Codex final review**（非最终 GO）。证据包见 `research/phase8-final-verification.md`。
 
 ## 1. 总览
 
@@ -152,3 +153,75 @@ desktop-chromium：步骤 1–7 完整。mobile-360（360×800）：步骤 1–7
 | R7 | 编辑 §5.2 slot 读取顺序（oldVersionId → slot → current_version） | design §5.2；implement §4.2.4 | formal-plan.test.ts（F27 未传 localTime + 改时间） |
 | R9 / FG-01 / F22 | 编辑 effectiveEndDate + updatedPlan；`horizonThrough`/`generateHorizonInline` 统一 `end_date` | design §5.2、§5.8A；implement §4.2.5 | plan-end-date + formal-plan + horizon-through |
 | R10 / FG-02 / B3 / G2 | §5.1/§5.2/§5.6 命令算法零占位；字段来源完整 | design §5.1、§5.2、§5.6 | schedule-generation + formal-plan + command-idempotency（F11–F13） |
+
+## 8. 功能 AC — Phase 8 最终状态
+
+| ID | 条件 | 可定位证据 | 证据类型 | 状态 |
+| --- | --- | --- | --- | --- |
+| AC-M2-1 | 20:00 计划 + 30d；maintain 滚动 | `formal-plan.test.ts` `creates formal plan with inline horizon and outbox`；`maintain-horizon.test.ts` `fills controlled horizon gap...`；`horizon-through.test.ts` | 独立复跑 `pnpm test` | pass |
+| AC-M2-2 | occurrence_key UNIQUE；重复生成 0 新增 | `m2-schema-constraints.test.ts` `enforces schedule_items occurrence_key unique`；`schedule-generation.test.ts` create path；`formal-plan.test.ts` F9b create replay；`maintain-horizon.test.ts` F14 replay | 独立复跑 | pass |
+| AC-M2-3 | fact：idempotency_key + completion_kind | `schedule-complete.test.ts` `completes pending item with fact and on_time kind (AC-M2-3/F3)`；`replays complete with same key (F11)` | 独立复跑 | pass |
+| AC-M2-4 | on_time/late 均 +10；explanation 含 kind | `settlement-ledger.test.ts` `awards on_time +10... (AC-M2-4/F4)`；`awards late +10... (AC-M2-5/F15)` | 独立复跑 | pass |
+| AC-M2-5 | balance = sum(ledger) | `settlement-ledger.test.ts` `updates balance 0→10... (C9)`；`replays complete with same ledger and unchanged balance (F25)`；E2E `m2-schedule-points-flow.spec.ts` balance/ledger 断言 | 独立复跑 + E2E | pass |
+| AC-M2-6 | 编辑自 effective_from 生成；缩短 endDate | `formal-plan.test.ts` edit 系列；`plan-end-date.test.ts` shorten/extend/unchanged endDate (R9/F22) | 独立复跑 | pass |
+| AC-M2-7 | desktop + mobile-360 各完整 1–7 | `tests/e2e/m2-schedule-points-flow.spec.ts` desktop-chromium + mobile-360 各 1 case | 独立复跑 `pnpm test:e2e` 12/12 | pass |
+| AC-M2-8 | audit + outbox；create 回放无重复 | `schedule-outbox.test.ts` `writes plan.created outbox (AC-M2-8/F21)`；`create replay does not duplicate plan.created outbox (F21)` | 独立复跑 | pass |
+
+## 9. 失败路径 F1–F28 — Phase 8 最终状态
+
+| ID | 场景 | 可定位证据 | 证据类型 | 状态 |
+| --- | --- | --- | --- | --- |
+| F1 | 未授权 | `schedule-auth.test.ts` 4× `rejects ... (F1)` | 独立复跑 | pass |
+| F2 | 停用；future pending → cancelled | `formal-plan.test.ts` `deactivates plan cancelling future pending` | 独立复跑 | pass |
+| F3 | 已完成异键 complete → 409 | `schedule-complete.test.ts` `rejects complete on already completed item with different key (F3)`；`settlement-ledger.test.ts` `completed item with different key produces no new ledger (F3)` | 独立复跑 | pass |
+| F4 | 结算幂等 | `settlement-ledger.test.ts` `awards on_time +10... (AC-M2-4/F4)`；replay/balance 不变用例 | 独立复跑 | pass |
+| F5 | GET 不写库 | `schedule-query.test.ts` `multiple queries produce zero UPDATEs (F5)`；`m2-routes.test.ts` `GET read-only invariant (NF-4/F5)` | 独立复跑 | pass |
+| F6 | effective expired 只读 | `schedule-query.test.ts` `returns effectiveStatus without updating rows (F5/F6)`；`effective-status.test.ts` | 独立复跑 | pass |
+| F7 | 窗口外 complete → expired + 409 | `schedule-complete.test.ts` `rejects window expired complete after persist (F7)`；`settlement-ledger.test.ts` `window-outside complete produces no ledger (F7)` | 独立复跑 | pass |
+| F8 | 创建/编辑/维护事务 persist expired | `persist-expired.test.ts`；`plan-end-date.test.ts` F28 maintain no-op persist；`schedule-complete.test.ts` F7 persist 路径 | 独立复跑 + Phase 3 继承 | pass |
+| F9 | 创建同 scope 同键回放/409 | `formal-plan.test.ts` `rejects create with same key different payload (F9)` | 独立复跑 | pass |
+| F9b | active plan + 新 key 409；同 key 200 | `formal-plan.test.ts` `replays create before active plan conflict (F9b)`；`rejects second active formal plan` | 独立复跑 | pass |
+| F10 | 编辑/停用/启规则 hash | `command-idempotency.test.ts` `edit hash mismatch rejects replay (F10)`；`deactivate hash mismatch rejects replay (F10)` | 独立复跑 | pass |
+| F11 | complete 回放含 ledger | `schedule-complete.test.ts` `replays complete with same key (F11)`；`settlement-ledger.test.ts` F25 replay | 独立复跑 | pass |
+| F12 | 同 key 不同 student | `formal-plan.test.ts` `allows same idempotency key across students (F12)` | 独立复跑 | pass |
+| F13 | 跨命令类型同 key 允许 | `command-idempotency.test.ts` `allows same key across command types (F13)`；`settlement-ledger.test.ts` `allows same client key across different schedule items (F13/F25)` | 独立复跑 | pass |
+| F14 | maintain 回放；无 mount | `maintain-horizon.test.ts` `replays maintain without generate audit or outbox (F14/C11)`；E2E `m2-schedule-points-flow.spec.ts` mount 0 POST 断言 | 独立复跑 + E2E | pass |
+| F15 | late +10；窗口外无 ledger | `schedule-complete.test.ts` `supports late completion within window (F15)`；`settlement-ledger.test.ts` late +10 与 window-outside 用例 | 独立复跑 | pass |
+| F16 | complete/skip 同 key 409 | `schedule-skip.test.ts` `rejects complete and skip same key conflict (F16)`；`schedule-terminal-concurrency.test.ts` F16/F24 | 独立复跑 | pass |
+| F17 | skip 无 ledger | `schedule-skip.test.ts` `skips pending item without fact or ledger (F17)`；`settlement-ledger.test.ts` `skip produces no ledger (F17)` | 独立复跑 | pass |
+| F18 | 窗口外 skip → expired + 409 | `schedule-skip.test.ts` `rejects skip outside window with persist expired (F18/F7)` | 独立复跑 | pass |
+| F19 | 编辑后 effective_from 有新实例 | `formal-plan.test.ts` `edit copies localTime from old version when omitted (R7)`；`edit with changed localTime uses new slot time (R6)` — 新 version 有 schedule_items | 独立复跑 | pass |
+| F20 | 同 item 同 key 异 actor → 409 | `schedule-complete.test.ts` `rejects cross-actor same key... (F20/P3-R05)`；`command-idempotency.test.ts` F20/F24 | 独立复跑 | pass |
+| F21 | create 回放无二次 horizon/outbox | `schedule-outbox.test.ts` F21 两条；`formal-plan.test.ts` F9b replay | 独立复跑 | pass |
+| F22 | endDate 边界；maintain no-op 无 outbox | `plan-end-date.test.ts` shorten/extend/unchanged (R9/F22)；`schedule-outbox.test.ts` `maintain writes horizon_maintained only when items_created > 0` | 独立复跑 | pass |
+| F23 | 缺 Idempotency-Key → 400 | `write-route-idempotency-header.test.ts` describe `write route idempotency header (F23)` — §3.1 七 Route | 独立复跑 | pass |
+| F24 | 并发同 key 200 回放 | `schedule-terminal-concurrency.test.ts` 3 cases；`settlement-ledger.test.ts` concurrent complete；`schedule-complete.test.ts` F20 | 独立复跑 | pass |
+| F25 | 首次 balance +10；回放不变；跨 item 同 key | `settlement-ledger.test.ts` C9、F25、跨 item 用例 | 独立复跑 | pass |
+| F26 | maintain 并发同 scope+key → 1 副作用 | `maintain-horizon.test.ts` `concurrent same key with gap yields one generate audit and outbox (P3-R04/F26/C10)` | 独立复跑 | pass |
+| F27 | 编辑 localTime 未变仍建 slot 并生成 | `formal-plan.test.ts` `edits plan creating new version and slot snapshot (F27/C12)`；R7 localTime 复制用例 | 独立复跑 | pass |
+| F28 | maintain no-op 仍 persistExpired；回放不 persist | `maintain-horizon.test.ts` `no-op maintain still writes maintain row with items_created=0 (F28)`；`plan-end-date.test.ts` F28 两条 | 独立复跑 | pass |
+
+## 10. 非功能 NF-1–NF-8 — Phase 8 最终状态
+
+| ID | 条件 | 可定位证据 | 证据类型 | 状态 |
+| --- | --- | --- | --- | --- |
+| NF-1 | M1 回归 | 全量 `pnpm test` 274/274；E2E M1 10/10（`home`、`m1-browser-flow`、`training-flow` ×2 projects） | 独立复跑 | pass |
+| NF-2 | 360px 无横向滚动 | `m1-browser-flow.spec.ts` horizontal scroll ×2；`m2-schedule-points-flow.spec.ts` mobile-360 `assertNoHorizontalScroll` | 独立复跑 E2E | pass |
+| NF-3 | 写操作 Idempotency-Key；缺失 → 400 | `write-route-idempotency-header.test.ts` F23；E2E maintain/complete header 断言 | 独立复跑 + E2E | pass |
+| NF-4 | GET 零写库 | `schedule-query.test.ts` F5；`m2-routes.test.ts` GET read-only invariant | 独立复跑 | pass |
+| NF-5 | 无 command_log；0008–0013 | `src/db/migrations/0008_plans_and_versions.sql` … `0013_schedule_horizon_maintains.sql`；`m2-schema-constraints.test.ts`；`m2-isolated-database-lifecycle.test.ts` | 继承 Phase 1 + 全量 test | pass |
+| NF-6 | time-policy 扩展 | `tests/unit/time-policy/` 8 files（`horizon-through`、`completion-window`、`derive-completion-kind` 等） | 独立复跑 | pass |
+| NF-7 | 无 mount maintain POST | E2E `m2-schedule-points-flow.spec.ts` `assertMaintainHorizonPostCount` 0→1；Phase 6 signoff `352bb02` | 独立复跑 E2E | pass |
+| NF-8 | `git diff --check` 通过 | Phase 8 复跑 `git diff --check 184d829..HEAD` exit 0 | 独立复跑 | pass |
+
+## 11. Phase 8 质量门摘要
+
+| 命令 | 2026-08-28 结果 |
+| --- | --- |
+| `pnpm test:e2e` | 12/12 passed |
+| `pnpm test` | 40 files / 274 tests passed |
+| `pnpm typecheck` | pass |
+| `pnpm lint` | 0 errors；3 pre-existing warnings |
+| `pnpm format` | pass（无变更） |
+| `pnpm build` | pass |
+| `git diff --check 184d829..HEAD` | pass |
