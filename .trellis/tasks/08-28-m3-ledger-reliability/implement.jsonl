@@ -1,0 +1,6 @@
+{"file":"CONTEXT.md","reason":"人工错误数确认、更正窗口、不可变账本等领域术语"}
+{"file":"docs/data-model.md","reason":"事实版本、结算、流水、outbox 和投影的权威约束"}
+{"file":"docs/architecture.md","reason":"Module 边界、事务 outbox、Worker 和重建契约"}
+{"file":"src/db/schema/points.ts","reason":"M2 fact、settlement、ledger 和余额的当前实现"}
+{"file":"src/db/schema/outbox.ts","reason":"outbox 当前字段和去重键"}
+{"file":"src/modules/settlement/ledger.service.ts","reason":"唯一流水和余额投影写入边界"}

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"迁移、事务、并发和约束验证规范"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"M2 API 错误体和领域错误边界"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Worker 结构化日志脱敏边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"串行数据库测试和质量门"}
+{"file":"tests/integration/settlement/settlement-ledger.test.ts","reason":"M2 结算/流水回归与并发测试基线"}
+{"file":"tests/integration/outbox/outbox-transaction.test.ts","reason":"事务 outbox 回归基线"}

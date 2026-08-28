@@ -76,6 +76,14 @@ For trivial changes, skip formal planning and use proportionate verification.
 - **GO**：Codex 直接提交阶段签署文档和下一阶段执行指令；签署须明确已覆盖范围、未覆盖范围、固定实现 SHA 和独立质量门结果。
 - 未覆盖的验证不得表述为通过；禁止将实现、整改、签署与下一阶段混在同一 Cursor 指令中。
 
+### 分支、归并与提交基线
+
+- 已签署里程碑先在其功能分支上完成最终审核，再以**仅快进**方式归并到本地 `main`，推送并确认 `origin/main` 与本地 `main` 指向同一完整 SHA；未经明确授权不得改写 `main` 历史或强推。
+- 下一里程碑必须从该已同步的 `main` 新建独立 `feat/<milestone>` 分支；不得在上一里程碑分支、未归并 main 或含遗留差异的工作区启动下一阶段。
+- Cursor 的每个实现提交必须聚焦一个获授权阶段，且交接报告固定包含：`branch`、完整 `HEAD` SHA、完整执行基线 SHA、已解决 R-ID/AC-ID、修改文件、原始验证命令摘要和 blocker。没有 Codex GO 不得把“已交审核”表述为完成。
+- Codex 的规划、整改、签署和下一阶段指令必须先提交到当前任务分支；提交信息写明阶段和用途。任务 `task.json` 必须记录目标分支、`base_branch`、固定基线 SHA 与准确状态。
+- 推送前先以 `git status --short --branch` 区分未提交文件与分支相对 main 的累计差异；界面显示的 diff 不是未提交的证明。推送后复核本地与远端完整 SHA；创建下一分支前不得留下未跟踪的上一任务文件。
+
 ## Trellis Workflow
 
 For a substantial feature, a new task, or a resumed implementation task, first use the user-level `trellis-start` skill. Use its task workflow and generated specifications before writing code. For simple questions or trivial edits, use judgment and do not create a Trellis task unless requested.
