@@ -38,4 +38,3 @@ M2 is accepted at the fixed SHAs above. This GO authorizes only the repository w
 - Production deployment and operational rollout were not performed.
 - Outbox Worker and production TOTP remain explicitly outside M2 as recorded in `research/m2-known-risks.md`.
 - No statement in this sign-off approves those boundaries as implemented or verified.
-
