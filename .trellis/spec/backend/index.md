@@ -1,38 +1,27 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
+> Conventions for API routes, domain modules, database access, and server-side logic in BrainDance.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+BrainDance is a TypeScript full-stack Next.js app. Backend code lives in the same repo as the frontend. Route handlers are thin; business logic sits in domain modules under `src/modules/`. PostgreSQL is accessed through Drizzle ORM.
+
+These guidelines describe **current** patterns in the codebase. Match them when adding or changing server-side code.
 
 ---
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| Guide | Description |
+|-------|-------------|
+| [Directory Structure](./directory-structure.md) | Route, module, lib, and db layout |
+| [Database Guidelines](./database-guidelines.md) | Drizzle schema, migrations, transactions, queries |
+| [Error Handling](./error-handling.md) | Domain errors and HTTP mapping |
+| [Logging Guidelines](./logging-guidelines.md) | Current logging posture and boundaries |
+| [Quality Guidelines](./quality-guidelines.md) | Tests, lint, typecheck, build gates |
 
 ---
 
-## How to Fill These Guidelines
-
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+**Language**: All documentation in this directory is written in **English**.

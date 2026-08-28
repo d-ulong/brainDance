@@ -1,39 +1,28 @@
 # Frontend Development Guidelines
 
-> Best practices for frontend development in this project.
+> Conventions for pages, components, client API calls, and UI quality in BrainDance.
 
 ---
 
 ## Overview
 
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
+BrainDance uses Next.js 15 App Router with React 19. Most interactive pages are Client Components (`"use client"`). Styling is Tailwind CSS v4. There is no separate frontend package — UI code lives under `src/app/` and `src/components/`.
+
+These guidelines describe **current** patterns. Match them when adding or changing UI code.
 
 ---
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| Guide | Description |
+|-------|-------------|
+| [Directory Structure](./directory-structure.md) | App Router pages and component folders |
+| [Component Guidelines](./component-guidelines.md) | Component structure, props, styling, a11y |
+| [Hook Guidelines](./hook-guidelines.md) | React hooks usage (no custom hook library yet) |
+| [State Management](./state-management.md) | Local state and data loading patterns |
+| [Type Safety](./type-safety.md) | TypeScript and DTO conventions |
+| [Quality Guidelines](./quality-guidelines.md) | Lint, E2E, accessibility, responsive checks |
 
 ---
 
-## How to Fill These Guidelines
-
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+**Language**: All documentation in this directory is written in **English**.
