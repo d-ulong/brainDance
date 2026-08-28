@@ -569,6 +569,101 @@ describe.skipIf(!hasDb)("formal plan", () => {
     expect(deactivateOutbox).toHaveLength(1);
   });
 
+  it("create transaction persists eligible past pending item as expired (F8)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const deactivated = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-f8-setup",
+      body: { ...DEFAULT_PLAN_BODY, endDate: "2026-01-01" },
+      now: FIXED_NOW,
+    });
+
+    await deactivateFormalPlan(db, {
+      ownerId: parentId,
+      planId: deactivated.planId,
+      idempotencyKey: "deactivate-f8-setup",
+      now: FIXED_NOW,
+    });
+
+    await db.execute(`
+      INSERT INTO schedule_items (
+        plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
+        scheduled_at, status, source, occurrence_key
+      ) VALUES (
+        '${deactivated.planId}', '${deactivated.versionId}', '${studentId}', '${parentId}',
+        '2026-01-01', 'default', '2026-01-01T12:00:00Z', 'pending', 'plan', 'manual-f8-create'
+      )
+    `);
+
+    const [before] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.occurrenceKey, "manual-f8-create"))
+      .limit(1);
+    expect(before?.status).toBe("pending");
+
+    await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-f8-persist",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    const [after] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.occurrenceKey, "manual-f8-create"))
+      .limit(1);
+    expect(after?.status).toBe("expired");
+  });
+
+  it("edit transaction persists eligible past pending item as expired (F8)", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    const created = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "create-f8-edit",
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    await db.execute(`
+      INSERT INTO schedule_items (
+        plan_id, plan_version_id, student_id, owner_id, family_date, slot_key,
+        scheduled_at, status, source, occurrence_key
+      ) VALUES (
+        '${created.planId}', '${created.versionId}', '${studentId}', '${parentId}',
+        '2026-01-01', 'default', '2026-01-01T12:00:00Z', 'pending', 'plan', 'manual-f8-edit'
+      )
+    `);
+
+    const [before] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.occurrenceKey, "manual-f8-edit"))
+      .limit(1);
+    expect(before?.status).toBe("pending");
+
+    await editFormalPlan(db, {
+      ownerId: parentId,
+      planId: created.planId,
+      idempotencyKey: "edit-f8-persist",
+      body: { title: "Edited for F8" },
+      now: FIXED_NOW,
+    });
+
+    const [after] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.occurrenceKey, "manual-f8-edit"))
+      .limit(1);
+    expect(after?.status).toBe("expired");
+  });
+
   it("rejects edit same key with different payload (P3-R02)", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
 

@@ -4,6 +4,7 @@
 > **Active task:** `.trellis/tasks/08-26-m2-schedule-fixed-points-loop`
 > **Target branch:** `feat/m2-schedule-fixed-points-loop`
 > **Execution baseline:** `184d82964281d50e2cab1faaac053b9612cecf6c`
+> **Phase 8 remediation baseline:** `05f2a22ab41c9928665649d3b5ef1253a155ea7d`
 > **Signed product implementation SHA:** `9422c5fb6daf604ffeb6e7c527600f9d7562b391`（Phase 7；Phase 8 无业务/测试变更）
 > **Evidence run date:** 2026-08-28
 > **Evidence author:** Cursor Phase 8 execution
@@ -47,13 +48,14 @@
 | 命令 | Exit | 原始摘要 |
 | --- | --- | --- |
 | `pnpm test:e2e` | 0 | 12 passed（desktop-chromium ×6 + mobile-360 ×6）；含 build；port 3002 clean after exit |
-| `pnpm test` | 0 | Test Files 40 passed (40)；Tests 274 passed (274)；Duration ~246s |
+| `pnpm test` | 0 | Test Files 40 passed (40)；Tests 276 passed (276)；Duration ~246s |
 | `pnpm typecheck` | 0 | `tsc --noEmit` 无报错 |
 | `pnpm lint` | 0 | 0 errors；3 warnings（`playwright.config.ts` `_nodeEnv`；`scripts/run-e2e.mts` `logPortStatus`/`_nodeEnv` — 与 Phase 7 签署一致） |
 | `pnpm format` | 0 | All matched files use Prettier code style!（check only，无变更） |
 | `pnpm build` | 0 | Next.js 15.5.23 production build completed；27 static + dynamic routes |
-| `git diff --check 184d82964281d50e2cab1faaac053b9612cecf6c..HEAD` | 0 | 基线时无 diff；提交前复验 |
-| `git status --short --branch` | — | 基线时 clean；提交前仅授权文档变更 |
+| `git diff --check`（remediation 提交前工作区） | 0 | 无 trailing whitespace/conflict marker |
+| `git diff --check 184d82964281d50e2cab1faaac053b9612cecf6c..HEAD` | 0 | **初包误报**：提交前 HEAD 仍等于 `184d829`，该命令实际检查空 committed diff，不能证明 Phase 8 文档变更。Codex 在固定 SHA `60a094d5e3b3c2ae13ae76278415aefce59221a3` 独立复跑 exit 0（非 Cursor 证据）。Remediation 提交后复跑本命令覆盖 Phase 8 + remediation 全部 committed diff。 |
+| `git status --short --branch` | — | remediation 提交前仅授权文件变更 |
 
 ### E2E 用例明细（12/12）
 
@@ -75,21 +77,21 @@
 | 家族 | 数量 | 主要证据文件 | 证据类型 |
 | --- | --- | --- | --- |
 | AC-M2-1–8 | 8 | `formal-plan.test.ts`、`maintain-horizon.test.ts`、`schedule-generation.test.ts`、`schedule-complete.test.ts`、`settlement-ledger.test.ts`、`schedule-outbox.test.ts`、`m2-schedule-points-flow.spec.ts` | 独立复跑 + Phase 3–7 继承 |
-| F1–F28 | 28 | `schedule-auth.test.ts`、`formal-plan.test.ts`、`schedule-complete.test.ts`、`schedule-skip.test.ts`、`settlement-ledger.test.ts`、`command-idempotency.test.ts`、`maintain-horizon.test.ts`、`plan-end-date.test.ts`、`schedule-query.test.ts`、`write-route-idempotency-header.test.ts`、`schedule-terminal-concurrency.test.ts`、`persist-expired.test.ts`、`m2-schema-constraints.test.ts` | 独立复跑 + Phase 3–5 继承 |
+| F1–F28 including F9b | 29 | `schedule-auth.test.ts`、`formal-plan.test.ts`、`schedule-complete.test.ts`、`schedule-skip.test.ts`、`settlement-ledger.test.ts`、`command-idempotency.test.ts`、`maintain-horizon.test.ts`、`plan-end-date.test.ts`、`schedule-query.test.ts`、`write-route-idempotency-header.test.ts`、`schedule-terminal-concurrency.test.ts`、`persist-expired.test.ts`、`m2-schema-constraints.test.ts` | 独立复跑 + Phase 3–5 继承 |
 | NF-1–NF-8 | 8 | 全量 `pnpm test` + `pnpm test:e2e`；`tests/unit/time-policy/*`；`src/db/migrations/0008–0013`；`git diff --check` | 独立复跑 |
 
 ### 5.1 M1 回归（NF-1）明细
 
 | 类别 | 基线（M1 签署） | 当前（Phase 8 复跑） | 证据 |
 | --- | --- | --- | --- |
-| Vitest M1 域 | 53 tests / 12 files | 含于 274 tests / 40 files 全绿 | `tests/integration/identity/`、`family-access/`、`training/`、`outbox/`、`audit/`；`tests/unit/training/` |
-| E2E M1 | 10/10 | 10/10（12 总量减 M2 2 项） | `home.spec.ts`×2、`m1-browser-flow.spec.ts`×4、`training-flow.spec.ts`×2 |
+| Vitest M1 域 | 53 tests / 12 files | 含于 276 tests / 40 files 全绿 | `tests/integration/identity/`、`family-access/`、`training/`、`outbox/`、`audit/`；`tests/unit/training/` |
+| E2E M1 | 10/10 | 10/10（12 总量减 M2 2 项） | `home.spec.ts` ×4（2 tests ×2 projects）、`m1-browser-flow.spec.ts` ×4（2 tests ×2 projects）、`training-flow.spec.ts` ×2（1 test ×2 projects） |
 
 ## 6. Inherited vs independently rerun
 
 | 证据 | 类型 | 说明 |
 | --- | --- | --- |
-| Phase 1–6 领域/Route 单元断言 | 继承 + 全量 `pnpm test` 复跑 | 274/274 通过，覆盖全部集成/单元文件 |
+| Phase 1–6 领域/Route 单元断言 | 继承 + 全量 `pnpm test` 复跑 | 276/276 通过，覆盖全部集成/单元文件 |
 | Phase 7 E2E desktop/mobile-360 | 继承 + `pnpm test:e2e` 复跑 | 12/12 通过 |
 | Phase 8 质量门 | 独立 | 本节 §4 表格 |
 | Phase 6 人工浏览器抽检 | 被 Phase 7 E2E 替代 | Phase 6 signoff §3 未独立重复 |
@@ -98,7 +100,7 @@
 
 | ID / 边界 | 状态 |
 | --- | --- |
-| 无 | 矩阵 AC-M2-1–8、F1–F28、NF-1–8 均有可定位证据；质量门全通过 |
+| 无 | 矩阵 AC-M2-1–8、F1–F28 including F9b（29 行）、NF-1–8 均有可定位证据；质量门全通过 |
 
 ## 8. Known risks（非 Phase 8 blocker）
 
