@@ -3,7 +3,7 @@
   "name": "m3-ledger-reliability",
   "title": "M3 账本与后台可靠性",
   "description": "M3：人工错误数事实确认/更正、不可变冲销结算、可靠 outbox Worker 与余额投影重建；规划已收敛，等待最终批准。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
