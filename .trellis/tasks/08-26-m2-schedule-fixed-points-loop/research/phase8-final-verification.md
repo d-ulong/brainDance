@@ -5,7 +5,7 @@
 > **Target branch:** `feat/m2-schedule-fixed-points-loop`
 > **Execution baseline:** `184d82964281d50e2cab1faaac053b9612cecf6c`
 > **Phase 8 remediation baseline:** `05f2a22ab41c9928665649d3b5ef1253a155ea7d`
-> **Signed product implementation SHA:** `9422c5fb6daf604ffeb6e7c527600f9d7562b391`（Phase 7；Phase 8 无业务/测试变更）
+> **Signed product implementation SHA:** `9422c5fb6daf604ffeb6e7c527600f9d7562b391`（Phase 7；产品代码未变；Phase 8 remediation 新增两条 F8 集成测试）
 > **Evidence run date:** 2026-08-28
 > **Evidence author:** Cursor Phase 8 execution
 
@@ -17,7 +17,7 @@
 | --- | --- |
 | 已覆盖 | 矩阵全 ID 的可定位测试/命令证据；Phase 1–7 签署 SHA 链；2026-08-28 独立质量门串行复跑 |
 | 未覆盖 | 生产部署、任务归档、最终 M2 GO、交互式浏览器人工抽检（Phase 6 遗留项已由 Phase 7 E2E 替代） |
-| 禁止项遵守 | 未修改应用代码、测试、迁移、配置或历史 phase signoff/remediation 记录 |
+| 禁止项遵守 | 未修改应用代码、迁移、配置、无关测试或历史 phase signoff/remediation 记录；Phase 8 remediation 仅新增两条经授权的 F8 集成测试及验证文档 |
 
 ## 2. Signed implementation SHA chain
 
@@ -30,7 +30,7 @@
 | 5 | Route Handlers + API 测试 | `ca2f4bb644755cc0ac07ee34d4517c207076bcff` | `research/phase5-signoff.md` |
 | 6 | Web UI（计划/日程/积分页） | `352bb0224fdb7f51f798af92dea4ca3d0dfa0789` | `research/phase6-signoff.md` |
 | 7 | desktop + mobile-360 E2E | `9422c5fb6daf604ffeb6e7c527600f9d7562b391` | `research/phase7-signoff.md` |
-| 8 | 最终验证矩阵与证据包（仅文档） | 本提交 SHA | 本文档 + `research/m2-verification-matrix.md` |
+| 8 | 最终验证矩阵、证据包及两条 F8 remediation 集成测试 | `76a2d9189c51db73c5ba0a5df86dcbfb89b80d6e` | 本文档 + `research/m2-verification-matrix.md` + `tests/integration/schedule/formal-plan.test.ts`（F8 create/edit） |
 
 ## 3. Environment assumptions
 
