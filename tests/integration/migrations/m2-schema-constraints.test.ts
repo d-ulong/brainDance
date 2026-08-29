@@ -364,13 +364,12 @@ async function assertMigratedHead(connectionString: string): Promise<void> {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0013_schedule_horizon_maintains");
-    expect(journal.entries.some((entry) => entry.tag.startsWith("0014"))).toBe(false);
+    expect(journal.entries.at(-1)?.tag).toBe("0014_m3_ledger_reliability");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(14);
+    expect((applied[0] as { count: number }).count).toBe(15);
 
     for (const table of M2_TABLES) {
       const rows = await db.execute(sql`
@@ -523,7 +522,6 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       ],
       fact_versions: [
         "id",
-        "schedule_item_id",
         "student_id",
         "fact_key",
         "source_kind",
@@ -609,7 +607,15 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       plan_versions: ["effective_until"],
       schedule_items: ["plan_snapshot"],
       schedule_events: ["completion_kind", "reason"],
-      fact_versions: ["confirmed_at", "confirmed_by", "supersedes_fact_version_id", "voided_at"],
+      fact_versions: [
+        "schedule_item_id",
+        "confirmed_at",
+        "confirmed_by",
+        "submitted_by",
+        "correction_reason",
+        "supersedes_fact_version_id",
+        "voided_at",
+      ],
       point_rule_templates: ["negative_effect_schema", "limits"],
       point_rule_versions: ["priority"],
       point_ledger_entries: ["reverses_entry_id", "created_by"],
@@ -1018,7 +1024,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           'fact-null-item', 'hash', 'on_time', ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
         )
       `,
-      { code: "23502", column: "schedule_item_id" },
+      { code: "23514", constraint: "fact_versions_schedule_item_binding_check" },
     );
 
     await db.execute(sql`

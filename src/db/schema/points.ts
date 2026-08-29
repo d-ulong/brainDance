@@ -21,9 +21,7 @@ export const factVersions = pgTable(
   "fact_versions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    scheduleItemId: uuid("schedule_item_id")
-      .notNull()
-      .references(() => scheduleItems.id),
+    scheduleItemId: uuid("schedule_item_id").references(() => scheduleItems.id),
     studentId: uuid("student_id")
       .notNull()
       .references(() => users.id),
@@ -38,20 +36,46 @@ export const factVersions = pgTable(
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     confirmedBy: uuid("confirmed_by").references(() => users.id),
+    submittedBy: uuid("submitted_by").references(() => users.id),
+    correctionReason: text("correction_reason"),
     supersedesFactVersionId: uuid("supersedes_fact_version_id").references(
       (): AnyPgColumn => factVersions.id,
     ),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
   },
   (table) => [
+    check("fact_versions_source_kind_check", sql`${table.sourceKind} IN ('system', 'manual')`),
     check(
       "fact_versions_completion_kind_check",
-      sql`${table.completionKind} IN ('on_time', 'late')`,
+      sql`(${table.sourceKind} = 'system' AND ${table.completionKind} IN ('on_time', 'late')) OR (${table.sourceKind} = 'manual' AND ${table.completionKind} = 'not_applicable')`,
+    ),
+    check(
+      "fact_versions_schedule_item_binding_check",
+      sql`(${table.sourceKind} IN ('system', 'manual') AND ${table.scheduleItemId} IS NOT NULL) OR (${table.sourceKind} NOT IN ('system', 'manual') AND ${table.scheduleItemId} IS NULL)`,
+    ),
+    check(
+      "fact_versions_confirmation_pair_check",
+      sql`(${table.confirmedAt} IS NULL AND ${table.confirmedBy} IS NULL) OR (${table.confirmedAt} IS NOT NULL AND ${table.confirmedBy} IS NOT NULL)`,
+    ),
+    check(
+      "fact_versions_manual_invariants_check",
+      sql`${table.sourceKind} <> 'manual' OR (${table.scheduleItemId} IS NOT NULL AND ${table.factKey} = 'schedule.error_count' AND ${table.submittedBy} IS NOT NULL AND ${table.completionKind} = 'not_applicable' AND ${table.value} ? 'error_count' AND ((${table.value}->>'error_count') ~ '^[0-9]+$'))`,
+    ),
+    check(
+      "fact_versions_system_invariants_check",
+      sql`${table.sourceKind} <> 'system' OR (${table.scheduleItemId} IS NOT NULL AND ${table.factKey} = 'schedule.completed' AND ${table.completionKind} IN ('on_time', 'late') AND ${table.confirmedAt} IS NULL AND ${table.confirmedBy} IS NULL AND ${table.submittedBy} IS NULL AND ${table.supersedesFactVersionId} IS NULL)`,
+    ),
+    check(
+      "fact_versions_correction_reason_check",
+      sql`${table.supersedesFactVersionId} IS NULL OR ${table.correctionReason} IS NOT NULL`,
     ),
     unique("fact_versions_schedule_item_idempotency_unique").on(
       table.scheduleItemId,
       table.idempotencyKey,
     ),
+    uniqueIndex("fact_versions_supersedes_predecessor_unique")
+      .on(table.supersedesFactVersionId)
+      .where(sql`${table.supersedesFactVersionId} IS NOT NULL`),
   ],
 );
 
@@ -170,8 +194,11 @@ export const pointLedgerEntries = pgTable(
     unique("point_ledger_entries_settlement_id_unique").on(table.settlementId),
     check(
       "point_ledger_entries_source_check",
-      sql`${table.sourceType} = 'settlement' AND ${table.sourceId} = ${table.settlementId}`,
+      sql`(${table.sourceType} = 'settlement' AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL AND ${table.amount} >= 0) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0)`,
     ),
+    uniqueIndex("point_ledger_entries_reversal_idempotency_unique")
+      .on(table.reversesEntryId, table.idempotencyKey)
+      .where(sql`${table.reversesEntryId} IS NOT NULL`),
   ],
 );
 

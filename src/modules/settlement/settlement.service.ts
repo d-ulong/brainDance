@@ -61,6 +61,10 @@ async function loadFactSettlementContext(
     throw new SettlementError("NOT_FOUND", "Fact version not found");
   }
 
+  if (!fact.scheduleItemId) {
+    throw new SettlementError("STATE_CONFLICT", "Fact is not bound to a schedule item");
+  }
+
   const [item] = await tx
     .select()
     .from(scheduleItems)
