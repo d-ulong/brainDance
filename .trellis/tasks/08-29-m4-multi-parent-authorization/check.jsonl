@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"迁移、事务、唯一约束与并发测试规范"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"领域错误和 Route HTTP 映射"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"隔离数据库与串行质量门"}
+{"file":"docs/data-model.md","reason":"授权权威事实、成员派生及撤权不变量"}
+{"file":"tests/integration/family-access/end-relationship.test.ts","reason":"部分解除和撤权的集成验收证据"}
+{"file":"tests/integration/family-access/family-access.test.ts","reason":"关系接受、授权与并发回归证据"}

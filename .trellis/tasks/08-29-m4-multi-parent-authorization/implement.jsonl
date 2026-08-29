@@ -1,0 +1,9 @@
+{"file":"CONTEXT.md","reason":"授权事实源、授权纪元与家庭关系不变量"}
+{"file":"docs/product-scope.md","reason":"多家长、部分解除、配置所有权与无家长状态的产品契约"}
+{"file":"docs/data-model.md","reason":"relationships、memberships 与私密授权的权威数据约束"}
+{"file":"docs/architecture.md","reason":"实时授权、事务 outbox 与撤权边界"}
+{"file":"src/modules/family-access/relationship-request.service.ts","reason":"当前关系接受和家庭归属逻辑"}
+{"file":"src/modules/family-access/end-relationship.service.ts","reason":"当前单关系结束逻辑及待修正范围"}
+{"file":"src/modules/family-access/authorization.service.ts","reason":"已有实时授权接口"}
+{"file":"src/db/schema/family-access.ts","reason":"关系与成员投影 schema"}
+{"file":"tests/integration/family-access/end-relationship.test.ts","reason":"M1 单关系回归与 M4 多关系测试基线"}
