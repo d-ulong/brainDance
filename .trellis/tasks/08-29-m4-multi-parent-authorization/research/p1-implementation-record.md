@@ -2,7 +2,7 @@
 
 > branch: `feat/m4-multi-parent-authorization`
 >
-> execution_baseline: `f69fd87e731e6afef9e7d4fa806ffb50c345f68e`
+> execution_baseline: `9e20c87b71d898641bca4be60255fd2e115279e0`
 >
 > remediation_baseline: `b401fc048b0047bbdc52916969f1b20fa69b6c55` (Codex NO-GO review)
 
@@ -29,17 +29,15 @@
 - New `tests/integration/api/m4-routes.test.ts`: real HTTP `POST /api/relationships/[id]/end` + `GET /api/family/students/[studentId]/profile` — 403 for ended student (no profile leak), 200 for remaining student.
 - Service-level per plan/rule audit + outbox count + idempotent replay + worker processed status in `multi-parent-authorization.test.ts`.
 
-### P1-R05 — quality gate command summary (serial, 2026-08-30)
+### P1-R05 — quality gate command summary (serial, 2026-08-30 P1 DB verification)
+
+**Database isolation:** `DATABASE_URL=postgresql://braindance:braindance@localhost:5432/braindance` (`.env.local`); Docker container `braindance-postgres` (`postgres:16-alpine`, `docker compose`, localhost:5432). Local dev/test DB only — not production or shared business DB. No concurrent test runners observed.
 
 | Command | Exit | Summary |
 | --- | --- | --- |
-| `pnpm db:migrate` | 1 | `DrizzleQueryError`: `CREATE SCHEMA IF NOT EXISTS "drizzle"` → `AggregateError ECONNREFUSED` (::1:5432, 127.0.0.1:5432). Docker Desktop daemon not running; `docker compose up -d` failed (`dockerDesktopLinuxEngine` pipe missing). |
-| `pnpm test` | 1 | Not executed (blocked): `tests/global-setup.ts` → `migrateTestDb()` same `ECONNREFUSED`. No files/tests/skip counts available. |
-| `pnpm typecheck` | 0 | `tsc --noEmit` clean. |
-| `pnpm lint` | 0 | 0 errors, 3 pre-existing warnings (`playwright.config.ts` `_nodeEnv`; `scripts/run-e2e.mts` `logPortStatus`, `_nodeEnv`). |
-| `pnpm format` | 0 | `prettier --check .` — All matched files use Prettier code style. |
-| `pnpm build` | 0 | `next build` compiled successfully; static pages generated. |
-| `pnpm test:e2e` | 1 | Not executed (blocked): e2e runner requires app + DB; same Postgres unavailable (`ECONNREFUSED`). |
+| `pnpm db:migrate` | 0 | Migrations complete (schema `drizzle` and `__drizzle_migrations` already exist; no pending migrations). |
+| `pnpm test` | 1 | **Test Files** 4 failed \| 44 passed (48). **Tests** 6 failed \| 342 passed (348). Duration 318.58s. Failures: (1) `m4-routes.test.ts` P1-R04 — `expected 401 to be 403`; (2) `multi-parent-authorization.test.ts` P1-R02 concurrent end — `expected false to be true`; (3) `multi-parent-authorization.test.ts` P1-R04 outbox worker — `expected 'pending' to be 'processed'`; (4–5) `m2-schema-constraints.test.ts` ×2 — journal head `0018_m4_multi_parent_authorization` vs expected `0017_m3_reversal_settlement_semantics`; (6) `m3-schema-constraints.test.ts` P1-01 — same journal head mismatch. |
+| `pnpm test:e2e` | — | Not executed (blocked by `pnpm test` failure). |
 
 ## Acceptance matrix (post-remediation)
 
@@ -50,7 +48,7 @@
 | AC-M4-3 | AC-M4-3 + P1-R04 audit/outbox per plan/rule | worker processed |
 | AC-M4-4 | — | P2; not claimed |
 | AC-M4-5 | AC-M4-5 + P1-R03 worker tests | idempotent + worker delivery |
-| DB constraints | `m4-schema-constraints.test.ts` | not re-run (DB unavailable) |
+| DB constraints | `m4-schema-constraints.test.ts` | re-run with DB; see P1-R05 test summary for m2/m3 head assertions |
 
 ## Worker events (P1-R03)
 
@@ -70,7 +68,7 @@
 
 ## Blockers
 
-- **Postgres unavailable locally**: Docker Desktop not running; all DB-backed verification blocked until `docker compose up -d` (or equivalent) succeeds and quality gates re-run serially.
+- **`pnpm test` exit 1** (6 failures in 4 files): P1-R02 concurrent end membership convergence; P1-R04 route 403 vs 401 and outbox `pending` vs `processed`; m2/m3 schema-constraint tests expect journal head `0017` but repo head is `0018_m4_multi_parent_authorization`. `pnpm test:e2e` not run.
 - `redemption_catalog_items` deactivation deferred (P2+; module absent).
 
 ## Changed files (P1 consolidated remediation)
