@@ -227,13 +227,56 @@ async function loadPendingRequestForStudent(db: Database, studentId: string, req
   return request;
 }
 
-async function resolveFamilyIdForAcceptance(tx: Database, studentId: string): Promise<string> {
-  const activeRelationships = await tx
+function resolveSingleActiveFamilyId(
+  rows: { familyId: string }[],
+  subject: "parent" | "student",
+): string | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const familyId = rows[0]!.familyId;
+  const mixedFamily = rows.some((row) => row.familyId !== familyId);
+  if (mixedFamily) {
+    throw new FamilyAccessError(
+      "STUDENT_ALREADY_HAS_FAMILY",
+      subject === "student"
+        ? "Student has conflicting active families"
+        : "Parent has conflicting active families",
+    );
+  }
+
+  return familyId;
+}
+
+async function lockUsersInOrder(tx: Database, userIds: string[]) {
+  const ordered = [...new Set(userIds)].sort();
+  for (const userId of ordered) {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+  }
+}
+
+async function resolveFamilyIdForAcceptance(
+  tx: Database,
+  parentId: string,
+  studentId: string,
+): Promise<string> {
+  await lockUsersInOrder(tx, [parentId, studentId]);
+
+  const studentRelationships = await tx
     .select({ familyId: relationships.familyId })
     .from(relationships)
     .where(and(eq(relationships.studentId, studentId), eq(relationships.status, "active")));
 
-  if (activeRelationships.length === 0) {
+  const parentRelationships = await tx
+    .select({ familyId: relationships.familyId })
+    .from(relationships)
+    .where(and(eq(relationships.parentId, parentId), eq(relationships.status, "active")));
+
+  const studentFamilyId = resolveSingleActiveFamilyId(studentRelationships, "student");
+  const parentFamilyId = resolveSingleActiveFamilyId(parentRelationships, "parent");
+
+  if (studentFamilyId === null && parentFamilyId === null) {
     const [family] = await tx
       .insert(families)
       .values({ timezone: FAMILY_TIMEZONE })
@@ -244,16 +287,22 @@ async function resolveFamilyIdForAcceptance(tx: Database, studentId: string): Pr
     return family.id;
   }
 
-  const familyId = activeRelationships[0]!.familyId;
-  const mixedFamily = activeRelationships.some((row) => row.familyId !== familyId);
-  if (mixedFamily) {
-    throw new FamilyAccessError(
-      "STUDENT_ALREADY_HAS_FAMILY",
-      "Student has conflicting active families",
-    );
+  if (studentFamilyId !== null && parentFamilyId === null) {
+    return studentFamilyId;
   }
 
-  return familyId;
+  if (studentFamilyId === null && parentFamilyId !== null) {
+    return parentFamilyId;
+  }
+
+  if (studentFamilyId === parentFamilyId) {
+    return studentFamilyId!;
+  }
+
+  throw new FamilyAccessError(
+    "STUDENT_ALREADY_HAS_FAMILY",
+    "Parent and student belong to different active families",
+  );
 }
 
 async function incrementAuthorizationEpoch(tx: Database, userId: string) {
@@ -350,10 +399,8 @@ export async function acceptRelationshipRequest(
 
     await assertNoActiveRelationshipPair(tx, request.parentId, request.studentId);
 
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${request.studentId} FOR UPDATE`);
-
     const acceptedAt = new Date();
-    const familyId = await resolveFamilyIdForAcceptance(tx, request.studentId);
+    const familyId = await resolveFamilyIdForAcceptance(tx, request.parentId, request.studentId);
 
     const [relationship] = await tx
       .insert(relationships)

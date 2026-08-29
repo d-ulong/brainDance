@@ -65,6 +65,8 @@ export async function reconcileMembershipAfterRelationshipEnd(
     endedAt: Date;
   },
 ): Promise<void> {
+  await tx.execute(sql`SELECT id FROM users WHERE id = ${input.userId} FOR UPDATE`);
+
   const remaining = await countActiveRelationshipsInFamilyForUser(tx, input.familyId, input.userId);
 
   if (remaining > 0) {

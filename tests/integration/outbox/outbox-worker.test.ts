@@ -477,6 +477,57 @@ describe.skipIf(!hasDb)("m3 outbox worker", () => {
     expect(replayAttempts).toHaveLength(1);
   });
 
+  it("P1-R03-01 processes relationship.ended as supported noop", async () => {
+    const eventId = await appendOutboxEvent(db, {
+      aggregateType: "relationship",
+      aggregateId: crypto.randomUUID(),
+      eventType: "relationship.ended",
+      dedupeKey: `dedupe-rel-ended-${crypto.randomUUID()}`,
+      payload: { relationshipId: crypto.randomUUID() },
+    });
+
+    const result = await processNextOutboxEvent(db, { workerId: "worker-rel-ended" });
+    expect(result.processed).toBe(true);
+    expect(result.noOp).toBe(true);
+
+    const [event] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, eventId));
+    expect(event?.status).toBe("processed");
+  });
+
+  it("P1-R03-02 processes plan.deactivated as supported noop", async () => {
+    const eventId = await appendOutboxEvent(db, {
+      aggregateType: "plan",
+      aggregateId: crypto.randomUUID(),
+      eventType: "plan.deactivated",
+      dedupeKey: `dedupe-plan-deactivated-${crypto.randomUUID()}`,
+      payload: { planId: crypto.randomUUID() },
+    });
+
+    const result = await processNextOutboxEvent(db, { workerId: "worker-plan-deactivated" });
+    expect(result.processed).toBe(true);
+    expect(result.noOp).toBe(true);
+
+    const [event] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, eventId));
+    expect(event?.status).toBe("processed");
+  });
+
+  it("P1-R03-03 processes point_rule.deactivated as supported noop", async () => {
+    const eventId = await appendOutboxEvent(db, {
+      aggregateType: "point_rule",
+      aggregateId: crypto.randomUUID(),
+      eventType: "point_rule.deactivated",
+      dedupeKey: `dedupe-rule-deactivated-${crypto.randomUUID()}`,
+      payload: { ruleId: crypto.randomUUID() },
+    });
+
+    const result = await processNextOutboxEvent(db, { workerId: "worker-rule-deactivated" });
+    expect(result.processed).toBe(true);
+    expect(result.noOp).toBe(true);
+
+    const [event] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, eventId));
+    expect(event?.status).toBe("processed");
+  });
+
   it("R05-01 failure backoff uses absolute available_at and max-attempt boundary", async () => {
     const now = new Date("2026-03-01T00:00:00.000Z");
     const eventId = await appendOutboxEvent(db, {
