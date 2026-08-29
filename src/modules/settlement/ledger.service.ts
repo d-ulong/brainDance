@@ -89,6 +89,7 @@ export type AppendLedgerResult = {
 
 export type AppendLedgerTestHooks = {
   beforeLedgerInsert?: () => Promise<void>;
+  beforeProjectionUpsert?: () => Promise<void>;
 };
 
 function buildLedgerExplanation(completionKind: "on_time" | "late"): string {
@@ -144,13 +145,17 @@ export async function appendLedgerForSettlement(
     .returning({ id: pointLedgerEntries.id });
 
   if (inserted) {
-    await upsertBalanceFromLedgerEntry(tx, {
-      studentId: input.studentId,
-      ledgerEntryId: inserted.id,
-      amount: input.amount,
-      createdAt: now,
-      now,
-    });
+    await upsertBalanceFromLedgerEntry(
+      tx,
+      {
+        studentId: input.studentId,
+        ledgerEntryId: inserted.id,
+        amount: input.amount,
+        createdAt: now,
+        now,
+      },
+      { testHooks: options?.testHooks },
+    );
 
     await appendAuditEvent(tx, {
       action: "point_ledger.created",
@@ -194,8 +199,15 @@ export async function upsertBalanceFromLedgerEntry(
     createdAt: Date;
     now?: Date;
   },
+  options?: { testHooks?: Pick<AppendLedgerTestHooks, "beforeProjectionUpsert"> },
 ): Promise<void> {
   const now = input.now ?? new Date();
+
+  if (options?.testHooks?.beforeProjectionUpsert) {
+    await options.testHooks.beforeProjectionUpsert();
+  }
+
+  await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
 
   const [currentProjection] = await tx
     .select({

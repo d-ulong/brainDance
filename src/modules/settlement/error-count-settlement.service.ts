@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { factVersions, plans, pointLedgerEntries, scheduleItems, settlements } from "@/db/schema";
+import { addFamilyDays } from "@/modules/time-policy/add-family-days";
 import { FactsError } from "@/modules/facts/errors";
 import { SettlementError } from "@/modules/settlement/errors";
 import {
@@ -80,6 +81,29 @@ function resolveErrorCountRewardAmount(
     return effect.amount;
   }
   return 0;
+}
+
+async function resolveDistinctReversalSettlementPeriod(
+  tx: Database,
+  factVersionId: string,
+  requestedPeriod: string,
+): Promise<string> {
+  const existing = await tx
+    .select({ settlementPeriod: settlements.settlementPeriod })
+    .from(settlements)
+    .where(eq(settlements.factVersionId, factVersionId));
+
+  const usedPeriods = new Set(existing.map((row) => row.settlementPeriod));
+  if (!usedPeriods.has(requestedPeriod)) {
+    return requestedPeriod;
+  }
+
+  let candidate = requestedPeriod;
+  while (usedPeriods.has(candidate)) {
+    candidate = addFamilyDays(candidate, 1);
+  }
+
+  return candidate;
 }
 
 async function findExistingSettlement(
@@ -249,13 +273,19 @@ export async function reverseLedgerEntriesForFact(
       throw new SettlementError("STATE_CONFLICT", "Original settlement missing for reversal");
     }
 
+    const settlementPeriod = await resolveDistinctReversalSettlementPeriod(
+      tx,
+      input.factVersionId,
+      input.reversalSettlementPeriod,
+    );
+
     const [insertedSettlement] = await tx
       .insert(settlements)
       .values({
         studentId: input.studentId,
         factVersionId: input.factVersionId,
         ruleVersionId: originalSettlement.ruleVersionId,
-        settlementPeriod: input.reversalSettlementPeriod,
+        settlementPeriod,
         result: "reward",
         explanation: `Reversal settlement for ledger entry ${entry.id}`,
         idempotencyKey: reversalKey,
@@ -275,7 +305,7 @@ export async function reverseLedgerEntriesForFact(
         await findExistingSettlement(tx, {
           factVersionId: input.factVersionId,
           ruleVersionId: originalSettlement.ruleVersionId,
-          settlementPeriod: input.reversalSettlementPeriod,
+          settlementPeriod,
         })
       ).id;
 

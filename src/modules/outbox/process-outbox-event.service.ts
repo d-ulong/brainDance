@@ -37,17 +37,29 @@ export async function claimNextOutboxEvent(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    const rows = await tx.execute(sql`
-      SELECT id, event_type, event_version, payload, attempts, aggregate_type, aggregate_id
-      FROM outbox_events
-      WHERE (
-        (status = 'pending' AND available_at <= now())
-        OR (status = 'leased' AND leased_until <= now())
-      )
-      ORDER BY available_at
-      FOR UPDATE SKIP LOCKED
-      LIMIT 1
-    `);
+    const rows = input.now
+      ? await tx.execute(sql`
+          SELECT id, event_type, event_version, payload, attempts, aggregate_type, aggregate_id
+          FROM outbox_events
+          WHERE (
+            (status = 'pending' AND available_at <= ${now.toISOString()}::timestamptz)
+            OR (status = 'leased' AND leased_until <= ${now.toISOString()}::timestamptz)
+          )
+          ORDER BY available_at
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        `)
+      : await tx.execute(sql`
+          SELECT id, event_type, event_version, payload, attempts, aggregate_type, aggregate_id
+          FROM outbox_events
+          WHERE (
+            (status = 'pending' AND available_at <= now())
+            OR (status = 'leased' AND leased_until <= now())
+          )
+          ORDER BY available_at
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        `);
 
     if (rows.length === 0) {
       return null;

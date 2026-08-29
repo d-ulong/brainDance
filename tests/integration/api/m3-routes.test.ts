@@ -335,6 +335,68 @@ describe.skipIf(!hasDb)("m3 api routes", () => {
     expect(response.status).toBe(400);
   });
 
+  it("F-R01 POST correct admin security returns 200 with successor reversal audit outbox", async () => {
+    const { factId } = await seedConfirmedFact();
+    const admin = await bootstrapAdmin(db);
+    withSessionCookie(admin.session);
+
+    const response = await correctFactRoute(
+      new Request(`http://localhost/api/facts/${factId}/correct`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": "admin-correct-security",
+        },
+        body: JSON.stringify({
+          errorCount: 2,
+          reason: "security fix",
+          adminReason: "security",
+        }),
+      }),
+      { params: Promise.resolve({ factId }) },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.successorFactId).toBeTruthy();
+    expect(payload.reversalLedgerEntryIds?.length).toBeGreaterThan(0);
+
+    const auditRows = await db.select().from(auditEvents);
+    expect(auditRows.some((row) => row.action === "fact.corrected.admin")).toBe(true);
+
+    const outboxRows = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.eventType, "fact.corrected"));
+    expect(outboxRows.some((row) => row.aggregateId === payload.successorFactId)).toBe(true);
+  });
+
+  it("F-R01 POST correct admin data_correction returns 200", async () => {
+    const { factId } = await seedConfirmedFact();
+    const admin = await bootstrapAdmin(db);
+    withSessionCookie(admin.session);
+
+    const response = await correctFactRoute(
+      new Request(`http://localhost/api/facts/${factId}/correct`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": "admin-correct-data",
+        },
+        body: JSON.stringify({
+          errorCount: 0,
+          reason: "data fix",
+          adminReason: "data_correction",
+        }),
+      }),
+      { params: Promise.resolve({ factId }) },
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.successorFactId).toBeTruthy();
+  });
+
   it("POST correct with adminReason returns 403 for parent session", async () => {
     const { linked, factId } = await seedConfirmedFact();
     withSessionCookie(linked.parentSession);

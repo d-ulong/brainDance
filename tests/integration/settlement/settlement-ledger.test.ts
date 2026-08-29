@@ -21,7 +21,12 @@ import { completeScheduleItem } from "@/modules/schedule/complete-schedule.servi
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { ScheduleError } from "@/modules/schedule/errors";
-import { appendLedgerForSettlement } from "@/modules/settlement/ledger.service";
+import {
+  appendLedgerForSettlement,
+  upsertBalanceFromLedgerEntry,
+} from "@/modules/settlement/ledger.service";
+import { rebuildProjection } from "@/modules/projection/rebuild-projection.service";
+import { resolveLastLedgerEntryForStudent } from "@/modules/settlement/ledger-order";
 import { enablePointRule } from "@/modules/settlement/point-rule.service";
 import { settleForFact } from "@/modules/settlement/settlement.service";
 import { SettlementError } from "@/modules/settlement/errors";
@@ -615,6 +620,95 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
       .where(eq(outboxEvents.eventType, "points.settled"));
     expect(settledOutbox).toHaveLength(1);
     expect(settledOutbox[0]?.dedupeKey).toBe(`points.settled:${completed.settlementId}`);
+  });
+
+  it("F-R02 concurrent projection upsert preserves total order with out-of-order createdAt", async () => {
+    const { studentId, items } = await seedPlanWithRule();
+    const itemA = items.find((row) => row.familyDate === "2026-01-15");
+    const itemB = items.find((row) => row.familyDate === "2026-01-16");
+    if (!itemA || !itemB) throw new Error("Expected two schedule items");
+
+    const earlierCreatedAt = new Date("2026-01-15T08:00:00.000Z");
+    const laterCreatedAt = new Date("2026-01-16T08:00:00.000Z");
+
+    const completedA = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: itemA.id,
+      idempotencyKey: "projection-order-a",
+      now: earlierCreatedAt,
+    });
+    const completedB = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: itemB.id,
+      idempotencyKey: "projection-order-b",
+      now: laterCreatedAt,
+    });
+
+    const [ledgerA] = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.settlementId, completedA.settlementId));
+    const [ledgerB] = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.settlementId, completedB.settlementId));
+    if (!ledgerA || !ledgerB) throw new Error("Expected ledger entries");
+
+    await db
+      .update(pointLedgerEntries)
+      .set({ createdAt: earlierCreatedAt })
+      .where(eq(pointLedgerEntries.id, ledgerA.id));
+    await db
+      .update(pointLedgerEntries)
+      .set({ createdAt: laterCreatedAt })
+      .where(eq(pointLedgerEntries.id, ledgerB.id));
+
+    await db.delete(pointBalanceProjection).where(eq(pointBalanceProjection.studentId, studentId));
+
+    const barrier = createConcurrentBarrier(2);
+
+    const laterWriter = withIndependentTransaction((tx) =>
+      upsertBalanceFromLedgerEntry(
+        tx,
+        {
+          studentId,
+          ledgerEntryId: ledgerB.id,
+          amount: ledgerB.amount,
+          createdAt: laterCreatedAt,
+          now: laterCreatedAt,
+        },
+        { testHooks: { beforeProjectionUpsert: () => barrier.wait() } },
+      ),
+    );
+    const earlierWriter = withIndependentTransaction((tx) =>
+      upsertBalanceFromLedgerEntry(
+        tx,
+        {
+          studentId,
+          ledgerEntryId: ledgerA.id,
+          amount: ledgerA.amount,
+          createdAt: earlierCreatedAt,
+          now: earlierCreatedAt,
+        },
+        { testHooks: { beforeProjectionUpsert: () => barrier.wait() } },
+      ),
+    );
+
+    const writers = Promise.all([laterWriter, earlierWriter]);
+    await barrier.waitAllReady();
+    barrier.release();
+    await writers;
+
+    const [balance] = await db
+      .select()
+      .from(pointBalanceProjection)
+      .where(eq(pointBalanceProjection.studentId, studentId));
+    expect(balance?.balance).toBe(ledgerA.amount + ledgerB.amount);
+    expect(balance?.lastLedgerEntryId).toBe(ledgerB.id);
+
+    await rebuildProjection(db, { studentId });
+    const rebuilt = await resolveLastLedgerEntryForStudent(db, studentId);
+    expect(rebuilt).toEqual({ id: ledgerB.id, balance: ledgerA.amount + ledgerB.amount });
   });
 
   it("rejects settleForFact when fact is missing (P4-R3-02)", async () => {

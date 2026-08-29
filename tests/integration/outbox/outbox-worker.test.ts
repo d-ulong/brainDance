@@ -252,6 +252,11 @@ describe.skipIf(!hasDb)("m3 outbox worker", () => {
     });
 
     const claimNow = new Date("2026-01-01T00:01:00.000Z");
+    await db
+      .update(outboxEvents)
+      .set({ availableAt: claimNow })
+      .where(eq(outboxEvents.id, eventId2));
+
     const claimed = await claimNextOutboxEvent(db, {
       workerId: "worker-expired",
       now: claimNow,
@@ -298,6 +303,57 @@ describe.skipIf(!hasDb)("m3 outbox worker", () => {
       .from(outboxEvents)
       .where(eq(outboxEvents.id, eventId2));
     expect(processedSecond?.status).toBe("processed");
+  });
+
+  it("F-R03 claim eligibility uses injected now for lease expiry boundary", async () => {
+    const claimNow = new Date("2026-04-01T10:00:00.000Z");
+    const boundaryNow = new Date("2026-04-01T11:00:00.000Z");
+
+    const eventId = await appendOutboxEvent(db, {
+      aggregateType: "fact",
+      aggregateId: crypto.randomUUID(),
+      eventType: "fact.confirmed",
+      dedupeKey: `dedupe-lease-boundary-${crypto.randomUUID()}`,
+      payload: { studentId: crypto.randomUUID(), ledgerEntryId: crypto.randomUUID() },
+    });
+
+    await db
+      .update(outboxEvents)
+      .set({ availableAt: claimNow })
+      .where(eq(outboxEvents.id, eventId));
+
+    const claimed = await claimNextOutboxEvent(db, { workerId: "worker-boundary", now: claimNow });
+    expect(claimed?.eventId).toBe(eventId);
+
+    await db
+      .update(outboxEvents)
+      .set({
+        status: "leased",
+        leasedUntil: new Date(boundaryNow.getTime() - 1),
+      })
+      .where(eq(outboxEvents.id, eventId));
+
+    const reclaimed = await claimNextOutboxEvent(db, {
+      workerId: "worker-boundary-reclaim",
+      now: boundaryNow,
+    });
+    expect(reclaimed?.eventId).toBe(eventId);
+
+    await db
+      .update(outboxEvents)
+      .set({
+        status: "leased",
+        leasedUntil: new Date(boundaryNow.getTime() + 1),
+        leaseToken: reclaimed!.leaseToken,
+        leaseOwner: "worker-boundary-reclaim",
+      })
+      .where(eq(outboxEvents.id, eventId));
+
+    const blocked = await claimNextOutboxEvent(db, {
+      workerId: "worker-boundary-blocked",
+      now: boundaryNow,
+    });
+    expect(blocked).toBeNull();
   });
 
   it("R04-01 replay uses monotonic attempt sequence and idempotency key", async () => {
@@ -430,6 +486,8 @@ describe.skipIf(!hasDb)("m3 outbox worker", () => {
       dedupeKey: `dedupe-backoff-${crypto.randomUUID()}`,
       payload: {},
     });
+
+    await db.update(outboxEvents).set({ availableAt: now }).where(eq(outboxEvents.id, eventId));
 
     await processNextOutboxEvent(db, { workerId: "worker-backoff", now });
 
