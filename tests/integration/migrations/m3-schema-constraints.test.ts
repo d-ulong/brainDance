@@ -324,12 +324,15 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0017_m3_reversal_settlement_semantics");
+    const tags = journal.entries.map((entry) => entry.tag);
+    expect(tags).toContain("0014_m3_ledger_reliability");
+    expect(tags).toContain("0017_m3_reversal_settlement_semantics");
+    expect(tags.at(-1)).toBe("0018_m4_multi_parent_authorization");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(18);
+    expect((applied[0] as { count: number }).count).toBe(journal.entries.length);
 
     const workerTable = await db.execute(sql`
       SELECT 1 FROM information_schema.tables

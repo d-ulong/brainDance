@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import "./helpers/auth-mock";
-import { clearMockSessionCookie } from "./helpers/auth-mock";
+import { clearMockSessionCookie, setMockSessionCookie } from "./helpers/auth-mock";
 import { withSessionCookie } from "./helpers/session";
 import { GET as getStudentProfileRoute } from "@/app/api/family/students/[studentId]/profile/route";
 import { POST as endRelationshipRoute } from "@/app/api/relationships/[relationshipId]/end/route";
@@ -83,6 +83,16 @@ describe.skipIf(!hasDb)("m4 api routes", () => {
       { params: Promise.resolve({ relationshipId: rel1.relationshipId }) },
     );
     expect(endResponse.status).toBe(200);
+
+    const staleCookieResponse = await getStudentProfileRoute(new Request("http://localhost/"), {
+      params: Promise.resolve({ studentId: student1.studentId }),
+    });
+    expect(staleCookieResponse.status).toBe(401);
+
+    const setCookieHeader = endResponse.headers.get("set-cookie");
+    expect(setCookieHeader).toBeTruthy();
+    const refreshedCookie = setCookieHeader!.split(";")[0]!.split("=").slice(1).join("=");
+    setMockSessionCookie(refreshedCookie);
 
     const forbiddenResponse = await getStudentProfileRoute(new Request("http://localhost/"), {
       params: Promise.resolve({ studentId: student1.studentId }),

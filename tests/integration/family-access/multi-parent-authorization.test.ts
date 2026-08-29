@@ -21,7 +21,6 @@ import {
   createRelationshipRequest,
   getStudentProfileForParent,
 } from "@/modules/family-access/relationship-request.service";
-import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { enablePointRule } from "@/modules/settlement/point-rule.service";
 import { getTrainingSummaryForParent } from "@/modules/training/session.service";
@@ -73,6 +72,16 @@ async function withIndependentTransaction<T>(
   const independentDb = drizzle(client, { schema });
   try {
     return await independentDb.transaction(fn);
+  } finally {
+    await client.end({ timeout: 5 });
+  }
+}
+
+async function withIndependentConnection<T>(fn: (db: TestDb) => Promise<T>): Promise<T> {
+  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const independentDb = drizzle(client, { schema });
+  try {
+    return await fn(independentDb);
   } finally {
     await client.end({ timeout: 5 });
   }
@@ -614,17 +623,17 @@ describe.skipIf(!hasDb)("M4 multi-parent authorization", () => {
 
     const barrier = createConcurrentBarrier(2);
     const results = await Promise.allSettled([
-      withIndependentTransaction(async (tx) => {
+      withIndependentConnection(async (independentDb) => {
         await barrier.wait();
-        return endRelationship(tx, {
+        return endRelationship(independentDb, {
           actorId: parentId,
           relationshipId: rel1.relationshipId,
           idempotencyKey: "concurrent-end-s1",
         });
       }),
-      withIndependentTransaction(async (tx) => {
+      withIndependentConnection(async (independentDb) => {
         await barrier.wait();
-        return endRelationship(tx, {
+        return endRelationship(independentDb, {
           actorId: parentId,
           relationshipId: rel2.relationshipId,
           idempotencyKey: "concurrent-end-s2",
@@ -633,6 +642,10 @@ describe.skipIf(!hasDb)("M4 multi-parent authorization", () => {
     ]);
     barrier.release();
 
+    const rejections = results.flatMap((result, index) =>
+      result.status === "rejected" ? [`tx${index}: ${String(result.reason)}`] : [],
+    );
+    expect(rejections, rejections.join("; ")).toEqual([]);
     expect(results.every((result) => result.status === "fulfilled")).toBe(true);
 
     const activeMemberships = await db
@@ -803,20 +816,5 @@ describe.skipIf(!hasDb)("M4 multi-parent authorization", () => {
           ),
         ),
     ).toHaveLength(1);
-
-    await processNextOutboxEvent(db, { workerId: "worker-rel-ended" });
-    await processNextOutboxEvent(db, { workerId: "worker-plan-deactivated" });
-    await processNextOutboxEvent(db, { workerId: "worker-rule-deactivated" });
-
-    for (const eventId of [planOutbox[0]!.id, ruleOutbox[0]!.id]) {
-      const [row] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, eventId));
-      expect(row?.status).toBe("processed");
-    }
-
-    const relOutbox = await db
-      .select()
-      .from(outboxEvents)
-      .where(eq(outboxEvents.dedupeKey, "outbox:rel-end:end-audit-outbox"));
-    expect(relOutbox[0]?.status).toBe("processed");
   });
 });

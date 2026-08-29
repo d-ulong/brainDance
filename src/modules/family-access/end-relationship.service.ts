@@ -21,19 +21,26 @@ export type EndRelationshipResult = {
   idempotentReplay: boolean;
 };
 
-async function incrementAuthorizationEpoch(tx: Database, userId: string) {
-  const [user] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) {
-    throw new FamilyAccessError("USER_NOT_FOUND", "User not found");
+async function lockUsersInOrder(tx: Database, userIds: string[]) {
+  const ordered = [...new Set(userIds)].sort();
+  for (const userId of ordered) {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
   }
+}
 
-  await tx
+async function incrementAuthorizationEpoch(tx: Database, userId: string) {
+  const [updated] = await tx
     .update(users)
     .set({
-      authorizationEpoch: user.authorizationEpoch + 1,
+      authorizationEpoch: sql`${users.authorizationEpoch} + 1`,
       updatedAt: new Date(),
     })
-    .where(eq(users.id, userId));
+    .where(eq(users.id, userId))
+    .returning({ id: users.id });
+
+  if (!updated) {
+    throw new FamilyAccessError("USER_NOT_FOUND", "User not found");
+  }
 }
 
 async function findEndedReplay(
@@ -105,7 +112,10 @@ export async function endRelationship(
       );
     }
 
+    await lockUsersInOrder(tx, [relationship.parentId, relationship.studentId]);
+
     const endedAt = new Date();
+    const memberUserIds = [relationship.parentId, relationship.studentId].sort();
 
     await tx
       .update(relationships)
@@ -116,16 +126,13 @@ export async function endRelationship(
       })
       .where(eq(relationships.id, input.relationshipId));
 
-    await reconcileMembershipAfterRelationshipEnd(tx, {
-      familyId: relationship.familyId,
-      userId: relationship.parentId,
-      endedAt,
-    });
-    await reconcileMembershipAfterRelationshipEnd(tx, {
-      familyId: relationship.familyId,
-      userId: relationship.studentId,
-      endedAt,
-    });
+    for (const userId of memberUserIds) {
+      await reconcileMembershipAfterRelationshipEnd(tx, {
+        familyId: relationship.familyId,
+        userId,
+        endedAt,
+      });
+    }
 
     await deactivateCreatorConfigsOnRelationshipEnd(tx, {
       parentId: relationship.parentId,
@@ -136,8 +143,9 @@ export async function endRelationship(
       requestId: input.requestId,
     });
 
-    await incrementAuthorizationEpoch(tx, relationship.parentId);
-    await incrementAuthorizationEpoch(tx, relationship.studentId);
+    for (const userId of memberUserIds) {
+      await incrementAuthorizationEpoch(tx, userId);
+    }
 
     await appendAuditEvent(tx, {
       actorId: input.actorId,
