@@ -43,9 +43,13 @@ export const outboxEvents = pgTable(
       "outbox_events_lease_fields_check",
       sql`${table.status} <> 'leased' OR (${table.leasedUntil} IS NOT NULL AND ${table.leaseToken} IS NOT NULL AND ${table.leaseOwner} IS NOT NULL)`,
     ),
-    index("outbox_events_claim_eligible_idx")
+    check("outbox_events_attempts_nonneg_check", sql`${table.attempts} >= 0`),
+    index("outbox_events_claim_pending_idx")
       .on(table.availableAt)
-      .where(sql`${table.status} IN ('pending', 'leased')`),
+      .where(sql`${table.status} = 'pending'`),
+    index("outbox_events_claim_expired_lease_idx")
+      .on(table.leasedUntil)
+      .where(sql`${table.status} = 'leased'`),
     index("outbox_events_dead_list_idx")
       .on(table.createdAt)
       .where(sql`${table.status} = 'dead'`),
@@ -73,6 +77,11 @@ export const workerAttempts = pgTable(
     check(
       "worker_attempts_outcome_check",
       sql`${table.outcome} IN ('success', 'failure', 'leased', 'replayed')`,
+    ),
+    check("worker_attempts_attempt_number_positive_check", sql`${table.attemptNumber} > 0`),
+    check(
+      "worker_attempts_outcome_fields_check",
+      sql`(${table.outcome} IN ('success', 'failure') AND ${table.finishedAt} IS NOT NULL) OR (${table.outcome} = 'leased' AND ${table.finishedAt} IS NULL) OR (${table.outcome} = 'replayed' AND ${table.finishedAt} IS NOT NULL AND ${table.replayActorId} IS NOT NULL AND ${table.replayReason} IS NOT NULL)`,
     ),
     index("worker_attempts_outbox_event_idx").on(table.outboxEventId),
   ],

@@ -191,3 +191,155 @@ export async function appendLedgerForSettlement(
 
   return { ledgerEntryId: existing.id, created: false };
 }
+
+export async function upsertBalanceFromLedgerEntry(
+  tx: Database,
+  input: { studentId: string; ledgerEntryId: string; amount: number; now?: Date },
+): Promise<void> {
+  const now = input.now ?? new Date();
+
+  await tx
+    .insert(pointBalanceProjection)
+    .values({
+      studentId: input.studentId,
+      balance: input.amount,
+      lastLedgerEntryId: input.ledgerEntryId,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: pointBalanceProjection.studentId,
+      set: {
+        balance: sql`${pointBalanceProjection.balance} + excluded.balance`,
+        lastLedgerEntryId: input.ledgerEntryId,
+        updatedAt: now,
+      },
+    });
+}
+
+export type AppendErrorCountLedgerInput = {
+  studentId: string;
+  settlementId: string;
+  amount: number;
+  errorCount: number;
+  idempotencyKey: string;
+  now?: Date;
+};
+
+export async function appendLedgerForErrorCountSettlement(
+  tx: Database,
+  input: AppendErrorCountLedgerInput,
+): Promise<AppendLedgerResult> {
+  const explanation = `+${input.amount} points for error_count=${input.errorCount}`;
+
+  const [inserted] = await tx
+    .insert(pointLedgerEntries)
+    .values({
+      studentId: input.studentId,
+      settlementId: input.settlementId,
+      amount: input.amount,
+      reason: "schedule.error_count",
+      sourceType: "settlement",
+      sourceId: input.settlementId,
+      explanation,
+      reversesEntryId: null,
+      createdBy: null,
+      idempotencyKey: input.idempotencyKey,
+    })
+    .onConflictDoNothing({ target: pointLedgerEntries.settlementId })
+    .returning({ id: pointLedgerEntries.id });
+
+  if (inserted) {
+    const now = input.now ?? new Date();
+    await upsertBalanceFromLedgerEntry(tx, {
+      studentId: input.studentId,
+      ledgerEntryId: inserted.id,
+      amount: input.amount,
+      now,
+    });
+
+    await appendAuditEvent(tx, {
+      action: "point_ledger.created",
+      resourceType: "point_ledger_entry",
+      resourceId: inserted.id,
+      idempotencyKey: `audit:point-ledger-created:${inserted.id}`,
+      metadata: {
+        settlementId: input.settlementId,
+        amount: input.amount,
+        errorCount: input.errorCount,
+      },
+    });
+
+    await appendOutboxEvent(tx, {
+      aggregateType: "settlement",
+      aggregateId: input.settlementId,
+      eventType: "points.settled",
+      dedupeKey: `points.settled:${input.settlementId}`,
+      payload: {
+        settlementId: input.settlementId,
+        ledgerEntryId: inserted.id,
+        studentId: input.studentId,
+        amount: input.amount,
+      },
+    });
+
+    return { ledgerEntryId: inserted.id, created: true };
+  }
+
+  const existing = await loadExistingLedgerForSettlement(tx, input.settlementId);
+  return { ledgerEntryId: existing.id, created: false };
+}
+
+export type AppendReversalLedgerInput = {
+  studentId: string;
+  settlementId: string;
+  originalEntryId: string;
+  amount: number;
+  actorId: string;
+  idempotencyKey: string;
+  now?: Date;
+};
+
+export async function appendReversalLedgerEntry(
+  tx: Database,
+  input: AppendReversalLedgerInput,
+): Promise<AppendLedgerResult> {
+  const [existingReversal] = await tx
+    .select({ id: pointLedgerEntries.id })
+    .from(pointLedgerEntries)
+    .where(eq(pointLedgerEntries.reversesEntryId, input.originalEntryId))
+    .limit(1);
+
+  if (existingReversal) {
+    return { ledgerEntryId: existingReversal.id, created: false };
+  }
+
+  const [inserted] = await tx
+    .insert(pointLedgerEntries)
+    .values({
+      studentId: input.studentId,
+      settlementId: input.settlementId,
+      amount: input.amount,
+      reason: "correction.reversal",
+      sourceType: "reversal",
+      sourceId: input.settlementId,
+      explanation: `Reversal of ledger entry ${input.originalEntryId}`,
+      reversesEntryId: input.originalEntryId,
+      createdBy: input.actorId,
+      idempotencyKey: input.idempotencyKey,
+    })
+    .returning({ id: pointLedgerEntries.id });
+
+  if (!inserted) {
+    throw new SettlementError("STATE_CONFLICT", "Failed to create reversal ledger entry");
+  }
+
+  const now = input.now ?? new Date();
+  await upsertBalanceFromLedgerEntry(tx, {
+    studentId: input.studentId,
+    ledgerEntryId: inserted.id,
+    amount: input.amount,
+    now,
+  });
+
+  return { ledgerEntryId: inserted.id, created: true };
+}

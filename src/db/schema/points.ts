@@ -196,8 +196,8 @@ export const pointLedgerEntries = pgTable(
       "point_ledger_entries_source_check",
       sql`(${table.sourceType} = 'settlement' AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL AND ${table.amount} >= 0) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0)`,
     ),
-    uniqueIndex("point_ledger_entries_reversal_idempotency_unique")
-      .on(table.reversesEntryId, table.idempotencyKey)
+    uniqueIndex("point_ledger_entries_reversal_unique")
+      .on(table.reversesEntryId)
       .where(sql`${table.reversesEntryId} IS NOT NULL`),
   ],
 );

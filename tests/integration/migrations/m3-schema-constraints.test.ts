@@ -324,12 +324,12 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0014_m3_ledger_reliability");
+    expect(journal.entries.at(-1)?.tag).toBe("0015_m3_p1_remediation");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(15);
+    expect((applied[0] as { count: number }).count).toBe(16);
 
     const workerTable = await db.execute(sql`
       SELECT 1 FROM information_schema.tables
@@ -404,11 +404,43 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
         INSERT INTO fact_versions (
           schedule_item_id, student_id, fact_key, source_kind, value,
           idempotency_key, idempotency_payload_hash, completion_kind,
-          occurred_at, asserted_at, recorded_at
+          occurred_at, asserted_at, recorded_at, submitted_by
         ) VALUES (
           ${itemId}::uuid, ${studentId}::uuid, 'schedule.error_count', 'manual',
           '{"error_count":-1}'::jsonb, 'manual-negative', 'hash', 'not_applicable',
-          ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz
+          ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz, ${studentId}::uuid
+        )
+      `,
+      { code: "23514", constraint: "fact_versions_manual_invariants_check" },
+    );
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO fact_versions (
+          schedule_item_id, student_id, fact_key, source_kind, value,
+          idempotency_key, idempotency_payload_hash, completion_kind,
+          occurred_at, asserted_at, recorded_at, submitted_by
+        ) VALUES (
+          ${itemId}::uuid, ${studentId}::uuid, 'schedule.error_count', 'manual',
+          '{"error_count":1.5}'::jsonb, 'manual-non-integer', 'hash', 'not_applicable',
+          ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz, ${studentId}::uuid
+        )
+      `,
+      { code: "23514", constraint: "fact_versions_manual_invariants_check" },
+    );
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO fact_versions (
+          schedule_item_id, student_id, fact_key, source_kind, value,
+          idempotency_key, idempotency_payload_hash, completion_kind,
+          occurred_at, asserted_at, recorded_at, submitted_by
+        ) VALUES (
+          ${itemId}::uuid, ${studentId}::uuid, 'schedule.error_count', 'manual',
+          '{}'::jsonb, 'manual-missing-field', 'hash', 'not_applicable',
+          ${ts}::timestamptz, ${ts}::timestamptz, ${ts}::timestamptz, ${studentId}::uuid
         )
       `,
       { code: "23514", constraint: "fact_versions_manual_invariants_check" },
@@ -552,7 +584,7 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
           ${graph.parentId}::uuid, 'correction-reversal-key'
         )
       `,
-      { code: "23505", constraint: "point_ledger_entries_reversal_idempotency_unique" },
+      { code: "23505", constraint: "point_ledger_entries_reversal_unique" },
     );
 
     await expectConstraintFailure(
@@ -572,6 +604,7 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
   });
 
   it("P1-04 enforces outbox lifecycle fields and worker_attempts audit shape", async () => {
+    const { parentId } = await seedParentStudent(db);
     const eventRows = await db.execute(sql`
       INSERT INTO outbox_events (
         aggregate_type, aggregate_id, event_type, dedupe_key, payload, status, available_at, created_at
@@ -625,9 +658,9 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
       db,
       sql`
         INSERT INTO worker_attempts (
-          outbox_event_id, attempt_number, outcome, started_at
+          outbox_event_id, attempt_number, outcome, started_at, finished_at
         ) VALUES (
-          ${eventId}::uuid, 1, 'success', now()
+          ${eventId}::uuid, 1, 'failure', now(), now()
         )
       `,
       { code: "23505", constraint: "worker_attempts_outbox_attempt_unique" },
@@ -646,16 +679,154 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     );
 
     const claimIndex = await db.execute(sql`
-      SELECT indexname FROM pg_indexes
-      WHERE schemaname = 'public' AND indexname = 'outbox_events_claim_eligible_idx'
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname IN ('outbox_events_claim_pending_idx', 'outbox_events_claim_expired_lease_idx')
+      ORDER BY indexname
     `);
-    expect(claimIndex).toHaveLength(1);
+    expect(claimIndex).toHaveLength(2);
+    const indexDefs = (claimIndex as unknown as { indexdef: string }[]).map((row) => row.indexdef);
+    expect(indexDefs.some((def) => def.includes("pending") && def.includes("available_at"))).toBe(
+      true,
+    );
+    expect(indexDefs.some((def) => def.includes("leased") && def.includes("leased_until"))).toBe(
+      true,
+    );
 
     const deadIndex = await db.execute(sql`
       SELECT indexname FROM pg_indexes
       WHERE schemaname = 'public' AND indexname = 'outbox_events_dead_list_idx'
     `);
     expect(deadIndex).toHaveLength(1);
+
+    await expectConstraintFailure(
+      db,
+      sql`UPDATE outbox_events SET attempts = -1 WHERE id = ${eventId}::uuid`,
+      { code: "23514", constraint: "outbox_events_attempts_nonneg_check" },
+    );
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO worker_attempts (
+          outbox_event_id, attempt_number, outcome, started_at
+        ) VALUES (
+          ${eventId}::uuid, 0, 'leased', now()
+        )
+      `,
+      { code: "23514", constraint: "worker_attempts_attempt_number_positive_check" },
+    );
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO worker_attempts (
+          outbox_event_id, attempt_number, outcome, started_at, finished_at
+        ) VALUES (
+          ${eventId}::uuid, 3, 'leased', now(), now()
+        )
+      `,
+      { code: "23514", constraint: "worker_attempts_outcome_fields_check" },
+    );
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO worker_attempts (
+          outbox_event_id, attempt_number, outcome, started_at
+        ) VALUES (
+          ${eventId}::uuid, 4, 'success', now()
+        )
+      `,
+      { code: "23514", constraint: "worker_attempts_outcome_fields_check" },
+    );
+
+    await db.execute(sql`
+      INSERT INTO worker_attempts (
+        outbox_event_id, attempt_number, outcome, started_at, finished_at,
+        replay_actor_id, replay_reason
+      ) VALUES (
+        ${eventId}::uuid, 5, 'replayed', now(), now(),
+        ${parentId}::uuid, 'operator replay'
+      )
+    `);
+  });
+
+  it("P1-R01 allows only one reversal per original ledger entry", async () => {
+    const graph = await seedSettlementGraph(db);
+    const reversalSettlementRows = await db.execute(sql`
+      INSERT INTO settlements (
+        student_id, fact_version_id, rule_version_id, settlement_period,
+        result, explanation, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-02',
+        'reward', 'reversal settlement', ${`reversal-settlement-${crypto.randomUUID()}`}
+      )
+      RETURNING id
+    `);
+    const reversalSettlementId = (reversalSettlementRows[0] as { id: string }).id;
+
+    await db.execute(sql`
+      INSERT INTO point_ledger_entries (
+        student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+        reverses_entry_id, created_by, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${reversalSettlementId}::uuid, -10, 'correction.reversal', 'reversal',
+        'reverse prior reward', ${reversalSettlementId}::uuid, ${graph.ledgerId}::uuid, ${graph.parentId}::uuid,
+        'correction-reversal-key-a'
+      )
+    `);
+
+    const duplicateSettlementRows = await db.execute(sql`
+      INSERT INTO settlements (
+        student_id, fact_version_id, rule_version_id, settlement_period,
+        result, explanation, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-03',
+        'reward', 'duplicate reversal settlement', ${`reversal-settlement-dup-${crypto.randomUUID()}`}
+      )
+      RETURNING id
+    `);
+    const duplicateSettlementId = (duplicateSettlementRows[0] as { id: string }).id;
+
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO point_ledger_entries (
+          student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+          reverses_entry_id, created_by, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${duplicateSettlementId}::uuid, -10, 'correction.reversal', 'reversal',
+          'duplicate reversal different key', ${duplicateSettlementId}::uuid, ${graph.ledgerId}::uuid,
+          ${graph.parentId}::uuid, 'correction-reversal-key-b'
+        )
+      `,
+      { code: "23505", constraint: "point_ledger_entries_reversal_unique" },
+    );
+  });
+
+  it("P1-R05 upgrades from 0014 schema through 0015 remediation", async () => {
+    const reversalUnique = await db.execute(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'point_ledger_entries_reversal_unique'
+    `);
+    expect(reversalUnique).toHaveLength(1);
+
+    const template = await db.execute(sql`
+      SELECT id FROM point_rule_templates WHERE id = 'schedule_error_count_v1'
+    `);
+    expect(template).toHaveLength(1);
+
+    const workerChecks = await db.execute(sql`
+      SELECT conname FROM pg_constraint
+      WHERE conname IN (
+        'outbox_events_attempts_nonneg_check',
+        'worker_attempts_attempt_number_positive_check',
+        'worker_attempts_outcome_fields_check'
+      )
+      ORDER BY conname
+    `);
+    expect(workerChecks).toHaveLength(3);
   });
 
   it("P1-05 exposes typed facts and outbox domain error contracts", () => {

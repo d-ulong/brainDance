@@ -75,6 +75,27 @@ export async function enableSchedulePointRule(
   });
 }
 
+export async function enableErrorCountPointRule(
+  db: TestDb,
+  input: {
+    parentId: string;
+    studentId: string;
+    maximumErrorCount?: number;
+    idempotencyKey?: string;
+  },
+) {
+  return enablePointRule(db, {
+    parentId: input.parentId,
+    studentId: input.studentId,
+    idempotencyKey: input.idempotencyKey ?? `enable-error-count-${crypto.randomUUID()}`,
+    body: {
+      templateId: "schedule_error_count_v1",
+      parameters: { maximumErrorCount: input.maximumErrorCount ?? 3 },
+    },
+    now: FIXED_NOW,
+  });
+}
+
 export const FIXED_NOW = new Date("2026-01-15T04:00:00.000Z");
 
 export const DEFAULT_PLAN_BODY = {

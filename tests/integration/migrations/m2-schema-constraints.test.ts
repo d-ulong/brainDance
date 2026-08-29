@@ -364,12 +364,12 @@ async function assertMigratedHead(connectionString: string): Promise<void> {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0014_m3_ledger_reliability");
+    expect(journal.entries.at(-1)?.tag).toBe("0015_m3_p1_remediation");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(15);
+    expect((applied[0] as { count: number }).count).toBe(16);
 
     for (const table of M2_TABLES) {
       const rows = await db.execute(sql`

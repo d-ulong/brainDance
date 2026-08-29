@@ -11,10 +11,14 @@ import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { SettlementError } from "@/modules/settlement/errors";
 
 export const SCHEDULE_SYSTEM_COMPLETE_V1 = "schedule_system_complete_v1" as const;
+export const SCHEDULE_ERROR_COUNT_V1 = "schedule_error_count_v1" as const;
 
-export type EnablePointRuleBody = {
-  templateId: typeof SCHEDULE_SYSTEM_COMPLETE_V1;
-};
+export type EnablePointRuleBody =
+  | { templateId: typeof SCHEDULE_SYSTEM_COMPLETE_V1 }
+  | {
+      templateId: typeof SCHEDULE_ERROR_COUNT_V1;
+      parameters: { maximumErrorCount: number };
+    };
 
 export type EnablePointRuleInput = {
   parentId: string;
@@ -35,6 +39,7 @@ export type ActivePointRuleContext = {
   ruleId: string;
   ruleVersionId: string;
   templateId: string;
+  parameters: Record<string, unknown>;
   effect: { amount: number; rewardsLateCompletion?: boolean };
 };
 
@@ -113,6 +118,7 @@ export async function loadActivePointRuleForStudent(
     ruleId: rule.id,
     ruleVersionId: version.id,
     templateId: rule.templateId,
+    parameters: version.parameters as Record<string, unknown>,
     effect,
   };
 }
@@ -124,8 +130,16 @@ export async function enablePointRule(
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.parentId);
 
-  if (input.body.templateId !== SCHEDULE_SYSTEM_COMPLETE_V1) {
+  if (input.body.templateId !== SCHEDULE_SYSTEM_COMPLETE_V1 &&
+      input.body.templateId !== SCHEDULE_ERROR_COUNT_V1) {
     throw new SettlementError("VALIDATION_ERROR", "Unsupported point rule template");
+  }
+
+  if (input.body.templateId === SCHEDULE_ERROR_COUNT_V1) {
+    const max = input.body.parameters.maximumErrorCount;
+    if (!Number.isInteger(max) || max < 0) {
+      throw new SettlementError("VALIDATION_ERROR", "Invalid maximumErrorCount parameter");
+    }
   }
 
   try {
@@ -205,7 +219,10 @@ export async function enablePointRule(
         .values({
           pointRuleId: rule.id,
           version: 1,
-          parameters: {},
+          parameters:
+            input.body.templateId === SCHEDULE_ERROR_COUNT_V1
+              ? input.body.parameters
+              : {},
           effect: template.effectSchema,
           priority: null,
           effectiveAt: now,
