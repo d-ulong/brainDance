@@ -80,3 +80,36 @@ Project-specific Trellis specs and the 3002 development / 3003 E2E port separati
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: M3 ledger reliability delivery
+
+**Date**: 2026-08-29
+**Task**: M3 ledger reliability delivery
+**Branch**: `main`
+
+### Summary
+
+Closed M3 ledger reliability: immutable correction reversals, reversal settlement semantics, reliable outbox processing, projection rebuild, and migration/route/concurrency coverage. M3 was signed off, fast-forwarded to main, and archived.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9d0a4953f97e1fb7c24dd05cce0280b9638e58c3` | (see git log) |
+| `4561562aac76bd93a15e8a26748123e2f1cd4313` | (see git log) |
+| `5992024d176b8c52ad72f2a0b6b86ef284148937` | (see git log) |
+| `aa8f6cd64104b040dbccdd9bdd292b2086815b37` | (see git log) |
+| `143c7ae16215f0a24d1e8be83991538bf47226ca` | (see git log) |
+| `636a02608f9c7c88b1041a14389df464f6e59076` | (see git log) |
+| `937f583fdfd013f91661354ea4fdd5e205b446aa` | (see git log) |
+| `3df4791c7d39acd239a4f5828b30d77fbcf07fa9` | (see git log) |
+| `4fb4d398ae369a64a93ab1c30a346c952f2212d1` | (see git log) |
+| `eca12c519221d5f1f4695b81a3f47d581b0567a7` | (see git log) |
+| `3836be5b74b9102984ded13be6b5239df0b141e2` | (see git log) |
+| `909158b79e83616806bae657add37745b85a72e6` | (see git log) |
+| `0ea9218ddb4ebc9727316750925b907d3933a2c2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
