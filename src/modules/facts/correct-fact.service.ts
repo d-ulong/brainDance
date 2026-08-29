@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions, scheduleItems } from "@/db/schema";
+import { factVersions } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
@@ -45,11 +45,7 @@ const ADMIN_OVERRIDE_REASONS = new Set(["security", "data_correction"]);
 async function lockFactChain(tx: Database, factId: string) {
   await tx.execute(sql`SELECT id FROM fact_versions WHERE id = ${factId}::uuid FOR UPDATE`);
 
-  const [fact] = await tx
-    .select()
-    .from(factVersions)
-    .where(eq(factVersions.id, factId))
-    .limit(1);
+  const [fact] = await tx.select().from(factVersions).where(eq(factVersions.id, factId)).limit(1);
 
   if (!fact) {
     throw new FactsError("NOT_FOUND", "Fact not found");
@@ -134,7 +130,10 @@ export async function correctFact(
       }
 
       const [existingSuccessor] = await tx
-        .select({ id: factVersions.id, idempotencyPayloadHash: factVersions.idempotencyPayloadHash })
+        .select({
+          id: factVersions.id,
+          idempotencyPayloadHash: factVersions.idempotencyPayloadHash,
+        })
         .from(factVersions)
         .where(
           and(
@@ -149,10 +148,6 @@ export async function correctFact(
           throw new FactsError("IDEMPOTENCY_CONFLICT", "Correct fact idempotency payload mismatch");
         }
         return loadCorrectReplay(tx, predecessor.id, input.idempotencyKey);
-      }
-
-      if (predecessor.voidedAt) {
-        throw new FactsError("STATE_CONFLICT", "Fact has already been voided");
       }
 
       const [anySuccessor] = await tx
@@ -188,11 +183,6 @@ export async function correctFact(
       }
 
       const reversalPeriod = toFamilyDate(now);
-
-      await tx
-        .update(factVersions)
-        .set({ voidedAt: now })
-        .where(eq(factVersions.id, predecessor.id));
 
       const [successor] = await tx
         .insert(factVersions)
@@ -252,7 +242,9 @@ export async function correctFact(
         payload: {
           predecessorFactId: predecessor.id,
           successorFactId: successor.id,
+          studentId: predecessor.studentId,
           settlementId: settlement.settlementId,
+          ledgerEntryId: settlement.ledgerEntryId,
         },
       });
 

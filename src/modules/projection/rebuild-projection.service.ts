@@ -1,12 +1,17 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { pointBalanceProjection, pointLedgerEntries } from "@/db/schema";
+import { pointBalanceProjection } from "@/db/schema";
+import {
+  loadOrderedLedgerEntriesForStudent,
+  resolveLastLedgerEntryForStudent,
+} from "@/modules/settlement/ledger-order";
 
 export type RebuildProjectionResult = {
   studentsScanned: number;
   studentsRebuilt: number;
   ledgerEntriesScanned: number;
+  staleProjectionsRemoved: number;
 };
 
 export async function rebuildProjectionForStudent(
@@ -14,31 +19,27 @@ export async function rebuildProjectionForStudent(
   studentId: string,
   now: Date = new Date(),
 ): Promise<{ ledgerEntriesScanned: number }> {
-  const entries = await tx
-    .select({
-      id: pointLedgerEntries.id,
-      amount: pointLedgerEntries.amount,
-    })
-    .from(pointLedgerEntries)
-    .where(eq(pointLedgerEntries.studentId, studentId))
-    .orderBy(asc(pointLedgerEntries.id));
+  const entries = await loadOrderedLedgerEntriesForStudent(tx, studentId);
+  const resolved = await resolveLastLedgerEntryForStudent(tx, studentId);
 
-  const balance = entries.reduce((sum, entry) => sum + entry.amount, 0);
-  const lastEntry = entries.at(-1);
+  if (!resolved) {
+    await tx.delete(pointBalanceProjection).where(eq(pointBalanceProjection.studentId, studentId));
+    return { ledgerEntriesScanned: 0 };
+  }
 
   await tx
     .insert(pointBalanceProjection)
     .values({
       studentId,
-      balance,
-      lastLedgerEntryId: lastEntry?.id ?? null,
+      balance: resolved.balance,
+      lastLedgerEntryId: resolved.id,
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: pointBalanceProjection.studentId,
       set: {
-        balance,
-        lastLedgerEntryId: lastEntry?.id ?? null,
+        balance: resolved.balance,
+        lastLedgerEntryId: resolved.id,
         updatedAt: now,
       },
     });
@@ -59,6 +60,7 @@ export async function rebuildProjection(
         studentsScanned: 1,
         studentsRebuilt: 1,
         ledgerEntriesScanned: result.ledgerEntriesScanned,
+        staleProjectionsRemoved: 0,
       };
     });
   }
@@ -72,11 +74,40 @@ export async function rebuildProjection(
   );
 
   let ledgerEntriesScanned = 0;
+  let staleProjectionsRemoved = 0;
 
   await db.transaction(async (tx) => {
     for (const studentId of studentIds) {
       const result = await rebuildProjectionForStudent(tx, studentId, now);
       ledgerEntriesScanned += result.ledgerEntriesScanned;
+    }
+
+    if (studentIds.length === 0) {
+      const removed = await tx
+        .delete(pointBalanceProjection)
+        .returning({ studentId: pointBalanceProjection.studentId });
+      staleProjectionsRemoved = removed.length;
+      return;
+    }
+
+    const staleRows = await tx
+      .select({ studentId: pointBalanceProjection.studentId })
+      .from(pointBalanceProjection)
+      .where(
+        sql`${pointBalanceProjection.studentId} NOT IN (${sql.join(
+          studentIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )})`,
+      );
+
+    if (staleRows.length > 0) {
+      await tx.delete(pointBalanceProjection).where(
+        inArray(
+          pointBalanceProjection.studentId,
+          staleRows.map((row) => row.studentId),
+        ),
+      );
+      staleProjectionsRemoved = staleRows.length;
     }
   });
 
@@ -84,5 +115,6 @@ export async function rebuildProjection(
     studentsScanned: studentIds.length,
     studentsRebuilt: studentIds.length,
     ledgerEntriesScanned,
+    staleProjectionsRemoved,
   };
 }

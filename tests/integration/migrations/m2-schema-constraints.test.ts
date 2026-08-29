@@ -364,12 +364,12 @@ async function assertMigratedHead(connectionString: string): Promise<void> {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0015_m3_p1_remediation");
+    expect(journal.entries.at(-1)?.tag).toBe("0016_m3_p2_remediation");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(16);
+    expect((applied[0] as { count: number }).count).toBe(17);
 
     for (const table of M2_TABLES) {
       const rows = await db.execute(sql`
@@ -1113,7 +1113,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           'rule-key-2', 'hash-rule-2', ${now}::timestamptz
         )
       `,
-      { code: "23505", constraint: "point_rules_active_student_unique" },
+      { code: "23505", constraint: "point_rules_active_student_template_unique" },
     );
 
     await db.execute(sql`

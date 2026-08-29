@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { factVersions } from "@/db/schema";
@@ -97,7 +97,10 @@ export async function submitErrorCount(
 
       if (existing) {
         if (existing.idempotencyPayloadHash !== payloadHash) {
-          throw new FactsError("IDEMPOTENCY_CONFLICT", "Submit error_count idempotency payload mismatch");
+          throw new FactsError(
+            "IDEMPOTENCY_CONFLICT",
+            "Submit error_count idempotency payload mismatch",
+          );
         }
         return loadSubmitReplay(tx, input.scheduleItemId, input.idempotencyKey);
       }
@@ -168,7 +171,10 @@ export async function submitErrorCount(
         }
 
         if (raced.idempotencyPayloadHash !== payloadHash) {
-          throw new FactsError("IDEMPOTENCY_CONFLICT", "Submit error_count idempotency payload mismatch");
+          throw new FactsError(
+            "IDEMPOTENCY_CONFLICT",
+            "Submit error_count idempotency payload mismatch",
+          );
         }
 
         return loadSubmitReplay(tx, input.scheduleItemId, input.idempotencyKey);

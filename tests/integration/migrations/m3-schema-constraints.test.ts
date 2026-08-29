@@ -324,12 +324,12 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0015_m3_p1_remediation");
+    expect(journal.entries.at(-1)?.tag).toBe("0016_m3_p2_remediation");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(16);
+    expect((applied[0] as { count: number }).count).toBe(17);
 
     const workerTable = await db.execute(sql`
       SELECT 1 FROM information_schema.tables
@@ -744,10 +744,10 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     await db.execute(sql`
       INSERT INTO worker_attempts (
         outbox_event_id, attempt_number, outcome, started_at, finished_at,
-        replay_actor_id, replay_reason
+        replay_actor_id, replay_reason, replay_idempotency_key
       ) VALUES (
         ${eventId}::uuid, 5, 'replayed', now(), now(),
-        ${parentId}::uuid, 'operator replay'
+        ${parentId}::uuid, 'operator replay', 'schema-replay-key'
       )
     `);
   });
@@ -876,5 +876,37 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
       `,
       { code: "23514", constraint: "point_ledger_entries_source_check" },
     );
+  });
+
+  it("R09-01 migration 0016 exposes template-scoped active rule and replay idempotency", async () => {
+    const indexRows = await db.execute(sql`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname IN (
+          'point_rules_active_student_template_unique',
+          'point_ledger_entries_student_order_idx',
+          'worker_attempts_replay_idempotency_unique'
+        )
+      ORDER BY indexname
+    `);
+
+    expect(indexRows.map((row) => (row as { indexname: string }).indexname)).toEqual([
+      "point_ledger_entries_student_order_idx",
+      "point_rules_active_student_template_unique",
+      "worker_attempts_replay_idempotency_unique",
+    ]);
+
+    const columnRows = await db.execute(sql`
+      SELECT column_name, is_nullable, column_default IS NOT NULL AS has_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'point_ledger_entries'
+        AND column_name = 'created_at'
+    `);
+    expect(columnRows[0]).toMatchObject({
+      column_name: "created_at",
+      is_nullable: "NO",
+      has_default: true,
+    });
   });
 });

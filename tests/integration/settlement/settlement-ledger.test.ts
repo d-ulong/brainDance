@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -25,11 +25,14 @@ import { appendLedgerForSettlement } from "@/modules/settlement/ledger.service";
 import { enablePointRule } from "@/modules/settlement/point-rule.service";
 import { settleForFact } from "@/modules/settlement/settlement.service";
 import { SettlementError } from "@/modules/settlement/errors";
+import { confirmFact } from "@/modules/facts/confirm-fact.service";
+import { submitErrorCount } from "@/modules/facts/submit-error-count.service";
 import { requireDatabaseUrl } from "@/lib/env";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
   enableSchedulePointRule,
+  enableErrorCountPointRule,
   FIXED_NOW,
   resetScheduleTables,
 } from "../../helpers/schedule";
@@ -1158,5 +1161,107 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(ruleOutbox.map((row) => row.aggregateId).sort()).toEqual(
       [first.ruleId, second.ruleId].sort(),
     );
+  });
+
+  it("R01-01 allows active system and error-count rules to coexist per student", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+
+    await enableSchedulePointRule(db, { parentId, studentId });
+    await enableErrorCountPointRule(db, { parentId, studentId });
+
+    const plan = await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: `dual-template-plan-${studentId}`,
+      body: DEFAULT_PLAN_BODY,
+      now: FIXED_NOW,
+    });
+
+    const { maintainHorizon } = await import("@/modules/schedule/maintain-horizon.service");
+    await maintainHorizon(db, {
+      actorId: parentId,
+      studentId,
+      idempotencyKey: `dual-template-horizon-${studentId}`,
+      now: FIXED_NOW,
+    });
+
+    const [item] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.studentId, studentId))
+      .orderBy(asc(scheduleItems.familyDate))
+      .limit(1);
+
+    if (!item) {
+      throw new Error("Schedule item missing");
+    }
+
+    const completed = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "dual-complete",
+      body: { completionKind: "on_time" },
+      now: FIXED_NOW,
+    });
+
+    const submitted = await submitErrorCount(db, {
+      actorId: studentId,
+      scheduleItemId: item.id,
+      idempotencyKey: "dual-error-count",
+      body: { errorCount: 1 },
+      now: FIXED_NOW,
+    });
+
+    await confirmFact(db, {
+      parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "dual-confirm",
+      now: FIXED_NOW,
+    });
+
+    const rules = await db.select().from(pointRules).where(eq(pointRules.studentId, studentId));
+    expect(rules.filter((rule) => rule.active)).toHaveLength(2);
+
+    const settlementsForStudent = await db
+      .select()
+      .from(settlements)
+      .where(eq(settlements.studentId, studentId));
+    expect(settlementsForStudent).toHaveLength(2);
+
+    const systemSettlement = settlementsForStudent.find(
+      (row) => row.factVersionId === completed.factVersionId,
+    );
+    const errorSettlement = settlementsForStudent.find(
+      (row) => row.factVersionId === submitted.factVersionId,
+    );
+    expect(systemSettlement).toBeTruthy();
+    expect(errorSettlement).toBeTruthy();
+
+    const ruleVersions = await db.select().from(pointRuleVersions);
+    const systemRuleVersion = ruleVersions.find((v) => v.id === systemSettlement!.ruleVersionId);
+    const errorRuleVersion = ruleVersions.find((v) => v.id === errorSettlement!.ruleVersionId);
+    expect(systemRuleVersion).toBeTruthy();
+    expect(errorRuleVersion).toBeTruthy();
+
+    const templates = await db.select().from(pointRules);
+    const systemRule = templates.find((r) => r.id === systemRuleVersion!.pointRuleId);
+    const errorRule = templates.find((r) => r.id === errorRuleVersion!.pointRuleId);
+    expect(systemRule?.templateId).toBe("schedule_system_complete_v1");
+    expect(errorRule?.templateId).toBe("schedule_error_count_v1");
+
+    await expect(
+      enablePointRule(db, {
+        parentId,
+        studentId,
+        idempotencyKey: "duplicate-error-rule",
+        body: {
+          templateId: "schedule_error_count_v1",
+          parameters: { maximumErrorCount: 1 },
+        },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toBeInstanceOf(SettlementError);
+
+    void plan;
   });
 });

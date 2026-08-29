@@ -115,8 +115,8 @@ export const pointRules = pgTable(
       table.studentId,
       table.createIdempotencyKey,
     ),
-    uniqueIndex("point_rules_active_student_unique")
-      .on(table.studentId)
+    uniqueIndex("point_rules_active_student_template_unique")
+      .on(table.studentId, table.templateId)
       .where(sql`${table.active} = true`),
   ],
 );
@@ -189,6 +189,7 @@ export const pointLedgerEntries = pgTable(
     reversesEntryId: uuid("reverses_entry_id").references((): AnyPgColumn => pointLedgerEntries.id),
     createdBy: uuid("created_by").references(() => users.id),
     idempotencyKey: text("idempotency_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     unique("point_ledger_entries_settlement_id_unique").on(table.settlementId),

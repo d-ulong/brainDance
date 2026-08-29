@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "@/db";
 import { outboxEvents, workerAttempts } from "@/db/schema";
 import { OutboxError } from "@/modules/outbox/errors";
+import { getM3EventHandler } from "@/modules/outbox/m3-event-handlers";
 import {
   computeBackoffMs,
   isSupportedNoopEvent,
@@ -11,6 +12,7 @@ import {
   OUTBOX_MAX_ATTEMPTS,
 } from "@/modules/outbox/worker-constants";
 import { logWorkerEvent } from "@/modules/outbox/worker-logger";
+import { nextGlobalAttemptNumber } from "@/modules/settlement/ledger-order";
 
 export type ClaimedOutboxEvent = {
   eventId: string;
@@ -61,7 +63,8 @@ export async function claimNextOutboxEvent(
       aggregate_id: string;
     };
 
-    const attemptNumber = row.attempts + 1;
+    const attemptNumber = await nextGlobalAttemptNumber(tx, row.id);
+    const retryCycleAttempt = row.attempts + 1;
     const leaseToken = randomUUID();
     const leasedUntil = new Date(now.getTime() + OUTBOX_LEASE_DURATION_MS);
 
@@ -72,7 +75,7 @@ export async function claimNextOutboxEvent(
         leaseToken,
         leaseOwner: input.workerId,
         leasedUntil,
-        attempts: attemptNumber,
+        attempts: retryCycleAttempt,
       })
       .where(sql`${outboxEvents.id} = ${row.id}::uuid`);
 
@@ -291,6 +294,38 @@ export async function processNextOutboxEvent(
   input: { workerId: string; now?: Date },
 ): Promise<ProcessOutboxEventResult> {
   const claimed = await claimNextOutboxEvent(db, input);
+  if (claimed) {
+    const m3Handler = getM3EventHandler(claimed.eventType, claimed.eventVersion);
+    if (m3Handler) {
+      try {
+        await m3Handler(db, claimed);
+        await completeOutboxEvent(db, {
+          eventId: claimed.eventId,
+          leaseToken: claimed.leaseToken,
+          attemptNumber: claimed.attemptNumber,
+          workerId: input.workerId,
+          now: input.now,
+        });
+        return { processed: true, noOp: false };
+      } catch {
+        await failOutboxEvent(db, {
+          eventId: claimed.eventId,
+          leaseToken: claimed.leaseToken,
+          attemptNumber: claimed.attemptNumber,
+          errorCategory: "handler_failure",
+          workerId: input.workerId,
+          now: input.now,
+        }).catch((failError) => {
+          if (failError instanceof OutboxError && failError.code === "LEASE_MISMATCH") {
+            return;
+          }
+          throw failError;
+        });
+        return { processed: true, noOp: false };
+      }
+    }
+  }
+
   if (!claimed) {
     return { processed: false, noOp: false };
   }

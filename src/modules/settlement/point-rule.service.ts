@@ -81,11 +81,18 @@ async function loadEnableReplay(
 export async function loadActivePointRuleForStudent(
   db: Database,
   studentId: string,
+  templateId: string,
 ): Promise<ActivePointRuleContext | null> {
   const [rule] = await db
     .select()
     .from(pointRules)
-    .where(and(eq(pointRules.studentId, studentId), eq(pointRules.active, true)))
+    .where(
+      and(
+        eq(pointRules.studentId, studentId),
+        eq(pointRules.templateId, templateId),
+        eq(pointRules.active, true),
+      ),
+    )
     .limit(1);
 
   if (!rule) {
@@ -130,8 +137,10 @@ export async function enablePointRule(
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.parentId);
 
-  if (input.body.templateId !== SCHEDULE_SYSTEM_COMPLETE_V1 &&
-      input.body.templateId !== SCHEDULE_ERROR_COUNT_V1) {
+  if (
+    input.body.templateId !== SCHEDULE_SYSTEM_COMPLETE_V1 &&
+    input.body.templateId !== SCHEDULE_ERROR_COUNT_V1
+  ) {
     throw new SettlementError("VALIDATION_ERROR", "Unsupported point rule template");
   }
 
@@ -188,11 +197,20 @@ export async function enablePointRule(
   const [activeRule] = await db
     .select({ id: pointRules.id })
     .from(pointRules)
-    .where(and(eq(pointRules.studentId, input.studentId), eq(pointRules.active, true)))
+    .where(
+      and(
+        eq(pointRules.studentId, input.studentId),
+        eq(pointRules.templateId, input.body.templateId),
+        eq(pointRules.active, true),
+      ),
+    )
     .limit(1);
 
   if (activeRule) {
-    throw new SettlementError("STATE_CONFLICT", "Active point rule already exists for student");
+    throw new SettlementError(
+      "STATE_CONFLICT",
+      "Active point rule already exists for student and template",
+    );
   }
 
   try {
@@ -220,9 +238,7 @@ export async function enablePointRule(
           pointRuleId: rule.id,
           version: 1,
           parameters:
-            input.body.templateId === SCHEDULE_ERROR_COUNT_V1
-              ? input.body.parameters
-              : {},
+            input.body.templateId === SCHEDULE_ERROR_COUNT_V1 ? input.body.parameters : {},
           effect: template.effectSchema,
           priority: null,
           effectiveAt: now,
@@ -287,7 +303,10 @@ export async function enablePointRule(
         return loadEnableReplay(db, raced);
       }
 
-      throw new SettlementError("STATE_CONFLICT", "Active point rule already exists for student");
+      throw new SettlementError(
+        "STATE_CONFLICT",
+        "Active point rule already exists for student and template",
+      );
     }
     throw error;
   }

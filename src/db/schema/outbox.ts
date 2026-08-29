@@ -70,10 +70,14 @@ export const workerAttempts = pgTable(
     errorCategory: text("error_category"),
     replayActorId: uuid("replay_actor_id").references(() => users.id),
     replayReason: text("replay_reason"),
+    replayIdempotencyKey: text("replay_idempotency_key"),
     leaseToken: uuid("lease_token"),
   },
   (table) => [
     unique("worker_attempts_outbox_attempt_unique").on(table.outboxEventId, table.attemptNumber),
+    uniqueIndex("worker_attempts_replay_idempotency_unique")
+      .on(table.outboxEventId, table.replayIdempotencyKey)
+      .where(sql`${table.outcome} = 'replayed' AND ${table.replayIdempotencyKey} IS NOT NULL`),
     check(
       "worker_attempts_outcome_check",
       sql`${table.outcome} IN ('success', 'failure', 'leased', 'replayed')`,
@@ -81,7 +85,7 @@ export const workerAttempts = pgTable(
     check("worker_attempts_attempt_number_positive_check", sql`${table.attemptNumber} > 0`),
     check(
       "worker_attempts_outcome_fields_check",
-      sql`(${table.outcome} IN ('success', 'failure') AND ${table.finishedAt} IS NOT NULL) OR (${table.outcome} = 'leased' AND ${table.finishedAt} IS NULL) OR (${table.outcome} = 'replayed' AND ${table.finishedAt} IS NOT NULL AND ${table.replayActorId} IS NOT NULL AND ${table.replayReason} IS NOT NULL)`,
+      sql`(${table.outcome} IN ('success', 'failure') AND ${table.finishedAt} IS NOT NULL) OR (${table.outcome} = 'leased' AND ${table.finishedAt} IS NULL) OR (${table.outcome} = 'replayed' AND ${table.finishedAt} IS NOT NULL AND ${table.replayActorId} IS NOT NULL AND ${table.replayReason} IS NOT NULL AND ${table.replayIdempotencyKey} IS NOT NULL)`,
     ),
     index("worker_attempts_outbox_event_idx").on(table.outboxEventId),
   ],

@@ -126,7 +126,11 @@ export async function settleForFact(
 ): Promise<SettleForFactResult> {
   const ctx = await loadFactSettlementContext(tx, input.factVersionId);
 
-  const activeRule = await loadActivePointRuleForStudent(tx, ctx.studentId);
+  const activeRule = await loadActivePointRuleForStudent(
+    tx,
+    ctx.studentId,
+    SCHEDULE_SYSTEM_COMPLETE_V1,
+  );
 
   if (!activeRule) {
     throw new SettlementError("NO_ACTIVE_RULE", "No active point rule for student");

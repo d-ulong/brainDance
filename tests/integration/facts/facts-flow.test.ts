@@ -6,8 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
 import {
+  auditEvents,
   factVersions,
-  outboxEvents,
   pointBalanceProjection,
   pointLedgerEntries,
   scheduleItems,
@@ -27,7 +27,14 @@ import {
   enableErrorCountPointRule,
   resetScheduleTables,
 } from "../../helpers/schedule";
-import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables, type TestDb } from "../../helpers/db";
+import {
+  closeTestDb,
+  getTestDb,
+  migrateTestDb,
+  resetIdentityTables,
+  type TestDb,
+} from "../../helpers/db";
+import { bootstrapAdmin } from "../../helpers/identity";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -77,7 +84,7 @@ async function seedFormalItem(db: TestDb) {
   const linked = await bootstrapParentStudentRelationship(db);
   await enableErrorCountPointRule(db, linked);
 
-  const plan = await createFormalPlan(db, {
+  await createFormalPlan(db, {
     ownerId: linked.parentId,
     studentId: linked.studentId,
     idempotencyKey: `plan-${linked.suffix}`,
@@ -156,7 +163,7 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
     expect(balance[0]?.balance).toBe(10);
   });
 
-  it("P2-02 correction keeps predecessor and creates exactly one reversal", async () => {
+  it("P2-02 correction keeps predecessor immutable and creates exactly one reversal", async () => {
     const ctx = await seedFormalItem(db);
     const correctionNow = correctionNowForFamilyDate(ctx.familyDate);
 
@@ -175,6 +182,12 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
       now: correctionNow,
     });
 
+    const predecessorBefore = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.id, submitted.factVersionId))
+      .limit(1);
+
     const corrected = await correctFact(db, {
       actorId: ctx.parentId,
       factId: submitted.factVersionId,
@@ -190,7 +203,17 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
       .from(factVersions)
       .where(eq(factVersions.id, submitted.factVersionId))
       .limit(1);
-    expect(predecessor[0]?.voidedAt).toBeTruthy();
+
+    expect(predecessor[0]).toEqual(predecessorBefore[0]);
+    expect(predecessor[0]?.voidedAt).toBeNull();
+    expect(predecessor[0]?.supersedesFactVersionId).toBeNull();
+
+    const successor = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.id, corrected.successorFactId))
+      .limit(1);
+    expect(successor[0]?.supersedesFactVersionId).toBe(submitted.factVersionId);
 
     const reversals = await db
       .select()
@@ -204,6 +227,9 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
       .from(settlements)
       .where(eq(settlements.factVersionId, corrected.successorFactId));
     expect(successorSettlements).toHaveLength(1);
+
+    const auditRows = await db.select().from(auditEvents);
+    expect(auditRows.some((row) => row.action === "fact.corrected")).toBe(true);
   });
 
   it("P2-03 replays confirm and correct commands idempotently", async () => {
@@ -331,5 +357,107 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
 
     const ledgerCount = await db.select().from(pointLedgerEntries);
     expect(ledgerCount.filter((e) => e.amount > 0)).toHaveLength(1);
+  });
+
+  it("P2-06 concurrent correction with same key leaves one successor chain", async () => {
+    const ctx = await seedFormalItem(db);
+    const correctionNow = correctionNowForFamilyDate(ctx.familyDate);
+
+    const submitted = await submitErrorCount(db, {
+      actorId: ctx.studentId,
+      scheduleItemId: ctx.itemId,
+      idempotencyKey: "submit-correct-concurrent",
+      body: { errorCount: 1 },
+      now: correctionNow,
+    });
+
+    await confirmFact(db, {
+      parentId: ctx.parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "confirm-correct-concurrent",
+      now: correctionNow,
+    });
+
+    const barrier = createConcurrentBarrier(2);
+
+    const results = await Promise.allSettled([
+      withIndependentTransaction(async () => {
+        await barrier.wait();
+        return correctFact(db, {
+          actorId: ctx.parentId,
+          factId: submitted.factVersionId,
+          idempotencyKey: "correct-concurrent",
+          body: { errorCount: 3, reason: "race" },
+          now: correctionNow,
+        });
+      }),
+      withIndependentTransaction(async () => {
+        await barrier.wait();
+        return correctFact(db, {
+          actorId: ctx.parentId,
+          factId: submitted.factVersionId,
+          idempotencyKey: "correct-concurrent",
+          body: { errorCount: 3, reason: "race" },
+          now: correctionNow,
+        });
+      }),
+    ]);
+
+    barrier.release();
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    expect(fulfilled.length).toBeGreaterThan(0);
+
+    const successors = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.supersedesFactVersionId, submitted.factVersionId));
+    expect(successors).toHaveLength(1);
+
+    const factSettlements = await db.select().from(settlements);
+    expect(factSettlements.filter((s) => s.factVersionId === successors[0]!.id)).toHaveLength(1);
+
+    const positiveLedger = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(
+        sql`${pointLedgerEntries.amount} > 0 AND ${pointLedgerEntries.reversesEntryId} IS NULL`,
+      );
+    expect(positiveLedger.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("P2-07 admin correction bypasses parent window and writes admin audit", async () => {
+    const ctx = await seedFormalItem(db);
+
+    const submitted = await submitErrorCount(db, {
+      actorId: ctx.studentId,
+      scheduleItemId: ctx.itemId,
+      idempotencyKey: "submit-admin",
+      body: { errorCount: 2 },
+      now: PAST_WINDOW_NOW,
+    });
+
+    await confirmFact(db, {
+      parentId: ctx.parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "confirm-admin",
+      now: PAST_WINDOW_NOW,
+    });
+
+    const { adminId } = await bootstrapAdmin(db, `admin_${ctx.suffix}@test.local`);
+
+    const corrected = await correctFact(db, {
+      actorId: adminId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "admin-correct-service",
+      body: { errorCount: 0, reason: "security fix" },
+      adminOverride: { reason: "security" },
+      now: PAST_WINDOW_NOW,
+    });
+
+    expect(corrected.successorFactId).toBeTruthy();
+
+    const auditRows = await db.select().from(auditEvents);
+    expect(auditRows.some((row) => row.action === "fact.corrected.admin")).toBe(true);
   });
 });

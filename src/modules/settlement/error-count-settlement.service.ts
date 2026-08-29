@@ -1,19 +1,12 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import {
-  factVersions,
-  plans,
-  pointLedgerEntries,
-  scheduleItems,
-  settlements,
-} from "@/db/schema";
+import { factVersions, plans, pointLedgerEntries, scheduleItems, settlements } from "@/db/schema";
 import { FactsError } from "@/modules/facts/errors";
 import { SettlementError } from "@/modules/settlement/errors";
 import {
   appendLedgerForErrorCountSettlement,
   appendReversalLedgerEntry,
-  upsertBalanceFromLedgerEntry,
 } from "@/modules/settlement/ledger.service";
 import {
   loadActivePointRuleForStudent,
@@ -127,7 +120,11 @@ export async function settleForErrorCountFact(
 ): Promise<SettleErrorCountResult> {
   const ctx = await loadErrorCountSettlementContext(tx, input.factVersionId);
 
-  const activeRule = await loadActivePointRuleForStudent(tx, ctx.studentId);
+  const activeRule = await loadActivePointRuleForStudent(
+    tx,
+    ctx.studentId,
+    SCHEDULE_ERROR_COUNT_V1,
+  );
 
   if (!activeRule) {
     throw new SettlementError("NO_ACTIVE_RULE", "No active point rule for student");

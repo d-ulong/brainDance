@@ -10,10 +10,7 @@ export function computeBackoffMs(attemptNumber: number): number {
 /** Supported event type/version pairs for no-op delivery. */
 export const SUPPORTED_NOOP_EVENTS: ReadonlyMap<string, ReadonlySet<number>> = new Map([
   ["schedule.completed", new Set([1])],
-  ["points.settled", new Set([1])],
   ["point_rule.enabled", new Set([1])],
-  ["fact.confirmed", new Set([1])],
-  ["fact.corrected", new Set([1])],
 ]);
 
 export function isSupportedNoopEvent(eventType: string, eventVersion: number): boolean {

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { factVersions } from "@/db/schema";
@@ -27,11 +27,7 @@ export type ConfirmFactResult = {
 async function lockFact(tx: Database, factId: string) {
   await tx.execute(sql`SELECT id FROM fact_versions WHERE id = ${factId}::uuid FOR UPDATE`);
 
-  const [fact] = await tx
-    .select()
-    .from(factVersions)
-    .where(eq(factVersions.id, factId))
-    .limit(1);
+  const [fact] = await tx.select().from(factVersions).where(eq(factVersions.id, factId)).limit(1);
 
   if (!fact) {
     throw new FactsError("NOT_FOUND", "Fact not found");
@@ -40,10 +36,7 @@ async function lockFact(tx: Database, factId: string) {
   return fact;
 }
 
-async function loadConfirmReplay(
-  tx: Database,
-  factId: string,
-): Promise<ConfirmFactResult> {
+async function loadConfirmReplay(tx: Database, factId: string): Promise<ConfirmFactResult> {
   const settlement = await settleForErrorCountFact(tx, { factVersionId: factId });
   return {
     factVersionId: factId,
@@ -70,8 +63,14 @@ export async function confirmFact(
       throw new FactsError("STATE_CONFLICT", "Cannot confirm a correction successor directly");
     }
 
-    if (fact.voidedAt) {
-      throw new FactsError("STATE_CONFLICT", "Fact has been voided");
+    const successorRows = await tx.execute(sql`
+      SELECT id FROM fact_versions
+      WHERE supersedes_fact_version_id = ${fact.id}::uuid
+      LIMIT 1
+    `);
+
+    if (successorRows.length > 0) {
+      throw new FactsError("STATE_CONFLICT", "Fact has been superseded");
     }
 
     try {
@@ -111,6 +110,7 @@ export async function confirmFact(
       dedupeKey: `fact.confirmed:${fact.id}:${input.idempotencyKey}`,
       payload: {
         factVersionId: fact.id,
+        studentId: fact.studentId,
         settlementId: settlement.settlementId,
         ledgerEntryId: settlement.ledgerEntryId,
       },

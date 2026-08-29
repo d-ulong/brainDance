@@ -4,6 +4,7 @@ import type { Database } from "@/db";
 import { pointBalanceProjection, pointLedgerEntries } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { isLedgerEntryAfter } from "@/modules/settlement/ledger-order";
 import { SettlementError } from "@/modules/settlement/errors";
 
 export type PointsBalanceDto = {
@@ -66,7 +67,7 @@ export async function queryPointsLedger(
     })
     .from(pointLedgerEntries)
     .where(eq(pointLedgerEntries.studentId, studentId))
-    .orderBy(desc(pointLedgerEntries.id))
+    .orderBy(desc(pointLedgerEntries.createdAt), desc(pointLedgerEntries.id))
     .limit(limit);
 
   return rows;
@@ -122,6 +123,8 @@ export async function appendLedgerForSettlement(
     await options.testHooks.beforeLedgerInsert();
   }
 
+  const now = input.now ?? new Date();
+
   const [inserted] = await tx
     .insert(pointLedgerEntries)
     .values({
@@ -135,29 +138,19 @@ export async function appendLedgerForSettlement(
       reversesEntryId: null,
       createdBy: null,
       idempotencyKey: input.idempotencyKey,
+      createdAt: now,
     })
     .onConflictDoNothing({ target: pointLedgerEntries.settlementId })
     .returning({ id: pointLedgerEntries.id });
 
   if (inserted) {
-    const now = input.now ?? new Date();
-
-    await tx
-      .insert(pointBalanceProjection)
-      .values({
-        studentId: input.studentId,
-        balance: input.amount,
-        lastLedgerEntryId: inserted.id,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: pointBalanceProjection.studentId,
-        set: {
-          balance: sql`${pointBalanceProjection.balance} + excluded.balance`,
-          lastLedgerEntryId: inserted.id,
-          updatedAt: now,
-        },
-      });
+    await upsertBalanceFromLedgerEntry(tx, {
+      studentId: input.studentId,
+      ledgerEntryId: inserted.id,
+      amount: input.amount,
+      createdAt: now,
+      now,
+    });
 
     await appendAuditEvent(tx, {
       action: "point_ledger.created",
@@ -194,23 +187,57 @@ export async function appendLedgerForSettlement(
 
 export async function upsertBalanceFromLedgerEntry(
   tx: Database,
-  input: { studentId: string; ledgerEntryId: string; amount: number; now?: Date },
+  input: {
+    studentId: string;
+    ledgerEntryId: string;
+    amount: number;
+    createdAt: Date;
+    now?: Date;
+  },
 ): Promise<void> {
   const now = input.now ?? new Date();
+
+  const [currentProjection] = await tx
+    .select({
+      lastLedgerEntryId: pointBalanceProjection.lastLedgerEntryId,
+    })
+    .from(pointBalanceProjection)
+    .where(eq(pointBalanceProjection.studentId, input.studentId))
+    .limit(1);
+
+  let currentLast: { createdAt: Date; id: string } | null = null;
+  if (currentProjection?.lastLedgerEntryId) {
+    const [currentEntry] = await tx
+      .select({
+        id: pointLedgerEntries.id,
+        createdAt: pointLedgerEntries.createdAt,
+      })
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.id, currentProjection.lastLedgerEntryId))
+      .limit(1);
+    currentLast = currentEntry ?? null;
+  }
+
+  const shouldAdvanceLast = isLedgerEntryAfter(
+    { createdAt: input.createdAt, id: input.ledgerEntryId },
+    currentLast,
+  );
 
   await tx
     .insert(pointBalanceProjection)
     .values({
       studentId: input.studentId,
       balance: input.amount,
-      lastLedgerEntryId: input.ledgerEntryId,
+      lastLedgerEntryId: shouldAdvanceLast ? input.ledgerEntryId : (currentLast?.id ?? null),
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: pointBalanceProjection.studentId,
       set: {
-        balance: sql`${pointBalanceProjection.balance} + excluded.balance`,
-        lastLedgerEntryId: input.ledgerEntryId,
+        balance: sql`${pointBalanceProjection.balance} + ${input.amount}`,
+        lastLedgerEntryId: shouldAdvanceLast
+          ? input.ledgerEntryId
+          : pointBalanceProjection.lastLedgerEntryId,
         updatedAt: now,
       },
     });
@@ -229,6 +256,7 @@ export async function appendLedgerForErrorCountSettlement(
   tx: Database,
   input: AppendErrorCountLedgerInput,
 ): Promise<AppendLedgerResult> {
+  const now = input.now ?? new Date();
   const explanation = `+${input.amount} points for error_count=${input.errorCount}`;
 
   const [inserted] = await tx
@@ -244,16 +272,17 @@ export async function appendLedgerForErrorCountSettlement(
       reversesEntryId: null,
       createdBy: null,
       idempotencyKey: input.idempotencyKey,
+      createdAt: now,
     })
     .onConflictDoNothing({ target: pointLedgerEntries.settlementId })
     .returning({ id: pointLedgerEntries.id });
 
   if (inserted) {
-    const now = input.now ?? new Date();
     await upsertBalanceFromLedgerEntry(tx, {
       studentId: input.studentId,
       ledgerEntryId: inserted.id,
       amount: input.amount,
+      createdAt: now,
       now,
     });
 
@@ -313,6 +342,8 @@ export async function appendReversalLedgerEntry(
     return { ledgerEntryId: existingReversal.id, created: false };
   }
 
+  const now = input.now ?? new Date();
+
   const [inserted] = await tx
     .insert(pointLedgerEntries)
     .values({
@@ -326,6 +357,7 @@ export async function appendReversalLedgerEntry(
       reversesEntryId: input.originalEntryId,
       createdBy: input.actorId,
       idempotencyKey: input.idempotencyKey,
+      createdAt: now,
     })
     .returning({ id: pointLedgerEntries.id });
 
@@ -333,11 +365,11 @@ export async function appendReversalLedgerEntry(
     throw new SettlementError("STATE_CONFLICT", "Failed to create reversal ledger entry");
   }
 
-  const now = input.now ?? new Date();
   await upsertBalanceFromLedgerEntry(tx, {
     studentId: input.studentId,
     ledgerEntryId: inserted.id,
     amount: input.amount,
+    createdAt: now,
     now,
   });
 
