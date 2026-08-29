@@ -1,4 +1,14 @@
-import { index, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 import { userRoleEnum, users } from "./identity";
 
@@ -41,6 +51,15 @@ export const relationships = pgTable(
     index("relationships_parent_id_idx").on(table.parentId),
     index("relationships_student_id_idx").on(table.studentId),
     index("relationships_family_id_idx").on(table.familyId),
+    uniqueIndex("relationships_active_parent_student_unique")
+      .on(table.parentId, table.studentId)
+      .where(sql`${table.status} = 'active'`),
+    index("relationships_family_parent_active_idx")
+      .on(table.familyId, table.parentId)
+      .where(sql`${table.status} = 'active'`),
+    index("relationships_family_student_active_idx")
+      .on(table.familyId, table.studentId)
+      .where(sql`${table.status} = 'active'`),
   ],
 );
 
@@ -61,7 +80,15 @@ export const familyMemberships = pgTable(
       () => relationships.id,
     ),
   },
-  (table) => [index("family_memberships_family_user_idx").on(table.familyId, table.userId)],
+  (table) => [
+    index("family_memberships_family_user_idx").on(table.familyId, table.userId),
+    index("family_memberships_user_active_idx")
+      .on(table.userId)
+      .where(sql`${table.leftAt} IS NULL`),
+    uniqueIndex("family_memberships_active_family_user_unique")
+      .on(table.familyId, table.userId)
+      .where(sql`${table.leftAt} IS NULL`),
+  ],
 );
 
 export const studentAssociationCodes = pgTable(

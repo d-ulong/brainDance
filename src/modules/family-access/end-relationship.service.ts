@@ -1,9 +1,11 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { auditEvents, familyMemberships, relationships, users } from "@/db/schema";
+import { auditEvents, relationships, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { deactivateCreatorConfigsOnRelationshipEnd } from "@/modules/family-access/deactivate-creator-configs.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
+import { reconcileMembershipAfterRelationshipEnd } from "@/modules/family-access/membership-projection.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 
 export type EndRelationshipInput = {
@@ -114,16 +116,25 @@ export async function endRelationship(
       })
       .where(eq(relationships.id, input.relationshipId));
 
-    await tx
-      .update(familyMemberships)
-      .set({ leftAt: endedAt })
-      .where(
-        and(
-          eq(familyMemberships.familyId, relationship.familyId),
-          inArray(familyMemberships.userId, [relationship.parentId, relationship.studentId]),
-          isNull(familyMemberships.leftAt),
-        ),
-      );
+    await reconcileMembershipAfterRelationshipEnd(tx, {
+      familyId: relationship.familyId,
+      userId: relationship.parentId,
+      endedAt,
+    });
+    await reconcileMembershipAfterRelationshipEnd(tx, {
+      familyId: relationship.familyId,
+      userId: relationship.studentId,
+      endedAt,
+    });
+
+    await deactivateCreatorConfigsOnRelationshipEnd(tx, {
+      parentId: relationship.parentId,
+      studentId: relationship.studentId,
+      endedAt,
+      relationshipEndIdempotencyKey: input.idempotencyKey,
+      actorId: input.actorId,
+      requestId: input.requestId,
+    });
 
     await incrementAuthorizationEpoch(tx, relationship.parentId);
     await incrementAuthorizationEpoch(tx, relationship.studentId);

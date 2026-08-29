@@ -1,6 +1,11 @@
 import { users } from "@/db/schema";
 import { hashPassword } from "@/lib/crypto";
 import { createInvitation } from "@/modules/identity/invitation.service";
+import { issueAssociationCode } from "@/modules/family-access/association-code.service";
+import {
+  acceptRelationshipRequest,
+  createRelationshipRequest,
+} from "@/modules/family-access/relationship-request.service";
 
 import type { TestDb } from "./db";
 import { bootstrapAdmin, createVerifiedParent } from "./identity";
@@ -53,4 +58,29 @@ export async function bootstrapVerifiedParentWithInvite(db: TestDb, email: strin
   });
 
   return { parentId: parent.userId, invite };
+}
+
+export async function acceptParentForStudent(
+  db: TestDb,
+  input: {
+    parentId: string;
+    studentId: string;
+    idempotencySuffix?: string;
+  },
+) {
+  const suffix = input.idempotencySuffix ?? crypto.randomUUID().slice(0, 8);
+  const code = await issueAssociationCode(db, {
+    studentId: input.studentId,
+    idempotencyKey: `issue-${suffix}`,
+  });
+  const pending = await createRelationshipRequest(db, {
+    parentId: input.parentId,
+    associationCodePlaintext: code.codePlaintext,
+    idempotencyKey: `req-${suffix}`,
+  });
+  return acceptRelationshipRequest(db, {
+    studentId: input.studentId,
+    requestId: pending.requestId,
+    idempotencyKey: `accept-${suffix}`,
+  });
 }

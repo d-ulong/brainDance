@@ -3,7 +3,6 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   families,
-  familyMemberships,
   guardianConsents,
   relationshipRequests,
   relationships,
@@ -14,9 +13,9 @@ import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import {
   assertNoActiveRelationshipPair,
-  countActiveRelationshipsForStudent,
   requireActiveRelationship,
 } from "@/modules/family-access/authorization.service";
+import { ensureActiveMembership } from "@/modules/family-access/membership-projection.service";
 import { resolveAssociationCodeByPlaintext } from "@/modules/family-access/association-code.service";
 import {
   FAMILY_TIMEZONE,
@@ -228,44 +227,33 @@ async function loadPendingRequestForStudent(db: Database, studentId: string, req
   return request;
 }
 
-async function syncMembership(
-  tx: Database,
-  input: {
-    familyId: string;
-    userId: string;
-    memberRole: "parent" | "student";
-    relationshipId: string;
-    joinedAt: Date;
-  },
-) {
-  const [existing] = await tx
-    .select()
-    .from(familyMemberships)
-    .where(
-      and(
-        eq(familyMemberships.familyId, input.familyId),
-        eq(familyMemberships.userId, input.userId),
-        sql`${familyMemberships.leftAt} IS NULL`,
-      ),
-    )
-    .limit(1);
+async function resolveFamilyIdForAcceptance(tx: Database, studentId: string): Promise<string> {
+  const activeRelationships = await tx
+    .select({ familyId: relationships.familyId })
+    .from(relationships)
+    .where(and(eq(relationships.studentId, studentId), eq(relationships.status, "active")));
 
-  if (existing) {
-    return existing.id;
+  if (activeRelationships.length === 0) {
+    const [family] = await tx
+      .insert(families)
+      .values({ timezone: FAMILY_TIMEZONE })
+      .returning({ id: families.id });
+    if (!family) {
+      throw new Error("Failed to create family");
+    }
+    return family.id;
   }
 
-  const [created] = await tx
-    .insert(familyMemberships)
-    .values({
-      familyId: input.familyId,
-      userId: input.userId,
-      memberRole: input.memberRole,
-      joinedAt: input.joinedAt,
-      derivedFromRelationshipId: input.relationshipId,
-    })
-    .returning({ id: familyMemberships.id });
+  const familyId = activeRelationships[0]!.familyId;
+  const mixedFamily = activeRelationships.some((row) => row.familyId !== familyId);
+  if (mixedFamily) {
+    throw new FamilyAccessError(
+      "STUDENT_ALREADY_HAS_FAMILY",
+      "Student has conflicting active families",
+    );
+  }
 
-  return created?.id;
+  return familyId;
 }
 
 async function incrementAuthorizationEpoch(tx: Database, userId: string) {
@@ -362,24 +350,10 @@ export async function acceptRelationshipRequest(
 
     await assertNoActiveRelationshipPair(tx, request.parentId, request.studentId);
 
-    const activeCount = await countActiveRelationshipsForStudent(tx, request.studentId);
-    if (activeCount > 0) {
-      throw new FamilyAccessError(
-        "STUDENT_ALREADY_HAS_FAMILY",
-        "Student already has an active family relationship",
-      );
-    }
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${request.studentId} FOR UPDATE`);
 
     const acceptedAt = new Date();
-
-    const [family] = await tx
-      .insert(families)
-      .values({ timezone: FAMILY_TIMEZONE })
-      .returning({ id: families.id });
-    if (!family) {
-      throw new Error("Failed to create family");
-    }
-    const familyId = family.id;
+    const familyId = await resolveFamilyIdForAcceptance(tx, request.studentId);
 
     const [relationship] = await tx
       .insert(relationships)
@@ -396,14 +370,14 @@ export async function acceptRelationshipRequest(
       throw new Error("Failed to create relationship");
     }
 
-    await syncMembership(tx, {
+    await ensureActiveMembership(tx, {
       familyId,
       userId: request.parentId,
       memberRole: "parent",
       relationshipId: relationship.id,
       joinedAt: acceptedAt,
     });
-    await syncMembership(tx, {
+    await ensureActiveMembership(tx, {
       familyId,
       userId: request.studentId,
       memberRole: "student",
