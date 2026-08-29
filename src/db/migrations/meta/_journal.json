@@ -120,6 +120,13 @@
       "when": 1787703600000,
       "tag": "0016_m3_p2_remediation",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787707200000,
+      "tag": "0017_m3_reversal_settlement_semantics",
+      "breakpoints": true
     }
   ]
 }

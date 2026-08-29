@@ -2,7 +2,6 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { factVersions, plans, pointLedgerEntries, scheduleItems, settlements } from "@/db/schema";
-import { addFamilyDays } from "@/modules/time-policy/add-family-days";
 import { FactsError } from "@/modules/facts/errors";
 import { SettlementError } from "@/modules/settlement/errors";
 import {
@@ -83,35 +82,13 @@ function resolveErrorCountRewardAmount(
   return 0;
 }
 
-async function resolveDistinctReversalSettlementPeriod(
-  tx: Database,
-  factVersionId: string,
-  requestedPeriod: string,
-): Promise<string> {
-  const existing = await tx
-    .select({ settlementPeriod: settlements.settlementPeriod })
-    .from(settlements)
-    .where(eq(settlements.factVersionId, factVersionId));
-
-  const usedPeriods = new Set(existing.map((row) => row.settlementPeriod));
-  if (!usedPeriods.has(requestedPeriod)) {
-    return requestedPeriod;
-  }
-
-  let candidate = requestedPeriod;
-  while (usedPeriods.has(candidate)) {
-    candidate = addFamilyDays(candidate, 1);
-  }
-
-  return candidate;
-}
-
 async function findExistingSettlement(
   tx: Database,
   input: {
     factVersionId: string;
     ruleVersionId: string;
     settlementPeriod: string;
+    result: "reward" | "reversal";
   },
 ): Promise<{ id: string }> {
   const [existing] = await tx
@@ -122,6 +99,7 @@ async function findExistingSettlement(
         eq(settlements.factVersionId, input.factVersionId),
         eq(settlements.ruleVersionId, input.ruleVersionId),
         eq(settlements.settlementPeriod, input.settlementPeriod),
+        eq(settlements.result, input.result),
       ),
     )
     .limit(1);
@@ -174,7 +152,12 @@ export async function settleForErrorCountFact(
       idempotencyKey: ctx.idempotencyKey,
     })
     .onConflictDoNothing({
-      target: [settlements.factVersionId, settlements.ruleVersionId, settlements.settlementPeriod],
+      target: [
+        settlements.factVersionId,
+        settlements.ruleVersionId,
+        settlements.settlementPeriod,
+        settlements.result,
+      ],
     })
     .returning({ id: settlements.id });
 
@@ -197,6 +180,7 @@ export async function settleForErrorCountFact(
     factVersionId: ctx.factVersionId,
     ruleVersionId: activeRule.ruleVersionId,
     settlementPeriod: ctx.familyDate,
+    result: "reward",
   });
 
   const [ledger] = await tx
@@ -239,7 +223,6 @@ export async function reverseLedgerEntriesForFact(
     studentId: string;
     actorId: string;
     idempotencyKey: string;
-    reversalSettlementPeriod: string;
   },
 ): Promise<string[]> {
   const entries = await loadLedgerEntriesForFact(tx, input.factVersionId);
@@ -264,7 +247,10 @@ export async function reverseLedgerEntriesForFact(
     }
 
     const [originalSettlement] = await tx
-      .select({ ruleVersionId: settlements.ruleVersionId })
+      .select({
+        ruleVersionId: settlements.ruleVersionId,
+        settlementPeriod: settlements.settlementPeriod,
+      })
       .from(settlements)
       .where(eq(settlements.id, entry.settlementId))
       .limit(1);
@@ -273,20 +259,14 @@ export async function reverseLedgerEntriesForFact(
       throw new SettlementError("STATE_CONFLICT", "Original settlement missing for reversal");
     }
 
-    const settlementPeriod = await resolveDistinctReversalSettlementPeriod(
-      tx,
-      input.factVersionId,
-      input.reversalSettlementPeriod,
-    );
-
     const [insertedSettlement] = await tx
       .insert(settlements)
       .values({
         studentId: input.studentId,
         factVersionId: input.factVersionId,
         ruleVersionId: originalSettlement.ruleVersionId,
-        settlementPeriod,
-        result: "reward",
+        settlementPeriod: originalSettlement.settlementPeriod,
+        result: "reversal",
         explanation: `Reversal settlement for ledger entry ${entry.id}`,
         idempotencyKey: reversalKey,
       })
@@ -295,6 +275,7 @@ export async function reverseLedgerEntriesForFact(
           settlements.factVersionId,
           settlements.ruleVersionId,
           settlements.settlementPeriod,
+          settlements.result,
         ],
       })
       .returning({ id: settlements.id });
@@ -305,7 +286,8 @@ export async function reverseLedgerEntriesForFact(
         await findExistingSettlement(tx, {
           factVersionId: input.factVersionId,
           ruleVersionId: originalSettlement.ruleVersionId,
-          settlementPeriod,
+          settlementPeriod: originalSettlement.settlementPeriod,
+          result: "reversal",
         })
       ).id;
 

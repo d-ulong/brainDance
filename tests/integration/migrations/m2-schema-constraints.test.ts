@@ -364,12 +364,12 @@ async function assertMigratedHead(connectionString: string): Promise<void> {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0016_m3_p2_remediation");
+    expect(journal.entries.at(-1)?.tag).toBe("0017_m3_reversal_settlement_semantics");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(17);
+    expect((applied[0] as { count: number }).count).toBe(18);
 
     for (const table of M2_TABLES) {
       const rows = await db.execute(sql`
@@ -1163,8 +1163,17 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           'reward', 'dup period', 'dup-settlement'
         )
       `,
-      { code: "23505", constraint: "settlements_fact_rule_period_unique" },
+      { code: "23505", constraint: "settlements_fact_rule_period_result_unique" },
     );
+    await db.execute(sql`
+      INSERT INTO settlements (
+        student_id, fact_version_id, rule_version_id, settlement_period,
+        result, explanation, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, ${graph.facts[0]}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+        'reversal', 'reversal same period as reward', 'reversal-same-period'
+      )
+    `);
     await expectConstraintFailure(
       db,
       sql`

@@ -160,11 +160,12 @@ export const settlements = pgTable(
     idempotencyKey: text("idempotency_key").notNull(),
   },
   (table) => [
-    check("settlements_result_check", sql`${table.result} IN ('reward')`),
-    unique("settlements_fact_rule_period_unique").on(
+    check("settlements_result_check", sql`${table.result} IN ('reward', 'reversal')`),
+    unique("settlements_fact_rule_period_result_unique").on(
       table.factVersionId,
       table.ruleVersionId,
       table.settlementPeriod,
+      table.result,
     ),
   ],
 );

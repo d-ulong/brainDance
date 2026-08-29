@@ -98,6 +98,7 @@ async function findExistingSettlement(
     factVersionId: string;
     ruleVersionId: string;
     settlementPeriod: string;
+    result: "reward" | "reversal";
   },
 ): Promise<{ id: string }> {
   const [existing] = await tx
@@ -108,6 +109,7 @@ async function findExistingSettlement(
         eq(settlements.factVersionId, input.factVersionId),
         eq(settlements.ruleVersionId, input.ruleVersionId),
         eq(settlements.settlementPeriod, input.settlementPeriod),
+        eq(settlements.result, input.result),
       ),
     )
     .limit(1);
@@ -159,7 +161,12 @@ export async function settleForFact(
       idempotencyKey: ctx.idempotencyKey,
     })
     .onConflictDoNothing({
-      target: [settlements.factVersionId, settlements.ruleVersionId, settlements.settlementPeriod],
+      target: [
+        settlements.factVersionId,
+        settlements.ruleVersionId,
+        settlements.settlementPeriod,
+        settlements.result,
+      ],
     })
     .returning({ id: settlements.id });
 
@@ -182,6 +189,7 @@ export async function settleForFact(
     factVersionId: ctx.factVersionId,
     ruleVersionId: activeRule.ruleVersionId,
     settlementPeriod: ctx.familyDate,
+    result: "reward",
   });
 
   const ledger = await loadExistingLedgerForSettlement(tx, settlement.id);

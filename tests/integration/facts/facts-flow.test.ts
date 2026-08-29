@@ -163,6 +163,78 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
     expect(balance[0]?.balance).toBe(10);
   });
 
+  it("RS-R01 preserves reversal settlement period and result semantics", async () => {
+    const ctx = await seedFormalItem(db);
+    const correctionNow = correctionNowForFamilyDate(ctx.familyDate);
+
+    const submitted = await submitErrorCount(db, {
+      actorId: ctx.studentId,
+      scheduleItemId: ctx.itemId,
+      idempotencyKey: "submit-rs-r01",
+      body: { errorCount: 1 },
+      now: correctionNow,
+    });
+
+    const confirmed = await confirmFact(db, {
+      parentId: ctx.parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "confirm-rs-r01",
+      now: correctionNow,
+    });
+
+    const predecessorRewardSettlements = await db
+      .select()
+      .from(settlements)
+      .where(eq(settlements.factVersionId, submitted.factVersionId));
+    expect(predecessorRewardSettlements).toHaveLength(1);
+    expect(predecessorRewardSettlements[0]?.result).toBe("reward");
+    expect(predecessorRewardSettlements[0]?.settlementPeriod).toBe(ctx.familyDate);
+
+    const corrected = await correctFact(db, {
+      actorId: ctx.parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "correct-rs-r01",
+      body: { errorCount: 4, reason: "miscounted" },
+      now: correctionNow,
+    });
+
+    const predecessorSettlementsAfter = await db
+      .select()
+      .from(settlements)
+      .where(eq(settlements.factVersionId, submitted.factVersionId));
+    expect(predecessorSettlementsAfter).toHaveLength(2);
+    expect(predecessorSettlementsAfter.find((row) => row.result === "reward")?.id).toBe(
+      confirmed.settlementId,
+    );
+
+    const reversalSettlement = predecessorSettlementsAfter.find((row) => row.result === "reversal");
+    expect(reversalSettlement?.settlementPeriod).toBe(ctx.familyDate);
+
+    const predecessorLedger = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.settlementId, confirmed.settlementId))
+      .limit(1);
+    expect(predecessorLedger[0]?.amount).toBe(10);
+
+    const reversals = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(sql`${pointLedgerEntries.reversesEntryId} IS NOT NULL`);
+    expect(reversals).toHaveLength(1);
+    expect(reversals[0]?.amount).toBe(-10);
+    expect(reversals[0]?.reversesEntryId).toBe(predecessorLedger[0]?.id);
+    expect(reversals[0]?.settlementId).toBe(reversalSettlement?.id);
+
+    const successorSettlements = await db
+      .select()
+      .from(settlements)
+      .where(eq(settlements.factVersionId, corrected.successorFactId));
+    expect(successorSettlements).toHaveLength(1);
+    expect(successorSettlements[0]?.result).toBe("reward");
+    expect(successorSettlements[0]?.settlementPeriod).toBe(ctx.familyDate);
+  });
+
   it("P2-02 correction keeps predecessor immutable and creates exactly one reversal", async () => {
     const ctx = await seedFormalItem(db);
     const correctionNow = correctionNowForFamilyDate(ctx.familyDate);
@@ -416,6 +488,18 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
 
     const factSettlements = await db.select().from(settlements);
     expect(factSettlements.filter((s) => s.factVersionId === successors[0]!.id)).toHaveLength(1);
+
+    const predecessorSettlements = factSettlements.filter(
+      (s) => s.factVersionId === submitted.factVersionId,
+    );
+    expect(predecessorSettlements.filter((s) => s.result === "reward")).toHaveLength(1);
+    expect(predecessorSettlements.filter((s) => s.result === "reversal")).toHaveLength(1);
+
+    const reversals = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(sql`${pointLedgerEntries.reversesEntryId} IS NOT NULL`);
+    expect(reversals).toHaveLength(1);
 
     const positiveLedger = await db
       .select()

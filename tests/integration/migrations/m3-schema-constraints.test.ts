@@ -324,12 +324,12 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: { tag: string }[] };
-    expect(journal.entries.at(-1)?.tag).toBe("0016_m3_p2_remediation");
+    expect(journal.entries.at(-1)?.tag).toBe("0017_m3_reversal_settlement_semantics");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
     );
-    expect((applied[0] as { count: number }).count).toBe(17);
+    expect((applied[0] as { count: number }).count).toBe(18);
 
     const workerTable = await db.execute(sql`
       SELECT 1 FROM information_schema.tables
@@ -542,8 +542,8 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
         student_id, fact_version_id, rule_version_id, settlement_period,
         result, explanation, idempotency_key
       ) VALUES (
-        ${graph.studentId}::uuid, ${predecessorId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-02',
-        'reward', 'reversal settlement', ${`reversal-settlement-${crypto.randomUUID()}`}
+        ${graph.studentId}::uuid, ${predecessorId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+        'reversal', 'reversal settlement', ${`reversal-settlement-${crypto.randomUUID()}`}
       )
       RETURNING id
     `);
@@ -560,13 +560,27 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
       )
     `);
 
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO settlements (
+          student_id, fact_version_id, rule_version_id, settlement_period,
+          result, explanation, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${predecessorId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+          'reversal', 'duplicate reversal settlement', ${`reversal-settlement-dup-${crypto.randomUUID()}`}
+        )
+      `,
+      { code: "23505", constraint: "settlements_fact_rule_period_result_unique" },
+    );
+
     const duplicateReversalSettlementRows = await db.execute(sql`
       INSERT INTO settlements (
         student_id, fact_version_id, rule_version_id, settlement_period,
         result, explanation, idempotency_key
       ) VALUES (
         ${graph.studentId}::uuid, ${predecessorId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-03',
-        'reward', 'duplicate reversal settlement', ${`reversal-settlement-dup-${crypto.randomUUID()}`}
+        'reversal', 'alternate reversal settlement', ${`reversal-settlement-alt-${crypto.randomUUID()}`}
       )
       RETURNING id
     `);
@@ -759,8 +773,8 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
         student_id, fact_version_id, rule_version_id, settlement_period,
         result, explanation, idempotency_key
       ) VALUES (
-        ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-02',
-        'reward', 'reversal settlement', ${`reversal-settlement-${crypto.randomUUID()}`}
+        ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+        'reversal', 'reversal settlement', ${`reversal-settlement-${crypto.randomUUID()}`}
       )
       RETURNING id
     `);
@@ -777,13 +791,27 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
       )
     `);
 
+    await expectConstraintFailure(
+      db,
+      sql`
+        INSERT INTO settlements (
+          student_id, fact_version_id, rule_version_id, settlement_period,
+          result, explanation, idempotency_key
+        ) VALUES (
+          ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-01',
+          'reversal', 'duplicate reversal settlement', ${`reversal-settlement-dup-${crypto.randomUUID()}`}
+        )
+      `,
+      { code: "23505", constraint: "settlements_fact_rule_period_result_unique" },
+    );
+
     const duplicateSettlementRows = await db.execute(sql`
       INSERT INTO settlements (
         student_id, fact_version_id, rule_version_id, settlement_period,
         result, explanation, idempotency_key
       ) VALUES (
         ${graph.studentId}::uuid, ${graph.factId}::uuid, ${graph.ruleVersionId}::uuid, '2026-01-03',
-        'reward', 'duplicate reversal settlement', ${`reversal-settlement-dup-${crypto.randomUUID()}`}
+        'reversal', 'alternate reversal settlement', ${`reversal-settlement-alt-${crypto.randomUUID()}`}
       )
       RETURNING id
     `);

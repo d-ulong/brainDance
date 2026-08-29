@@ -18,7 +18,6 @@ import {
   isPastCorrectionWindow,
   isWithinCorrectionWindow,
 } from "@/modules/time-policy/correction-window";
-import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 
 export type CorrectFactInput = {
@@ -182,8 +181,6 @@ export async function correctFact(
         }
       }
 
-      const reversalPeriod = toFamilyDate(now);
-
       const [successor] = await tx
         .insert(factVersions)
         .values({
@@ -215,7 +212,6 @@ export async function correctFact(
         studentId: predecessor.studentId,
         actorId: input.actorId,
         idempotencyKey: input.idempotencyKey,
-        reversalSettlementPeriod: reversalPeriod,
       });
 
       const settlement = await settleForErrorCountFact(tx, { factVersionId: successor.id });
