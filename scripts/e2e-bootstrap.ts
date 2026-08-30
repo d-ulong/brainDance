@@ -98,6 +98,7 @@ async function main() {
         adminPassword,
         parentEmail,
         parentPassword,
+        parentId,
         studentUsername,
         studentPassword,
         studentId: created.studentId,

@@ -14,6 +14,11 @@ export const SUPPORTED_NOOP_EVENTS: ReadonlyMap<string, ReadonlySet<number>> = n
   ["relationship.ended", new Set([1])],
   ["plan.deactivated", new Set([1])],
   ["point_rule.deactivated", new Set([1])],
+  ["reflection.created", new Set([1])],
+  ["reflection.updated", new Set([1])],
+  ["reflection.deleted", new Set([1])],
+  ["private_access.granted", new Set([1])],
+  ["private_access.revoked", new Set([1])],
 ]);
 
 export function isSupportedNoopEvent(eventType: string, eventVersion: number): boolean {

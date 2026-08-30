@@ -1,5 +1,6 @@
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { IdentityError } from "@/modules/identity/errors";
+import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
 import { TrainingError } from "@/modules/training/errors";
 
 export function appErrorToStatus(code: string): number {
@@ -39,11 +40,15 @@ export function appErrorToStatus(code: string): number {
     case "STUDENT_BIRTH_DATE_REQUIRED":
       return 400;
     case "IDEMPOTENCY_SESSION_MISMATCH":
+    case "STATE_CONFLICT":
       return 409;
     case "USER_NOT_FOUND":
     case "RELATIONSHIP_NOT_FOUND":
+    case "NOT_FOUND":
       return 404;
     case "RELATIONSHIP_NOT_ACTIVE":
+    case "REFLECTION_NOT_TODAY":
+    case "REFLECTION_DELETED":
       return 400;
     default:
       return 400;
@@ -61,6 +66,7 @@ export function toErrorResponse(error: unknown): {
   if (
     error instanceof IdentityError ||
     error instanceof FamilyAccessError ||
+    error instanceof ReflectionPrivacyError ||
     error instanceof TrainingError
   ) {
     return {

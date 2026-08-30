@@ -7,6 +7,7 @@ import { deactivateCreatorConfigsOnRelationshipEnd } from "@/modules/family-acce
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { reconcileMembershipAfterRelationshipEnd } from "@/modules/family-access/membership-projection.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { revokePrivateGrantsOnRelationshipEnd } from "@/modules/reflection-privacy/grant-private-access.service";
 
 export type EndRelationshipInput = {
   actorId: string;
@@ -140,6 +141,14 @@ export async function endRelationship(
       endedAt,
       relationshipEndIdempotencyKey: input.idempotencyKey,
       actorId: input.actorId,
+      requestId: input.requestId,
+    });
+
+    await revokePrivateGrantsOnRelationshipEnd(tx, {
+      parentId: relationship.parentId,
+      studentId: relationship.studentId,
+      actorId: input.actorId,
+      relationshipEndIdempotencyKey: input.idempotencyKey,
       requestId: input.requestId,
     });
 

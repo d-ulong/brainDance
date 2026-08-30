@@ -8,6 +8,7 @@ export type E2eFixture = {
   adminPassword: string;
   parentEmail: string;
   parentPassword: string;
+  parentId?: string;
   studentUsername: string;
   studentPassword: string;
   studentId: string;
