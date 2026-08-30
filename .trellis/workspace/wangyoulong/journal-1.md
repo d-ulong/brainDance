@@ -113,3 +113,25 @@ Closed M3 ledger reliability: immutable correction reversals, reversal settlemen
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: M4 multi-parent authorization
+
+**Date**: 2026-08-30
+**Task**: M4 multi-parent authorization
+**Branch**: `main`
+
+### Summary
+
+Signed off M4 P2 reflection privacy after deterministic grant/end and read/revoke concurrency evidence, fast-forwarded M4 to main, and archived the completed task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ee0215e87ce4e634b93d64dbf0f3c7d1a694c1e` | (see git log) |
+| `9143bb78f8ff080196bf4988babad227c5052b34` | (see git log) |
+
+### Status
+
+[OK] **Completed**
