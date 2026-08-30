@@ -2,7 +2,13 @@ import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { trainingDefinitions } from "@/db/schema";
-import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
+import {
+  DIGIT_SPAN_TRAINING_KEY,
+  REACTION_TRAINING_KEY,
+  STROOP_TRAINING_KEY,
+} from "@/modules/training/constants";
+import { DEFAULT_DIGIT_SPAN_SCHEMAS } from "@/modules/training/digit-span-v1";
+import { DEFAULT_STROOP_SCHEMAS } from "@/modules/training/stroop-v1";
 import { TrainingError } from "@/modules/training/errors";
 import type { AgeBand } from "@/modules/time-policy/resolve-age-band";
 
@@ -33,17 +39,21 @@ export async function getActiveTrainingDefinition(
   return definition;
 }
 
-export async function seedReactionDefinitions(db: Database): Promise<void> {
-  const ageBands: AgeBand[] = ["5-8", "9-12", "13-18"];
+const AGE_BANDS: AgeBand[] = ["5-8", "9-12", "13-18"];
 
-  for (const ageBand of ageBands) {
+async function seedDefinitionForKey(
+  db: Database,
+  trainingKey: string,
+  metricSchemaForAgeBand: (ageBand: AgeBand) => Record<string, unknown>,
+): Promise<void> {
+  for (const ageBand of AGE_BANDS) {
     await db
       .insert(trainingDefinitions)
       .values({
-        trainingKey: REACTION_TRAINING_KEY,
+        trainingKey,
         version: 1,
         ageBand,
-        metricSchema: { trialCount: 5 },
+        metricSchema: metricSchemaForAgeBand(ageBand),
         active: 1,
       })
       .onConflictDoNothing({
@@ -54,4 +64,26 @@ export async function seedReactionDefinitions(db: Database): Promise<void> {
         ],
       });
   }
+}
+
+export async function seedReactionDefinitions(db: Database): Promise<void> {
+  await seedDefinitionForKey(db, REACTION_TRAINING_KEY, () => ({ trialCount: 5 }));
+}
+
+export async function seedStroopDefinitions(db: Database): Promise<void> {
+  await seedDefinitionForKey(db, STROOP_TRAINING_KEY, (ageBand) => ({
+    ...DEFAULT_STROOP_SCHEMAS[ageBand],
+  }));
+}
+
+export async function seedDigitSpanDefinitions(db: Database): Promise<void> {
+  await seedDefinitionForKey(db, DIGIT_SPAN_TRAINING_KEY, (ageBand) => ({
+    ...DEFAULT_DIGIT_SPAN_SCHEMAS[ageBand],
+  }));
+}
+
+export async function seedM5TrainingDefinitions(db: Database): Promise<void> {
+  await seedReactionDefinitions(db);
+  await seedStroopDefinitions(db);
+  await seedDigitSpanDefinitions(db);
 }

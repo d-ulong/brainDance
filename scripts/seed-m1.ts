@@ -2,7 +2,7 @@ import { config } from "dotenv";
 
 import { createDb, closeDb } from "../src/db";
 import { requireDatabaseUrl } from "../src/lib/env";
-import { seedReactionDefinitions } from "../src/modules/training/definition.service";
+import { seedM5TrainingDefinitions } from "../src/modules/training/definition.service";
 import { seedAdminUser } from "../src/modules/identity/seed-admin";
 
 config({ path: ".env.local" });
@@ -20,10 +20,12 @@ async function main() {
     displayName: "Bootstrap Admin",
   });
 
-  await seedReactionDefinitions(db);
+  await seedM5TrainingDefinitions(db);
 
   console.log(`Seeded admin user: ${adminId}`);
-  console.log(`Seeded reaction training definitions for age bands 5-8, 9-12, 13-18`);
+  console.log(
+    `Seeded reaction, Stroop, and digit-span training definitions for age bands 5-8, 9-12, 13-18`,
+  );
   console.log(`Email: ${email}`);
   console.log("Password: [hidden — use SEED_ADMIN_PASSWORD or default from script source]");
 

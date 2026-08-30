@@ -14,7 +14,7 @@ import {
   acceptRelationshipRequest,
   createRelationshipRequest,
 } from "../src/modules/family-access/relationship-request.service";
-import { seedReactionDefinitions } from "../src/modules/training/definition.service";
+import { seedM5TrainingDefinitions } from "../src/modules/training/definition.service";
 import { seedAdminUser } from "../src/modules/identity/seed-admin";
 import { migrateTestDb } from "../tests/helpers/db";
 import { bootstrapVerifiedParentWithInvite } from "../tests/helpers/family-access";
@@ -48,7 +48,7 @@ async function main() {
       lockedUntil: null,
     })
     .where(eq(users.email, adminEmail.trim().toLowerCase()));
-  await seedReactionDefinitions(db);
+  await seedM5TrainingDefinitions(db);
 
   const parentEmail = `e2e-parent-${runId}@test.local`;
   const parentPassword = "ParentPass123!Parent";

@@ -37,6 +37,16 @@ export type ReactionMetrics = {
   calculationVersion: typeof REACTION_CALCULATION_VERSION;
 };
 
+export function decodeReactionMetricSchema(
+  raw: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const trialCount = raw.trialCount;
+  if (trialCount !== undefined && (typeof trialCount !== "number" || trialCount <= 0)) {
+    return null;
+  }
+  return raw;
+}
+
 export function getExpectedTrialCount(metricSchema: Record<string, unknown>): number {
   const trialCount = metricSchema.trialCount;
   if (typeof trialCount === "number" && trialCount > 0) {

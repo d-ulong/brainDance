@@ -15,10 +15,14 @@ import { getActiveTrainingDefinition } from "@/modules/training/definition.servi
 import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/training/constants";
 import { TrainingError } from "@/modules/training/errors";
 import {
-  computeReactionMetrics,
-  getExpectedTrialCount,
-  validateReactionEvents,
-} from "@/modules/training/reaction-v1";
+  computeTrainingMetrics,
+  decodeMetricSchema,
+  getExpectedSessionCount,
+  getMetricDefinitions,
+  getTrainingProtocol,
+  metricRowsToDbValues,
+  validateTrainingEvents,
+} from "@/modules/training/protocol";
 import { resolveAgeBand, type AgeBand } from "@/modules/time-policy/resolve-age-band";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
@@ -169,56 +173,12 @@ async function loadSessionMetrics(db: Database, sessionId: string): Promise<Trai
   }));
 }
 
-function metricsToRows(
-  sessionId: string,
-  metrics: ReturnType<typeof computeReactionMetrics>,
-): Array<{
-  sessionId: string;
-  metricKey: string;
-  value: string;
-  unit: string;
-  isValid: number;
-  calculationVersion: string;
-}> {
-  const rows = [
-    {
-      sessionId,
-      metricKey: "accuracy",
-      value: metrics.accuracy.toFixed(6),
-      unit: "ratio",
-      isValid: 1,
-      calculationVersion: metrics.calculationVersion,
-    },
-    {
-      sessionId,
-      metricKey: "valid_reaction_count",
-      value: String(metrics.validReactionCount),
-      unit: "count",
-      isValid: 1,
-      calculationVersion: metrics.calculationVersion,
-    },
-    {
-      sessionId,
-      metricKey: "total_trial_count",
-      value: String(metrics.totalTrialCount),
-      unit: "count",
-      isValid: 1,
-      calculationVersion: metrics.calculationVersion,
-    },
-  ];
-
-  if (metrics.medianReactionMs !== null) {
-    rows.push({
-      sessionId,
-      metricKey: "median_reaction_ms",
-      value: metrics.medianReactionMs.toFixed(6),
-      unit: "ms",
-      isValid: 1,
-      calculationVersion: metrics.calculationVersion,
-    });
+function resolveDecodedSchema(trainingKey: string, metricSchema: Record<string, unknown>) {
+  const decoded = decodeMetricSchema(trainingKey, metricSchema);
+  if (!decoded) {
+    throw new TrainingError("TRAINING_DEFINITION_NOT_FOUND", "Invalid training definition schema");
   }
-
-  return rows;
+  return decoded;
 }
 
 async function upsertProfileProjection(
@@ -232,12 +192,23 @@ async function upsertProfileProjection(
     metrics: TrainingMetricDto[];
   },
 ) {
+  const metricDefinitions = getMetricDefinitions(input.trainingKey);
+  const directionByKey = new Map(
+    metricDefinitions.map((definition) => [definition.metricKey, definition.direction]),
+  );
+  const excluded = new Set(
+    metricDefinitions
+      .filter((definition) => definition.excludeFromProjection)
+      .map((d) => d.metricKey),
+  );
+
   for (const metric of input.metrics) {
-    if (!metric.isValid || metric.metricKey === "total_trial_count") {
+    if (!metric.isValid || excluded.has(metric.metricKey)) {
       continue;
     }
 
-    const lowerIsBetter = metric.metricKey === "median_reaction_ms";
+    const direction = directionByKey.get(metric.metricKey);
+    const lowerIsBetter = direction === "lower-is-better";
     const [existing] = await tx
       .select()
       .from(trainingProfileProjection)
@@ -318,6 +289,7 @@ async function buildStartReplayResult(
     existing.trainingKey,
     existing.ageBand as AgeBand,
   );
+  const schema = resolveDecodedSchema(existing.trainingKey, definition.metricSchema ?? {});
 
   return {
     sessionId: existing.id,
@@ -325,7 +297,7 @@ async function buildStartReplayResult(
     definitionVersion: existing.definitionVersion,
     ageBand: existing.ageBand as AgeBand,
     familyDate: existing.familyDate,
-    expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
+    expectedTrialCount: getExpectedSessionCount(existing.trainingKey, schema),
     status: "active",
     idempotentReplay: true,
   };
@@ -383,7 +355,14 @@ export async function startTrainingSession(
   }
 
   const ageBand = await resolveStudentAgeBand(db, input.studentId);
+  if (!getTrainingProtocol(input.trainingKey)) {
+    throw new TrainingError(
+      "TRAINING_DEFINITION_NOT_FOUND",
+      `No active definition for ${input.trainingKey} / ${ageBand}`,
+    );
+  }
   const definition = await getActiveTrainingDefinition(db, input.trainingKey, ageBand);
+  const schema = resolveDecodedSchema(input.trainingKey, definition.metricSchema ?? {});
   const familyDate = toFamilyDate();
   const startedAt = new Date();
 
@@ -427,7 +406,7 @@ export async function startTrainingSession(
       definitionVersion: created.definitionVersion,
       ageBand: created.ageBand as AgeBand,
       familyDate: created.familyDate,
-      expectedTrialCount: getExpectedTrialCount(definition.metricSchema ?? {}),
+      expectedTrialCount: getExpectedSessionCount(created.trainingKey, schema),
       status: "active",
       idempotentReplay: false,
     };
@@ -640,8 +619,8 @@ export async function submitTrainingSession(
     session.trainingKey,
     session.ageBand as AgeBand,
   );
-  const expectedTrialCount = getExpectedTrialCount(definition.metricSchema ?? {});
-  const validation = validateReactionEvents(events, expectedTrialCount);
+  const schema = resolveDecodedSchema(session.trainingKey, definition.metricSchema ?? {});
+  const validation = validateTrainingEvents(session.trainingKey, events, schema);
 
   if (!validation.valid) {
     const finishedAt = new Date();
@@ -681,8 +660,46 @@ export async function submitTrainingSession(
     };
   }
 
-  const computed = computeReactionMetrics(validation.trials);
-  const metricRows = metricsToRows(input.sessionId, computed);
+  const computed = computeTrainingMetrics(session.trainingKey, validation.data, schema);
+  if (computed.rejectReason) {
+    const finishedAt = new Date();
+    try {
+      await db
+        .update(trainingSessions)
+        .set({
+          status: "invalid",
+          finishedAt,
+          invalidReason: computed.rejectReason,
+          submitIdempotencyKey: input.idempotencyKey,
+        })
+        .where(eq(trainingSessions.id, input.sessionId));
+    } catch (error) {
+      if (isPostgresUniqueViolation(error)) {
+        return replayOrMismatchOnSubmitKeyConflict(db, input);
+      }
+      throw error;
+    }
+
+    await appendAuditEvent(db, {
+      actorId: input.studentId,
+      action: "training_session.invalid",
+      resourceType: "training_session",
+      resourceId: input.sessionId,
+      requestId: input.requestId,
+      idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
+      metadata: { reason: computed.rejectReason },
+    });
+
+    return {
+      sessionId: input.sessionId,
+      status: "invalid",
+      sessionKind: null,
+      metrics: [],
+      idempotentReplay: false,
+    };
+  }
+
+  const metricRows = metricRowsToDbValues(input.sessionId, computed.rows);
 
   try {
     return await db.transaction(async (tx) => {

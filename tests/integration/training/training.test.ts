@@ -19,7 +19,7 @@ import {
 } from "@/modules/training/session.service";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
-import { completeReactionSession, ensureReactionDefinitions } from "../../helpers/training";
+import { completeReactionSession, ensureM5TrainingDefinitions } from "../../helpers/training";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -36,7 +36,7 @@ describe.skipIf(!hasDb)("training module", () => {
 
   beforeEach(async () => {
     await resetIdentityTables(db);
-    await ensureReactionDefinitions(db);
+    await ensureM5TrainingDefinitions(db);
   });
 
   afterAll(async () => {

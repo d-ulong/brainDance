@@ -47,6 +47,9 @@ export const trainingDefinitions = pgTable(
       table.ageBand,
     ),
     index("training_definitions_key_active_idx").on(table.trainingKey, table.active),
+    uniqueIndex("training_definitions_active_key_age_unique")
+      .on(table.trainingKey, table.ageBand)
+      .where(sql`${table.active} = 1`),
   ],
 );
 
@@ -87,6 +90,9 @@ export const trainingSessions = pgTable(
       table.familyDate,
     ),
     index("training_sessions_student_status_idx").on(table.studentId, table.status),
+    uniqueIndex("training_sessions_effective_daily_unique")
+      .on(table.studentId, table.trainingKey, table.familyDate)
+      .where(sql`${table.sessionKind} = 'effective' AND ${table.status} = 'completed'`),
   ],
 );
 
