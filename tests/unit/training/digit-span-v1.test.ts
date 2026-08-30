@@ -177,6 +177,48 @@ describe("digit-span-v1 validation", () => {
     expect(result.valid).toBe(false);
   });
 
+  it("AC-M5-03: rejects invalid span stimulus timestamp", () => {
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: new Date("invalid"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: rejects invalid span response timestamp", () => {
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: new Date("2026-01-01T00:00:10.000Z"),
+        },
+        {
+          sequence: 1,
+          eventType: "span.response",
+          payload: {
+            mode: "forward",
+            length: 2,
+            attemptIndex: 0,
+            sequence: [1, 2],
+            response: [1, 2],
+          },
+          occurredAt: new Date("invalid"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
   it("AC-M5-03: rejects span response before stimulus time", () => {
     const stimulusAt = new Date("2026-01-01T00:00:10.000Z");
     const result = validateDigitSpanEvents(
@@ -231,6 +273,19 @@ describe("digit-span-v1 schema", () => {
     expect(
       decodeDigitSpanMetricSchema({
         forwardMinLength: 2.5,
+        forwardMaxLength: 5,
+        backwardMinLength: 2,
+        backwardMaxLength: 4,
+        attemptsPerLength: 2,
+      }),
+    ).toBeNull();
+  });
+
+  it("AC-M5-03: rejects values above MAX_SAFE_INTEGER", () => {
+    const unsafe = Number.MAX_SAFE_INTEGER + 1;
+    expect(
+      decodeDigitSpanMetricSchema({
+        forwardMinLength: unsafe,
         forwardMaxLength: 5,
         backwardMinLength: 2,
         backwardMaxLength: 4,

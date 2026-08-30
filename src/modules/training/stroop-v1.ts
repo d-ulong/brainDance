@@ -4,7 +4,7 @@ import {
   type StroopColor,
 } from "@/modules/training/constants";
 import type { ProtocolMetricRow, TrainingEventRecord } from "@/modules/training/protocol";
-import { isSafePositiveInt } from "@/modules/training/protocol-schema";
+import { isFiniteEventTime, isSafePositiveInt } from "@/modules/training/protocol-schema";
 
 export type StroopMetricSchema = {
   trialCount: number;
@@ -132,6 +132,10 @@ export function validateStroopEvents(
       if (trialIndex === null || !inkColor || !wordColor || stimuli.has(trialIndex)) {
         return { valid: false, reason: "Duplicate or invalid stimulus event" };
       }
+      if (!isFiniteEventTime(event.occurredAt)) {
+        return { valid: false, reason: "Invalid Stroop stimulus timestamp" };
+      }
+
       stimuli.set(trialIndex, { inkColor, wordColor, occurredAt: event.occurredAt });
       continue;
     }
@@ -146,6 +150,9 @@ export function validateStroopEvents(
       const stimulus = stimuli.get(trialIndex);
       if (!stimulus) {
         return { valid: false, reason: "Response without matching stimulus" };
+      }
+      if (!isFiniteEventTime(event.occurredAt) || !isFiniteEventTime(stimulus.occurredAt)) {
+        return { valid: false, reason: "Invalid Stroop response timestamp" };
       }
 
       const reactionMs = event.occurredAt.getTime() - stimulus.occurredAt.getTime();

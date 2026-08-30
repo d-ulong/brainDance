@@ -75,6 +75,22 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
+  it("rejects INSERT with active outside 0/1 domain", async () => {
+    const trainingKey = `active-insert-${crypto.randomUUID().slice(0, 8)}`;
+
+    try {
+      await db.execute(sql`
+        INSERT INTO training_definitions (training_key, version, age_band, metric_schema, active)
+        VALUES (${trainingKey}, 1, '9-12', '{}'::jsonb, 2)
+      `);
+      throw new Error("Expected active domain violation on INSERT");
+    } catch (error) {
+      const failure = unwrapPgFailure(error);
+      expect(failure.code).toBe("23514");
+      expect(failure.constraint).toBe("training_definitions_active_domain");
+    }
+  });
+
   it("enforces immutable training definition fields and active lifecycle at database level", async () => {
     const trainingKey = `immutable-test-${crypto.randomUUID().slice(0, 8)}`;
     const [inserted] = await db.execute(sql`
@@ -137,7 +153,9 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
         `);
         throw new Error("Expected invalid active value violation");
       } catch (error) {
-        expect(unwrapPgFailure(error).code).toBe("23514");
+        const failure = unwrapPgFailure(error);
+        expect(failure.code).toBe("23514");
+        expect(failure.constraint).toBe("training_definitions_active_lifecycle");
       }
 
       await db.execute(sql`
@@ -165,7 +183,9 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
         `);
         throw new Error("Expected forbidden inactive active transition violation");
       } catch (error) {
-        expect(unwrapPgFailure(error).code).toBe("23514");
+        const failure = unwrapPgFailure(error);
+        expect(failure.code).toBe("23514");
+        expect(failure.constraint).toBe("training_definitions_active_lifecycle");
       }
     } finally {
       await db.execute(sql`

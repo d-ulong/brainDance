@@ -1,6 +1,6 @@
 import { DIGIT_SPAN_CALCULATION_VERSION } from "@/modules/training/constants";
 import type { ProtocolMetricRow, TrainingEventRecord } from "@/modules/training/protocol";
-import { isSafePositiveInt } from "@/modules/training/protocol-schema";
+import { isFiniteEventTime, isSafePositiveInt } from "@/modules/training/protocol-schema";
 
 export type DigitSpanMode = "forward" | "backward";
 
@@ -137,6 +137,10 @@ export function validateDigitSpanEvents(
       if (stimuli.has(key)) {
         return { valid: false, reason: "Duplicate span stimulus" };
       }
+      if (!isFiniteEventTime(event.occurredAt)) {
+        return { valid: false, reason: "Invalid span stimulus timestamp" };
+      }
+
       stimuli.set(key, { sequence: parsed.sequence, occurredAt: event.occurredAt });
       continue;
     }
@@ -151,6 +155,9 @@ export function validateDigitSpanEvents(
       const stimulus = stimuli.get(key);
       if (!stimulus) {
         return { valid: false, reason: "Span response without matching stimulus" };
+      }
+      if (!isFiniteEventTime(event.occurredAt) || !isFiniteEventTime(stimulus.occurredAt)) {
+        return { valid: false, reason: "Invalid span response timestamp" };
       }
       if (event.occurredAt.getTime() <= stimulus.occurredAt.getTime()) {
         return { valid: false, reason: "Span response occurred before or at stimulus time" };

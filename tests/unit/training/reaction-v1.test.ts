@@ -99,4 +99,8 @@ describe("reaction-v1 schema", () => {
   it("rejects non-integer trialCount values", () => {
     expect(decodeReactionMetricSchema({ trialCount: 5.5 })).toBeNull();
   });
+
+  it("rejects trialCount above MAX_SAFE_INTEGER", () => {
+    expect(decodeReactionMetricSchema({ trialCount: Number.MAX_SAFE_INTEGER + 1 })).toBeNull();
+  });
 });

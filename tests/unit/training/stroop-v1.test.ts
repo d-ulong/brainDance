@@ -169,6 +169,43 @@ describe("stroop-v1 validation", () => {
     expect(result.valid).toBe(false);
   });
 
+  it("AC-M5-02: rejects invalid Stroop stimulus timestamp", () => {
+    const result = validateStroopEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.stimulus",
+          payload: { trialIndex: 0, inkColor: "red", wordColor: "red" },
+          occurredAt: new Date("invalid"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-02: rejects invalid Stroop response timestamp", () => {
+    const base = new Date("2026-01-01T00:00:00.000Z");
+    const result = validateStroopEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.stimulus",
+          payload: { trialIndex: 0, inkColor: "red", wordColor: "red" },
+          occurredAt: base,
+        },
+        {
+          sequence: 1,
+          eventType: "trial.response",
+          payload: { trialIndex: 0, selectedColor: "red" },
+          occurredAt: new Date("invalid"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
   it("AC-M5-02: rejects response before stimulus time", () => {
     const base = new Date("2026-01-01T00:00:00.000Z");
     const result = validateStroopEvents(
@@ -239,6 +276,20 @@ describe("stroop-v1 schema", () => {
         incongruentQuota: 8,
         colors: [...STROOP_COLORS],
         minValidMs: Number.NaN,
+        maxValidMs: 4000,
+      }),
+    ).toBeNull();
+  });
+
+  it("AC-M5-02: rejects values above MAX_SAFE_INTEGER", () => {
+    const unsafe = Number.MAX_SAFE_INTEGER + 1;
+    expect(
+      decodeStroopMetricSchema({
+        trialCount: unsafe,
+        congruentQuota: 8,
+        incongruentQuota: 8,
+        colors: [...STROOP_COLORS],
+        minValidMs: 200,
         maxValidMs: 4000,
       }),
     ).toBeNull();
