@@ -19,10 +19,12 @@
 | fifth_remediation_base | `a309b4c021d7995f992ecb7bee8fc28ae687dff2` |
 | sixth_remediation_directive_SHA | `0824195ab6707712bb492e7c52293964da206c70` |
 | sixth_remediation_base | `d7dc70b9b2316cd0ef80df5c43231f63ca0bf5af` |
+| seventh_remediation_directive_SHA | `f52728aae12d083a7b23200f02f8f7c430dc5bba` |
+| seventh_remediation_base | `b8c33bb5f3c4e7c3fb4fef69aa348ab9010641f6` |
 | branch | `feat/m5-training-expansion-trends` |
-| stage | P1 sixth-round remediation — not GO, not M5 complete |
+| stage | P1 seventh-round remediation — not GO, not M5 complete |
 
-Note: sixth-round remediation commit SHA is reported in the Cursor handoff after submission; this record does not predeclare a final HEAD.
+Note: seventh-round remediation commit SHA is reported in the Cursor handoff after submission; this record does not predeclare a final HEAD.
 
 ## First-round remediation resolved (P1-R01～P1-R07)
 
@@ -79,10 +81,25 @@ Note: sixth-round remediation commit SHA is reported in the Cursor handoff after
 | R-ID | Summary | Evidence |
 |------|---------|----------|
 | P1-R26 | `injectGateUnlockFailure` applies to post-observation `unlockGateAfterObservation`; runners wait on the same gate key; throw/false regressions assert unlock failure (not observation timeout) and prove bounded teardown with zero target locks | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R26 throw/false cases |
-| P1-R27 | `closeGateConnection` marks `closed` only after successful `gate.end()`; close failure surfaces as cleanup error; primary unlock failure plus forced close failure returns `AggregateError` with both errors | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R27 case |
+| P1-R27 | `closeGateWithInjectedAttemptThenFinalClose` performs one injected close attempt then non-injected `gate.end()`; seventh-round R31 proves final termination and backend cleanup trace | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R31 case |
 | P1-R28 | `caughtPrimary` flag replaces truthy `primaryError` check; `throw_undefined` regression proves rejection after cleanup; unsafe `result!` removed | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R28 case |
-| P1-R29 | `assertBoundedRaceCleanupFailure` and `assertBoundedRaceRejection` unify monitor lifecycle, elapsed bounds, and zero-lock assertions for four cleanup regressions | `m5-concurrency.test.ts` |
-| P1-R30 | This record updated with sixth-round directive/base, R26～R30 evidence, and verification summaries below | this file |
+| P1-R29 | `assertBoundedRaceOutcome` shared harness unifies monitor lifecycle, elapsed bounds, zero-lock checks, and caller rejection assertions; seventh-round R33 supersedes dual helpers | `m5-concurrency.test.ts` |
+| P1-R30 | This record updated with sixth-round directive/base, R26～R30 evidence, and verification summaries below | this file (superseded by seventh-round section below for R31～R34) |
+
+## Seventh-round remediation resolved (P1-R31～P1-R34)
+
+| R-ID | Summary | Evidence |
+|------|---------|----------|
+| P1-R31 | Gate close injection is one-shot; diagnostic error recorded then final non-injected `gate.end()` runs; `RaceCleanupTrace` plus `isPostgresBackendActive` prove injected failure, successful final close, zero locks, and no gate backend residue | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R31 case |
+| P1-R32 | `CleanupErrorAccumulator` with `hasError` records runner settle, gate close, monitor, and runner client failures; representative regressions for runner settle, monitor close, runner client close, and cleanup `throw undefined` | `tests/helpers/training-submit-race.ts`; `m5-concurrency.test.ts` P1-R32 cases |
+| P1-R33 | `assertBoundedRaceOutcome` replaces duplicated cleanup/rejection helpers with one shared harness and caller `assertOutcome` callback | `m5-concurrency.test.ts` |
+| P1-R34 | This record updated with seventh-round directive/base, R31～R34 evidence, and verification summaries below | this file |
+
+## Changed files (seventh-round remediation)
+
+- `tests/helpers/training-submit-race.ts`
+- `tests/integration/training/m5-concurrency.test.ts`
+- `.trellis/tasks/08-30-m5-training-expansion-trends/research/p1-implementation-record.md`
 
 ## Changed files (sixth-round remediation)
 
@@ -145,14 +162,14 @@ Out of P1 (not claimed): R-M5-05～07, AC-M5-05～10.
 | `pnpm db:migrate` | Migrations complete |
 | `pnpm test tests/unit/training` | Test Files 4 passed; Tests 41 passed |
 | `pnpm test tests/integration/migrations` | Test Files 6 passed; Tests 35 passed |
-| `pnpm test tests/integration/training` | Test Files 4 passed; Tests 33 passed (includes P1-R18～R21 and P1-R26～R28 regressions) |
+| `pnpm test tests/integration/training` | Test Files 4 passed; Tests 37 passed (includes P1-R18～R21 and P1-R26～R32 regressions) |
 | `pnpm test tests/integration/outbox tests/integration/audit` | Test Files 3 passed; Tests 23 passed |
 | `pnpm typecheck` | exit 0 |
 | `pnpm lint` | exit 0; 3 warnings (pre-existing in playwright.config.ts and scripts/run-e2e.mts) |
 | `pnpm format` | All matched files use Prettier code style |
-| `git diff --check d7dc70b9b2316cd0ef80df5c43231f63ca0bf5af..HEAD` | no conflicts (run after commit) |
+| `git diff --check b8c33bb5f3c4e7c3fb4fef69aa348ab9010641f6..HEAD` | no conflicts (run after commit) |
 
 ## Unresolved / blockers
 
-- none anticipated for P1 authorized sixth-round scope
+- none anticipated for P1 authorized seventh-round scope
 - P2/P3 intentionally not started (trends, UI, E2E, AC-M5-05～10)

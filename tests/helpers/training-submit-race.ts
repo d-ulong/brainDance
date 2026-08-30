@@ -16,10 +16,25 @@ export const FIXED_NEGATIVE_HASH_LOCK_KEY = "m5-lock-probe-0";
 
 export const INJECTED_GATE_UNLOCK_FAILURE_MESSAGE = "injected gate unlock failure";
 export const INJECTED_GATE_CLOSE_FAILURE_MESSAGE = "injected gate close failure";
+export const INJECTED_RUNNER_SETTLE_FAILURE_MESSAGE = "injected runner settle timeout";
+export const INJECTED_MONITOR_CLOSE_FAILURE_MESSAGE = "injected monitor close failure";
+export const INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE = "injected runner client close failure";
 
 async function readBackendPid(client: postgres.Sql): Promise<number> {
   const rows = await client<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
   return rows[0]!.pid;
+}
+
+export async function isPostgresBackendActive(
+  monitor: postgres.Sql,
+  pid: number,
+): Promise<boolean> {
+  const rows = await monitor<{ active: number }[]>`
+    SELECT 1 AS active
+    FROM pg_stat_activity
+    WHERE pid = ${pid}
+  `;
+  return rows.length > 0;
 }
 
 type AdvisoryLockState = { waiting: number[]; holding: number[] };
@@ -71,9 +86,47 @@ type GateLockPhase = "unheld" | "holding" | "released" | "closed";
 
 export type GateUnlockInjection = "throw" | "return_false" | "throw_undefined";
 
-type GateCloseOptions = {
-  injectCloseFailure?: boolean;
+export type CleanupFailureInjection =
+  | "runner_settle_timeout"
+  | "monitor_close_throw"
+  | "runner_client_close_throw"
+  | "cleanup_throw_undefined";
+
+type GateCloseInjectState = {
+  consumed: boolean;
 };
+
+export type RaceCleanupTrace = {
+  gateBackendPid: number;
+  firstInjectedGateCloseAttempted: boolean;
+  firstInjectedGateCloseFailed: boolean;
+  finalGateCloseAttempted: boolean;
+  finalGateCloseSucceeded: boolean;
+};
+
+class CleanupErrorAccumulator {
+  private errors: unknown[] = [];
+  private hasRecordedError = false;
+
+  get hasError(): boolean {
+    return this.hasRecordedError;
+  }
+
+  record(error: unknown): void {
+    this.hasRecordedError = true;
+    this.errors.push(error);
+  }
+
+  toError(): unknown {
+    if (!this.hasRecordedError) {
+      throw new Error("CleanupErrorAccumulator has no recorded errors");
+    }
+    if (this.errors.length === 1) {
+      return this.errors[0];
+    }
+    return new AggregateError(this.errors, "Multiple cleanup errors during race teardown");
+  }
+}
 
 async function queryAdvisoryUnlock(gate: postgres.Sql, lockKey: string): Promise<boolean> {
   const rows = await gate<{ pg_advisory_unlock: boolean }[]>`
@@ -82,26 +135,50 @@ async function queryAdvisoryUnlock(gate: postgres.Sql, lockKey: string): Promise
   return rows[0]?.pg_advisory_unlock ?? false;
 }
 
-async function closeGateConnection(
+async function terminateGateConnection(
   gate: postgres.Sql,
   gatePhase: { value: GateLockPhase },
-  options: GateCloseOptions = {},
 ): Promise<void> {
   if (gatePhase.value === "closed") {
     return;
   }
-  if (options.injectCloseFailure) {
-    throw new Error(INJECTED_GATE_CLOSE_FAILURE_MESSAGE);
-  }
   await gate.end({ timeout: 5 });
   gatePhase.value = "closed";
+}
+
+async function closeGateWithInjectedAttemptThenFinalClose(
+  gate: postgres.Sql,
+  gatePhase: { value: GateLockPhase },
+  injectOnce: boolean,
+  injectState: GateCloseInjectState,
+  accumulator: CleanupErrorAccumulator,
+  trace: RaceCleanupTrace,
+): Promise<void> {
+  if (gatePhase.value === "closed") {
+    return;
+  }
+
+  if (injectOnce && !injectState.consumed) {
+    trace.firstInjectedGateCloseAttempted = true;
+    injectState.consumed = true;
+    trace.firstInjectedGateCloseFailed = true;
+    accumulator.record(new Error(INJECTED_GATE_CLOSE_FAILURE_MESSAGE));
+  }
+
+  trace.finalGateCloseAttempted = true;
+  try {
+    await terminateGateConnection(gate, gatePhase);
+    trace.finalGateCloseSucceeded = true;
+  } catch (error) {
+    accumulator.record(error);
+  }
 }
 
 async function releaseGateLockOrClose(
   gate: postgres.Sql,
   lockKey: string,
   gatePhase: { value: GateLockPhase },
-  closeOptions: GateCloseOptions = {},
+  accumulator: CleanupErrorAccumulator,
 ): Promise<void> {
   if (gatePhase.value !== "holding") {
     return;
@@ -113,20 +190,29 @@ async function releaseGateLockOrClose(
       gatePhase.value = "released";
       return;
     }
-  } catch {
-    // fall through to terminate gate connection below
+  } catch (error) {
+    accumulator.record(error);
   }
 
-  await closeGateConnection(gate, gatePhase, closeOptions);
+  try {
+    await terminateGateConnection(gate, gatePhase);
+  } catch (error) {
+    accumulator.record(error);
+  }
 }
 
 async function waitForRunnersBounded<T>(
   submitPromises: Array<Promise<T>>,
   label: string,
   timeoutMs: number,
+  injectRunnerSettleFailure: boolean,
 ): Promise<void> {
   if (submitPromises.length === 0) {
     return;
+  }
+
+  if (injectRunnerSettleFailure) {
+    throw new Error(INJECTED_RUNNER_SETTLE_FAILURE_MESSAGE);
   }
 
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -147,12 +233,30 @@ async function waitForRunnersBounded<T>(
   }
 }
 
+async function endPostgresConnection(
+  client: postgres.Sql,
+  injectFailure?: "monitor_close_throw" | "runner_client_close_throw" | "cleanup_throw_undefined",
+): Promise<void> {
+  if (injectFailure === "monitor_close_throw") {
+    throw new Error(INJECTED_MONITOR_CLOSE_FAILURE_MESSAGE);
+  }
+  if (injectFailure === "runner_client_close_throw") {
+    throw new Error(INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE);
+  }
+  if (injectFailure === "cleanup_throw_undefined") {
+    throw undefined;
+  }
+  await client.end({ timeout: 5 });
+}
+
 function combinePrimaryAndCleanupErrors(
   primaryError: unknown,
   cleanupError: unknown,
 ): AggregateError {
-  const errors: unknown[] = [primaryError, cleanupError];
-  return new AggregateError(errors, "Concurrent submit race failed with cleanup error");
+  return new AggregateError(
+    [primaryError, cleanupError],
+    "Concurrent submit race failed with cleanup error",
+  );
 }
 
 async function unlockGateAfterObservation(
@@ -182,8 +286,12 @@ export type ConcurrentSubmitRaceOptions = {
   runnerSettleMs?: number;
   /** Test-only: force gate unlock failure after observation succeeds. */
   injectGateUnlockFailure?: GateUnlockInjection;
-  /** Test-only: force gate connection close failure during cleanup. */
+  /** Test-only: force one injected gate close failure before final best-effort close. */
   injectGateCloseFailure?: boolean;
+  /** Test-only: force a representative cleanup failure during teardown. */
+  injectCleanupFailure?: CleanupFailureInjection;
+  /** Test-only: read-only cleanup trace for deterministic close evidence. */
+  onCleanupTrace?: (trace: RaceCleanupTrace) => void;
 };
 
 export async function runConcurrentSubmitsWithContentionEvidence<T>(
@@ -198,31 +306,31 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
   const observationTimeoutMs = options.observationTimeoutMs ?? DEFAULT_OBSERVATION_TIMEOUT_MS;
   const runnerSettleMs = options.runnerSettleMs ?? DEFAULT_RUNNER_SETTLE_MS;
   const injectUnlock = options.injectGateUnlockFailure;
-  const closeOptions: GateCloseOptions = {
-    injectCloseFailure: options.injectGateCloseFailure,
-  };
+  const injectCleanupFailure = options.injectCleanupFailure;
 
   const gate = postgres(requireDatabaseUrl(), { max: 1 });
   const monitor = postgres(requireDatabaseUrl(), { max: 1 });
   const clients = runners.map(() => postgres(requireDatabaseUrl(), { max: 1 }));
   let submitPromises: Array<Promise<T>> = [];
   const gatePhase: { value: GateLockPhase } = { value: "unheld" };
+  const closeInjectState: GateCloseInjectState = { consumed: false };
+  const cleanupTrace: RaceCleanupTrace = {
+    gateBackendPid: 0,
+    firstInjectedGateCloseAttempted: false,
+    firstInjectedGateCloseFailed: false,
+    finalGateCloseAttempted: false,
+    finalGateCloseSucceeded: false,
+  };
 
   let result: T[] | undefined;
   let caughtPrimary = false;
   let primaryError: unknown;
-  let cleanupError: unknown;
-
-  const recordCleanupError = (error: unknown) => {
-    cleanupError =
-      cleanupError === undefined
-        ? error
-        : new AggregateError([cleanupError, error], "Multiple cleanup errors during race teardown");
-  };
+  const cleanupAccumulator = new CleanupErrorAccumulator();
 
   try {
     await gate`SELECT pg_advisory_lock(hashtext(${lockKey}))`;
     gatePhase.value = "holding";
+    cleanupTrace.gateBackendPid = await readBackendPid(gate);
 
     const pids: number[] = [];
     for (const client of clients) {
@@ -261,38 +369,73 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
     caughtPrimary = true;
     primaryError = error;
   } finally {
-    if (gatePhase.value === "holding") {
+    try {
+      await releaseGateLockOrClose(gate, lockKey, gatePhase, cleanupAccumulator);
+    } catch (error) {
+      cleanupAccumulator.record(error);
+    }
+
+    try {
+      await waitForRunnersBounded(
+        submitPromises,
+        "runners during cleanup",
+        runnerSettleMs,
+        injectCleanupFailure === "runner_settle_timeout",
+      );
+    } catch (error) {
+      cleanupAccumulator.record(error);
+    }
+
+    try {
+      await closeGateWithInjectedAttemptThenFinalClose(
+        gate,
+        gatePhase,
+        options.injectGateCloseFailure === true,
+        closeInjectState,
+        cleanupAccumulator,
+        cleanupTrace,
+      );
+    } catch (error) {
+      cleanupAccumulator.record(error);
+    }
+
+    if (injectCleanupFailure === "cleanup_throw_undefined") {
+      cleanupAccumulator.record(undefined);
+    }
+
+    try {
+      await endPostgresConnection(
+        monitor,
+        injectCleanupFailure === "monitor_close_throw" ? "monitor_close_throw" : undefined,
+      );
+    } catch (error) {
+      cleanupAccumulator.record(error);
+    }
+
+    for (const [index, client] of clients.entries()) {
       try {
-        await releaseGateLockOrClose(gate, lockKey, gatePhase, closeOptions);
+        await endPostgresConnection(
+          client,
+          injectCleanupFailure === "runner_client_close_throw" && index === 0
+            ? "runner_client_close_throw"
+            : undefined,
+        );
       } catch (error) {
-        recordCleanupError(error);
+        cleanupAccumulator.record(error);
       }
     }
 
-    await waitForRunnersBounded(submitPromises, "runners during cleanup", runnerSettleMs).catch(
-      () => undefined,
-    );
-
-    if (gatePhase.value !== "closed") {
-      try {
-        await closeGateConnection(gate, gatePhase, closeOptions);
-      } catch (error) {
-        recordCleanupError(error);
-      }
-    }
-
-    await monitor.end({ timeout: 5 }).catch(() => undefined);
-    await Promise.all(clients.map((client) => client.end({ timeout: 5 }).catch(() => undefined)));
+    options.onCleanupTrace?.(cleanupTrace);
   }
 
   if (caughtPrimary) {
-    if (cleanupError !== undefined) {
-      throw combinePrimaryAndCleanupErrors(primaryError, cleanupError);
+    if (cleanupAccumulator.hasError) {
+      throw combinePrimaryAndCleanupErrors(primaryError, cleanupAccumulator.toError());
     }
     throw primaryError;
   }
-  if (cleanupError !== undefined) {
-    throw cleanupError;
+  if (cleanupAccumulator.hasError) {
+    throw cleanupAccumulator.toError();
   }
   if (result === undefined) {
     throw new Error("Concurrent submit race finished without result");
