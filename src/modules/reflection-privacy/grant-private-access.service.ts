@@ -64,9 +64,20 @@ export type GrantPrivateAccessResult = {
   parentEpochChanged: boolean;
 };
 
+/** Test-only hooks for deterministic concurrency regression; omit in production. */
+export type GrantPrivateAccessTestHooks = {
+  /** Pauses before user lock acquisition (pre-F01 ordering: after relationship check). */
+  beforeUserLock?: () => void | Promise<void>;
+};
+
+export type GrantPrivateAccessOptions = {
+  testHooks?: GrantPrivateAccessTestHooks;
+};
+
 export async function grantPrivateAccess(
   db: Database,
   input: GrantPrivateAccessInput,
+  options?: GrantPrivateAccessOptions,
 ): Promise<GrantPrivateAccessResult> {
   const replayGrantId = await findGrantReplay(db, input.idempotencyKey, "grant");
   if (replayGrantId) {
@@ -95,6 +106,11 @@ export async function grantPrivateAccess(
     }
     if (reflection.visibility !== "private") {
       throw new ReflectionPrivacyError("STATE_CONFLICT", "Only private reflections can be granted");
+    }
+
+    // Test-only seam: pauses at the relationship-check/user-lock boundary used by P2-F01.
+    if (options?.testHooks?.beforeUserLock) {
+      await options.testHooks.beforeUserLock();
     }
 
     await lockUsersInOrder(tx, [input.studentId, input.parentId]);
@@ -204,9 +220,20 @@ export type RevokePrivateAccessResult = {
   parentEpochChanged: boolean;
 };
 
+/** Test-only hooks for deterministic concurrency regression; omit in production. */
+export type RevokePrivateAccessTestHooks = {
+  /** Pauses after user lock acquisition, before grant revocation. */
+  afterUserLock?: () => void | Promise<void>;
+};
+
+export type RevokePrivateAccessOptions = {
+  testHooks?: RevokePrivateAccessTestHooks;
+};
+
 export async function revokePrivateAccess(
   db: Database,
   input: RevokePrivateAccessInput,
+  options?: RevokePrivateAccessOptions,
 ): Promise<RevokePrivateAccessResult> {
   const replayGrantId = await findGrantReplay(db, input.idempotencyKey, "revoke");
   if (replayGrantId) {
@@ -235,6 +262,11 @@ export async function revokePrivateAccess(
     }
 
     await lockUsersInOrder(tx, [input.studentId, input.parentId]);
+
+    // Test-only seam: pauses while revoke holds user locks, used by P2-F02.
+    if (options?.testHooks?.afterUserLock) {
+      await options.testHooks.afterUserLock();
+    }
 
     const [activeGrant] = await tx
       .select()

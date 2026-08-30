@@ -2,7 +2,7 @@
 
 > branch: `feat/m4-multi-parent-authorization`
 >
-> execution_baseline: `fce66a98dca8cddaaa2068c1443cb7ca4ef17940`
+> execution_baseline: `ee81d36d340aae44b58372de4a2aecc038a49fc9`
 
 ## P2 交付范围
 
@@ -30,9 +30,19 @@
 
 | ID | 修订 | 证据 |
 | --- | --- | --- |
-| P2-F01 | `grantPrivateAccess` 先 `lockUsersInOrder` 再校验 active relationship；grant/end 交错后无残留 active grant，重新关联不恢复历史可读权 | `reflection-privacy.test.ts` P2-F01（顺序 end→grant + 独立连接 barrier 并发 grant/end） |
-| P2-F02 | 并发读/撤权交错后 fresh read 拒绝且错误序列化不含正文 | `reflection-privacy.test.ts` P2-F02（独立连接 barrier 并发 read/revoke） |
-| P2-F03 | 从生产 service 输入与实现移除 `testHooks`；并发同步完全由测试侧 barrier/独立连接承担 | `grant-private-access.service.ts` 无 testHooks；P2-F01/P2-F02 仍绿 |
+| P2-F01 | `grantPrivateAccess` 先 `lockUsersInOrder` 再校验 active relationship；grant/end 危险交错后 grant 拒绝、无 active grant、重新关联不恢复历史可读权 | `reflection-privacy.test.ts` P2-F01（`options.testHooks.beforeUserLock` + 独立连接 gate；旧实现会在 end 后仍插入 grant 而失败） |
+| P2-F02 | revoke 持锁期间 read 线性化成功，撤权提交后 fresh read 拒绝且错误不含正文 | `reflection-privacy.test.ts` P2-F02（`options.testHooks.afterUserLock` + 独立连接 gate；明确断言 read/revoke 均 fulfilled） |
+| P2-F03 | 从业务 DTO 移除 testHooks；同步仅经第二参数 `options?.testHooks` | `grant-private-access.service.ts` |
+| P2-F04 | P2-F01/P2-F02 重建为确定性交错证据，不忽略 promise 结果 | 见下方 5 次独立回归 |
+
+### P2-F04 独立回归（5×）
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm vitest run tests/integration/reflection-privacy/reflection-privacy.test.ts -t "P2-F01"` ×5 | 每次 **1 passed** |
+| `pnpm vitest run tests/integration/reflection-privacy/reflection-privacy.test.ts -t "P2-F02"` ×5 | 每次 **1 passed** |
+
+旧锁顺序失败原因：hook 位于关系检查与用户锁边界；end 完成后旧实现不再重检 relationship 仍会插入 active grant，P2-F01 的 `activeGrants.toHaveLength(0)` 与 grant `FORBIDDEN` 断言会失败。
 
 ## 验收矩阵
 
@@ -49,7 +59,7 @@
 | Command | Exit | Summary |
 | --- | --- | --- |
 | `pnpm db:migrate` | 0 | 0019 applied |
-| `pnpm test` | 0 | **50 files / 367 tests** passed (~406s) |
+| `pnpm test` | 0 | **50 files / 367 tests** passed (~378s) |
 | `pnpm typecheck` | 0 | clean |
 | `pnpm lint` | 0 | 0 errors, 3 pre-existing warnings |
 | `pnpm format` | 0 | All matched files use Prettier code style |

@@ -68,6 +68,23 @@ async function withIndependentConnection<T>(fn: (db: TestDb) => Promise<T>): Pro
   }
 }
 
+function createDeterministicGate() {
+  let openGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  let ready!: () => void;
+  const readyPromise = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  return {
+    signalReady: ready,
+    readyPromise,
+    waitForRelease: () => gate,
+    release: openGate,
+  };
+}
+
 function expectForbiddenWithoutBodyLeak(error: unknown, secretBody: string) {
   expect(error).toBeInstanceOf(ReflectionPrivacyError);
   expect((error as ReflectionPrivacyError).code).toBe("FORBIDDEN");
@@ -651,47 +668,40 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
       idempotencyKey: `upsert-f01-${suffix}`,
     });
 
-    await endRelationship(db, {
-      actorId: parentId,
-      relationshipId: link.relationshipId,
-      idempotencyKey: `end-f01-seq-${suffix}`,
-    });
-
-    await expect(
-      grantPrivateAccess(db, {
-        studentId: student.studentId,
-        familyDate: today,
-        parentId,
-        idempotencyKey: `grant-f01-seq-${suffix}`,
-      }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-
-    const relink = await acceptParentForStudent(db, {
-      parentId,
-      studentId: student.studentId,
-      idempotencySuffix: `relink-${suffix}`,
-    });
-
-    const barrier = createConcurrentBarrier(2);
-    await Promise.allSettled([
-      withIndependentConnection(async (conn) => {
-        await barrier.wait();
-        return grantPrivateAccess(conn, {
+    const gate = createDeterministicGate();
+    const grantPromise = withIndependentConnection((conn) =>
+      grantPrivateAccess(
+        conn,
+        {
           studentId: student.studentId,
           familyDate: today,
           parentId,
-          idempotencyKey: `grant-f01-conc-${suffix}`,
-        });
+          idempotencyKey: `grant-f01-${suffix}`,
+        },
+        {
+          testHooks: {
+            beforeUserLock: async () => {
+              gate.signalReady();
+              await gate.waitForRelease();
+            },
+          },
+        },
+      ),
+    );
+
+    await gate.readyPromise;
+    const endResult = await withIndependentConnection((conn) =>
+      endRelationship(conn, {
+        actorId: parentId,
+        relationshipId: link.relationshipId,
+        idempotencyKey: `end-f01-${suffix}`,
       }),
-      withIndependentConnection(async (conn) => {
-        await barrier.wait();
-        return endRelationship(conn, {
-          actorId: parentId,
-          relationshipId: relink.relationshipId,
-          idempotencyKey: `end-f01-conc-${suffix}`,
-        });
-      }),
-    ]);
+    );
+    gate.release();
+
+    await expect(grantPromise).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(endResult.status).toBe("ended");
+    expect(endResult.idempotentReplay).toBe(false);
 
     const activeGrants = await db
       .select()
@@ -704,7 +714,7 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
     await acceptParentForStudent(db, {
       parentId,
       studentId: student.studentId,
-      idempotencySuffix: `relink2-${suffix}`,
+      idempotencySuffix: `relink-${suffix}`,
     });
 
     try {
@@ -746,33 +756,57 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
       idempotencyKey: `grant-f02-${suffix}`,
     });
 
-    const barrier = createConcurrentBarrier(2);
-    const [readResult, revokeResult] = await Promise.allSettled([
-      withIndependentConnection(async (conn) => {
-        await barrier.wait();
-        return getDailyReflection(conn, {
+    const gate = createDeterministicGate();
+    let readDone!: () => void;
+    const readCompleted = new Promise<void>((resolve) => {
+      readDone = resolve;
+    });
+
+    const readPromise = withIndependentConnection(async (conn) => {
+      await gate.readyPromise;
+      try {
+        return await getDailyReflection(conn, {
           actorId: parentId,
           actorRole: "parent",
           studentId: student.studentId,
           familyDate: today,
         });
-      }),
-      withIndependentConnection(async (conn) => {
-        await barrier.wait();
-        return revokePrivateAccess(conn, {
+      } finally {
+        readDone();
+      }
+    });
+
+    const revokePromise = withIndependentConnection((conn) =>
+      revokePrivateAccess(
+        conn,
+        {
           studentId: student.studentId,
           familyDate: today,
           parentId,
           idempotencyKey: `revoke-f02-${suffix}`,
-        });
-      }),
-    ]);
+        },
+        {
+          testHooks: {
+            afterUserLock: async () => {
+              gate.signalReady();
+              await readCompleted;
+            },
+          },
+        },
+      ),
+    );
 
-    expect(revokeResult.status).toBe("fulfilled");
-    if (readResult.status === "rejected") {
-      expectForbiddenWithoutBodyLeak(readResult.reason, secretBody);
-    } else if (readResult.status === "fulfilled") {
-      expect(readResult.value.body).toBe(secretBody);
+    const [readSettled, revokeSettled] = await Promise.allSettled([readPromise, revokePromise]);
+
+    expect(revokeSettled.status).toBe("fulfilled");
+    if (revokeSettled.status === "fulfilled") {
+      expect(revokeSettled.value.parentEpochChanged).toBe(true);
+      expect(revokeSettled.value.grantId).toBeTruthy();
+    }
+
+    expect(readSettled.status).toBe("fulfilled");
+    if (readSettled.status === "fulfilled") {
+      expect(readSettled.value.body).toBe(secretBody);
     }
 
     try {
