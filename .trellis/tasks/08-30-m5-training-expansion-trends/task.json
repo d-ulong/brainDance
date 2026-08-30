@@ -22,5 +22,8 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {}
+  "meta": {
+    "planning_base_sha": "fd87ae680ad79072456bcbdbfe659af0638a01b8",
+    "protocol_scope": "fixed-standard-sessions"
+  }
 }

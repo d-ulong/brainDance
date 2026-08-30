@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Review schema, migration, transaction, idempotency and projection invariants."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review required test layers and full quality gates."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Review keyboard, accessibility, desktop and mobile-360 evidence."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Review DTO and JSON-boundary type safety."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review end-to-end event, projection, API and UI contract consistency."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review duplicated protocol decoding, metric metadata or reducer logic."}

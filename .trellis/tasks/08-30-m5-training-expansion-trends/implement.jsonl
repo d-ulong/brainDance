@@ -1,0 +1,11 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend conventions index for Training Module, routes, database and service boundaries."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"P1 requires schema, migration, transaction, concurrency and outbox patterns."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"New protocol and route failures must use project domain-error mapping."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Training answers and event payloads must not leak into logs or audit metadata."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Defines unit, integration, migration and full backend verification gates."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend conventions index for the P3 training and trend UI."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Training timing, visibility and imperative guards must follow existing hook patterns."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Trend and protocol DTOs must have shared typed boundaries without local casts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Defines keyboard, mobile-360 and Playwright acceptance requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"M5 spans event payloads, services, projections, routes and UI consumers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Protocol decoding and metric direction must remain single-source and reusable."}
