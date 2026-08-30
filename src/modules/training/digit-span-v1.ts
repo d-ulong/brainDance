@@ -1,5 +1,6 @@
 import { DIGIT_SPAN_CALCULATION_VERSION } from "@/modules/training/constants";
 import type { ProtocolMetricRow, TrainingEventRecord } from "@/modules/training/protocol";
+import { isSafePositiveInt } from "@/modules/training/protocol-schema";
 
 export type DigitSpanMode = "forward" | "backward";
 
@@ -105,7 +106,7 @@ export function validateDigitSpanEvents(
     return { valid: false, reason: "Invalid digit-span definition schema" };
   }
 
-  const stimuli = new Map<string, { sequence: number[] }>();
+  const stimuli = new Map<string, { sequence: number[]; occurredAt: Date }>();
   const attempts: DigitSpanAttemptRecord[] = [];
   let seenBackward = false;
 
@@ -136,7 +137,7 @@ export function validateDigitSpanEvents(
       if (stimuli.has(key)) {
         return { valid: false, reason: "Duplicate span stimulus" };
       }
-      stimuli.set(key, { sequence: parsed.sequence });
+      stimuli.set(key, { sequence: parsed.sequence, occurredAt: event.occurredAt });
       continue;
     }
 
@@ -150,6 +151,9 @@ export function validateDigitSpanEvents(
       const stimulus = stimuli.get(key);
       if (!stimulus) {
         return { valid: false, reason: "Span response without matching stimulus" };
+      }
+      if (event.occurredAt.getTime() <= stimulus.occurredAt.getTime()) {
+        return { valid: false, reason: "Span response occurred before or at stimulus time" };
       }
       if (!arraysEqual(parsed.sequence, stimulus.sequence)) {
         return { valid: false, reason: "Response sequence does not match stimulus" };
@@ -355,10 +359,6 @@ function arraysEqual(a: number[], b: number[]): boolean {
     }
   }
   return true;
-}
-
-function isSafePositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 export { DEFAULT_DIGIT_SPAN_SCHEMAS };

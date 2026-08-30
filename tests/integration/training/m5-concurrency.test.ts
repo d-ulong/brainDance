@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import {
 import { requireDatabaseUrl } from "@/lib/env";
 import * as auditModule from "@/modules/audit/append-audit-event";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
+import { getMetricDefinitions } from "@/modules/training/protocol";
 import {
   appendTrainingEvent,
   startTrainingSession,
@@ -28,33 +29,19 @@ import {
   resetIdentityTables,
   type TestDb,
 } from "../../helpers/db";
+import {
+  assertCompetitionAdvisoryLockContention,
+  createSubmitRaceBarrier,
+  ensureSubmitRaceWitnessTable,
+  signalSubmitRaceArrival,
+} from "../../helpers/training-submit-race";
 import { completeReactionSession, ensureM5TrainingDefinitions } from "../../helpers/training";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
-
-function createConcurrentBarrier(participants: number) {
-  let arrived = 0;
-  let release!: () => void;
-  const proceed = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-
-  return {
-    async wait(): Promise<void> {
-      arrived += 1;
-      if (arrived === participants) {
-        release();
-      }
-      await proceed;
-    },
-    release(): void {
-      release();
-    },
-  };
-}
+const REACTION_COMPLETED_METRIC_COUNT = getMetricDefinitions(REACTION_TRAINING_KEY).length;
 
 async function withIndependentConnection<T>(fn: (db: TestDb) => Promise<T>): Promise<T> {
   const client = postgres(requireDatabaseUrl(), { max: 1 });
@@ -99,18 +86,42 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
   beforeAll(async () => {
     process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
     await migrateTestDb();
+    await ensureSubmitRaceWitnessTable(db);
   });
 
   beforeEach(async () => {
     await resetIdentityTables(db);
     await ensureM5TrainingDefinitions(db);
+    await ensureSubmitRaceWitnessTable(db);
   });
 
   afterAll(async () => {
     await closeTestDb();
   });
 
-  it("AC-M5-04: concurrent dual-session submit yields one effective and one practice", async () => {
+  it("P1-R10: competition advisory lock contention is observable on the real submit key", async () => {
+    const student = await seedStudentUser(db, {
+      username: `lock_contention_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    const started = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "lock-contention-start",
+    });
+
+    const [sessionRow] = await db
+      .select({ familyDate: trainingSessions.familyDate })
+      .from(trainingSessions)
+      .where(eq(trainingSessions.id, started.sessionId));
+
+    const lockKey = `${student.studentId}:${REACTION_TRAINING_KEY}:${sessionRow!.familyDate}`;
+    await assertCompetitionAdvisoryLockContention(lockKey);
+  });
+
+  it("P1-R10 / AC-M5-04: concurrent dual-session submit yields one effective and one practice with exact side effects", async () => {
     const student = await seedStudentUser(db, {
       username: `concurrent_dual_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -137,10 +148,11 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       startIdempotencyKey: "concurrent-dual-start-b",
     });
 
-    const barrier = createConcurrentBarrier(2);
-    const results = await Promise.all([
+    const barrier = createSubmitRaceBarrier(2);
+
+    const writers = Promise.all([
       withIndependentConnection(async (conn) => {
-        await barrier.wait();
+        await signalSubmitRaceArrival(conn, 1, barrier);
         return submitTrainingSession(conn, {
           studentId: student.studentId,
           sessionId: startedA.sessionId,
@@ -148,7 +160,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         });
       }),
       withIndependentConnection(async (conn) => {
-        await barrier.wait();
+        await signalSubmitRaceArrival(conn, 2, barrier);
         return submitTrainingSession(conn, {
           studentId: student.studentId,
           sessionId: startedB.sessionId,
@@ -156,7 +168,10 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         });
       }),
     ]);
+
+    await barrier.waitAllArmed();
     barrier.release();
+    const results = await writers;
 
     expect(results.every((result) => result.status === "completed")).toBe(true);
     const kinds = results.map((result) => result.sessionKind).sort();
@@ -175,14 +190,18 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       );
     expect(effectiveRows).toHaveLength(1);
 
-    const metricRows = await db.select().from(trainingMetrics);
-    expect(metricRows.length).toBeGreaterThan(0);
+    const metricRows = await db
+      .select()
+      .from(trainingMetrics)
+      .where(inArray(trainingMetrics.sessionId, [startedA.sessionId, startedB.sessionId]));
+    expect(metricRows).toHaveLength(REACTION_COMPLETED_METRIC_COUNT * 2);
+
     const metricsBySession = new Map<string, number>();
     for (const row of metricRows) {
       metricsBySession.set(row.sessionId, (metricsBySession.get(row.sessionId) ?? 0) + 1);
     }
-    expect(metricsBySession.get(startedA.sessionId)).toBeGreaterThan(0);
-    expect(metricsBySession.get(startedB.sessionId)).toBeGreaterThan(0);
+    expect(metricsBySession.get(startedA.sessionId)).toBe(REACTION_COMPLETED_METRIC_COUNT);
+    expect(metricsBySession.get(startedB.sessionId)).toBe(REACTION_COMPLETED_METRIC_COUNT);
 
     const completeAudits = await db
       .select()
@@ -198,7 +217,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
     expect(new Set(outboxRows.map((row) => row.dedupeKey)).size).toBe(2);
   });
 
-  it("AC-M5-04: concurrent same-session submit with same idempotency key deduplicates side effects", async () => {
+  it("P1-R10 / AC-M5-04: concurrent same-session submit with same idempotency key deduplicates side effects", async () => {
     const student = await seedStudentUser(db, {
       username: `concurrent_idem_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -216,10 +235,11 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       startIdempotencyKey: "concurrent-idem-start",
     });
 
-    const barrier = createConcurrentBarrier(2);
-    const results = await Promise.all([
+    const barrier = createSubmitRaceBarrier(2);
+
+    const writers = Promise.all([
       withIndependentConnection(async (conn) => {
-        await barrier.wait();
+        await signalSubmitRaceArrival(conn, 1, barrier);
         return submitTrainingSession(conn, {
           studentId: student.studentId,
           sessionId: started.sessionId,
@@ -227,7 +247,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         });
       }),
       withIndependentConnection(async (conn) => {
-        await barrier.wait();
+        await signalSubmitRaceArrival(conn, 2, barrier);
         return submitTrainingSession(conn, {
           studentId: student.studentId,
           sessionId: started.sessionId,
@@ -235,7 +255,10 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         });
       }),
     ]);
+
+    await barrier.waitAllArmed();
     barrier.release();
+    const results = await writers;
 
     expect(results).toHaveLength(2);
     expect(results.filter((result) => result.idempotentReplay)).toHaveLength(1);
@@ -245,7 +268,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       .select()
       .from(trainingMetrics)
       .where(eq(trainingMetrics.sessionId, started.sessionId));
-    expect(metricRows.length).toBeGreaterThan(0);
+    expect(metricRows).toHaveLength(REACTION_COMPLETED_METRIC_COUNT);
 
     const completeAudits = await db
       .select()

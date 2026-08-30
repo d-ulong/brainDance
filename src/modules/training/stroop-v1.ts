@@ -4,6 +4,7 @@ import {
   type StroopColor,
 } from "@/modules/training/constants";
 import type { ProtocolMetricRow, TrainingEventRecord } from "@/modules/training/protocol";
+import { isSafePositiveInt } from "@/modules/training/protocol-schema";
 
 export type StroopMetricSchema = {
   trialCount: number;
@@ -148,6 +149,9 @@ export function validateStroopEvents(
       }
 
       const reactionMs = event.occurredAt.getTime() - stimulus.occurredAt.getTime();
+      if (reactionMs <= 0) {
+        return { valid: false, reason: "Response occurred before or at stimulus time" };
+      }
       const congruency = stimulus.inkColor === stimulus.wordColor ? "congruent" : "incongruent";
       trials.push({
         trialIndex,
@@ -326,10 +330,6 @@ function median(values: number[]): number {
     return values[mid]!;
   }
   return (values[mid - 1]! + values[mid]!) / 2;
-}
-
-function isSafePositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function isSafeNonNegativeInt(value: unknown): value is number {

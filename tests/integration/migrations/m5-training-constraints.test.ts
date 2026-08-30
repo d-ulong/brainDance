@@ -75,7 +75,7 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
-  it("enforces immutable training definition fields at database level", async () => {
+  it("enforces immutable training definition fields and active lifecycle at database level", async () => {
     const trainingKey = `immutable-test-${crypto.randomUUID().slice(0, 8)}`;
     const [inserted] = await db.execute(sql`
       INSERT INTO training_definitions (training_key, version, age_band, metric_schema, active)
@@ -99,10 +99,43 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
       try {
         await db.execute(sql`
           UPDATE training_definitions
+          SET version = 2
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected version immutability violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET age_band = '5-8'
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected age_band immutability violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
           SET metric_schema = '{"trialCount": 99}'::jsonb
           WHERE id = ${definitionId}::uuid
         `);
         throw new Error("Expected metric_schema immutability violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET active = 2
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected invalid active value violation");
       } catch (error) {
         expect(unwrapPgFailure(error).code).toBe("23514");
       }
@@ -120,6 +153,17 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
           WHERE id = ${definitionId}::uuid
         `);
         throw new Error("Expected reactivation violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET active = 2
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected forbidden inactive active transition violation");
       } catch (error) {
         expect(unwrapPgFailure(error).code).toBe("23514");
       }

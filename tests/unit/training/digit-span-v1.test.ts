@@ -162,6 +162,68 @@ describe("digit-span-v1 validation", () => {
     );
     expect(result.valid).toBe(false);
   });
+
+  it("AC-M5-03: rejects duplicate span response for the same attempt", () => {
+    const events = buildDigitSpanEvents(schema, {});
+    const forwardResponseIndex = events.findIndex(
+      (event) => event.eventType === "span.response" && event.payload.mode === "forward",
+    );
+    const duplicated = [
+      ...events.slice(0, forwardResponseIndex + 1),
+      events[forwardResponseIndex]!,
+      ...events.slice(forwardResponseIndex + 1),
+    ];
+    const result = validateDigitSpanEvents(duplicated, schema);
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: rejects span response before stimulus time", () => {
+    const stimulusAt = new Date("2026-01-01T00:00:10.000Z");
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: stimulusAt,
+        },
+        {
+          sequence: 1,
+          eventType: "span.response",
+          payload: {
+            mode: "forward",
+            length: 2,
+            attemptIndex: 0,
+            sequence: [1, 2],
+            response: [1, 2],
+          },
+          occurredAt: new Date(stimulusAt.getTime() - 1),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: accepts wrong answers as valid attempts with reduced max spans", () => {
+    const responses: Record<string, number[]> = {
+      "backward:4:0": [5, 4, 3, 2],
+    };
+    for (let length = schema.forwardMinLength; length <= schema.forwardMaxLength; length += 1) {
+      for (let attemptIndex = 0; attemptIndex < schema.attemptsPerLength; attemptIndex += 1) {
+        responses[`forward:${length}:${attemptIndex}`] = Array.from({ length }, () => 9);
+      }
+    }
+    const validation = validateDigitSpanEvents(buildDigitSpanEvents(schema, responses), schema);
+    expect(validation.valid).toBe(true);
+    if (!validation.valid) {
+      return;
+    }
+
+    const metrics = computeDigitSpanMetrics(validation.data);
+    expect(metrics.rows.find((row) => row.metricKey === "forward_max_span")?.value).toBe(0);
+    expect(metrics.rows.find((row) => row.metricKey === "backward_max_span")?.value).toBe(4);
+  });
 });
 
 describe("digit-span-v1 schema", () => {

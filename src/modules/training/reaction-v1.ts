@@ -4,6 +4,7 @@ import {
   REACTION_MAX_VALID_MS,
   REACTION_MIN_VALID_MS,
 } from "@/modules/training/constants";
+import { isSafePositiveInt } from "@/modules/training/protocol-schema";
 
 export type ReactionTrialRecord = {
   trialIndex: number;
@@ -136,10 +137,6 @@ function readTrialIndex(payload: Record<string, unknown>): number | null {
     return null;
   }
   return trialIndex;
-}
-
-function isSafePositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function median(values: number[]): number {
