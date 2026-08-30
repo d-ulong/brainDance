@@ -1,16 +1,21 @@
+import { sql } from "drizzle-orm";
 import { config } from "dotenv";
 import { and, eq, inArray } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/pg-core";
+import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   auditEvents,
   outboxEvents,
+  trainingDefinitions,
   trainingMetrics,
   trainingProfileProjection,
   trainingSessions,
 } from "@/db/schema";
 import * as auditModule from "@/modules/audit/append-audit-event";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
+import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
 import { getMetricDefinitions } from "@/modules/training/protocol";
 import {
   appendTrainingEvent,
@@ -25,8 +30,10 @@ import {
   resetIdentityTables,
   type TestDb,
 } from "../../helpers/db";
+import { requireDatabaseUrl } from "@/lib/env";
 import {
-  buildSubmitCompetitionLockKey,
+  FIXED_NEGATIVE_HASH_LOCK_KEY,
+  FIXED_POSITIVE_HASH_LOCK_KEY,
   runConcurrentSubmitsWithContentionEvidence,
 } from "../../helpers/training-submit-race";
 import { completeReactionSession, ensureM5TrainingDefinitions } from "../../helpers/training";
@@ -36,6 +43,38 @@ config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
 const REACTION_COMPLETED_METRIC_COUNT = getMetricDefinitions(REACTION_TRAINING_KEY).length;
+const R19_OBSERVATION_TIMEOUT_MS = 750;
+const R19_RUNNER_SETTLE_MS = 1500;
+const R19_HELPER_BOUND_MS = R19_OBSERVATION_TIMEOUT_MS + R19_RUNNER_SETTLE_MS + 1000;
+
+async function acquireSubmitStyleAdvisoryLock(db: TestDb, lockKey: string): Promise<string> {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+  });
+  return lockKey;
+}
+
+async function holdSubmitStyleAdvisoryLockForObservation(
+  db: TestDb,
+  lockKey: string,
+): Promise<string> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    return lockKey;
+  });
+}
+
+async function countAdvisoryLocksForKey(monitor: postgres.Sql, lockKey: string): Promise<number> {
+  const rows = await monitor<{ count: number }[]>`
+    SELECT COUNT(*)::int AS count
+    FROM pg_locks l
+    WHERE l.locktype = 'advisory'
+      AND l.classid = ((hashtext(${lockKey})::bigint >> 32) & 4294967295)::oid
+      AND l.objid = (hashtext(${lockKey})::bigint & 4294967295)::oid
+  `;
+  return rows[0]!.count;
+}
 
 async function prepareReactionSessionForSubmit(
   db: TestDb,
@@ -307,6 +346,96 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         ),
       );
     expect(invalidAudits).toHaveLength(0);
+  });
+
+  it("P1-R20: Drizzle schema declares training_definitions_active_domain check", () => {
+    const tableConfig = getTableConfig(trainingDefinitions);
+    const domainCheck = tableConfig.checks.find(
+      (constraint) => constraint.name === "training_definitions_active_domain",
+    );
+    expect(domainCheck).toBeDefined();
+  });
+
+  it("P1-R21: contention helper reuses production submit competition lock key builder", () => {
+    const studentId = "00000000-0000-0000-0000-000000000123";
+    const familyDate = "2025-08-30";
+    expect(buildSubmitCompetitionLockKey(studentId, REACTION_TRAINING_KEY, familyDate)).toBe(
+      `${studentId}:${REACTION_TRAINING_KEY}:${familyDate}`,
+    );
+  });
+
+  it("P1-R18: locates advisory lock backend for fixed positive hash key", async () => {
+    const results = await runConcurrentSubmitsWithContentionEvidence(FIXED_POSITIVE_HASH_LOCK_KEY, [
+      (db) => holdSubmitStyleAdvisoryLockForObservation(db, FIXED_POSITIVE_HASH_LOCK_KEY),
+      (db) => holdSubmitStyleAdvisoryLockForObservation(db, FIXED_POSITIVE_HASH_LOCK_KEY),
+    ]);
+
+    expect(results).toEqual([FIXED_POSITIVE_HASH_LOCK_KEY, FIXED_POSITIVE_HASH_LOCK_KEY]);
+  });
+
+  it("P1-R18: locates advisory lock backend for fixed negative hash key", async () => {
+    const results = await runConcurrentSubmitsWithContentionEvidence(FIXED_NEGATIVE_HASH_LOCK_KEY, [
+      (db) => holdSubmitStyleAdvisoryLockForObservation(db, FIXED_NEGATIVE_HASH_LOCK_KEY),
+      (db) => holdSubmitStyleAdvisoryLockForObservation(db, FIXED_NEGATIVE_HASH_LOCK_KEY),
+    ]);
+
+    expect(results).toEqual([FIXED_NEGATIVE_HASH_LOCK_KEY, FIXED_NEGATIVE_HASH_LOCK_KEY]);
+  });
+
+  it("P1-R19: observation failure releases gate and finishes within bounded time", async () => {
+    const realLockKey = FIXED_POSITIVE_HASH_LOCK_KEY;
+    const mismatchLockKey = "m5-observation-mismatch-lock-key";
+    const monitor = postgres(requireDatabaseUrl(), { max: 1 });
+
+    const startedAt = Date.now();
+    await expect(
+      runConcurrentSubmitsWithContentionEvidence(
+        mismatchLockKey,
+        [
+          (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+          (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+        ],
+        {
+          observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+          runnerSettleMs: R19_RUNNER_SETTLE_MS,
+        },
+      ),
+    ).rejects.toThrow(/Timed out waiting for all submit backends waiting/);
+
+    expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+    expect(await countAdvisoryLocksForKey(monitor, mismatchLockKey)).toBe(0);
+    expect(await countAdvisoryLocksForKey(monitor, realLockKey)).toBe(0);
+
+    await monitor.end({ timeout: 5 }).catch(() => undefined);
+  });
+
+  it("P1-R19: runner early failure still releases gate within bounded time", async () => {
+    const lockKey = FIXED_NEGATIVE_HASH_LOCK_KEY;
+    const monitor = postgres(requireDatabaseUrl(), { max: 1 });
+
+    const startedAt = Date.now();
+    await expect(
+      runConcurrentSubmitsWithContentionEvidence(
+        lockKey,
+        [
+          async () => {
+            throw new Error("runner failed before submit");
+          },
+          (db) => acquireSubmitStyleAdvisoryLock(db, lockKey),
+        ],
+        {
+          observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+          runnerSettleMs: R19_RUNNER_SETTLE_MS,
+        },
+      ),
+    ).rejects.toThrow(
+      /runner failed before submit|Timed out waiting for all submit backends waiting/,
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+    expect(await countAdvisoryLocksForKey(monitor, lockKey)).toBe(0);
+
+    await monitor.end({ timeout: 5 }).catch(() => undefined);
   });
 
   it("P1-R02: practice session does not overwrite effective projection", async () => {

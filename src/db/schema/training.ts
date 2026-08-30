@@ -1,4 +1,5 @@
 import {
+  check,
   date,
   index,
   integer,
@@ -50,6 +51,7 @@ export const trainingDefinitions = pgTable(
     uniqueIndex("training_definitions_active_key_age_unique")
       .on(table.trainingKey, table.ageBand)
       .where(sql`${table.active} = 1`),
+    check("training_definitions_active_domain", sql`${table.active} IN (0, 1)`),
   ],
 );
 

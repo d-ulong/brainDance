@@ -16,6 +16,7 @@ import {
   getSessionTrainingDefinition,
 } from "@/modules/training/definition.service";
 import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/training/constants";
+import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
 import { TrainingError } from "@/modules/training/errors";
 import {
   computeTrainingMetrics,
@@ -680,7 +681,11 @@ export async function submitTrainingSession(
   try {
     return await db.transaction(async (tx) => {
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${`${input.studentId}:${session.trainingKey}:${session.familyDate}`}))`,
+        sql`SELECT pg_advisory_xact_lock(hashtext(${buildSubmitCompetitionLockKey(
+          input.studentId,
+          session.trainingKey,
+          session.familyDate,
+        )}))`,
       );
       await tx.execute(
         sql`SELECT id FROM training_sessions WHERE id = ${input.sessionId} FOR UPDATE`,
