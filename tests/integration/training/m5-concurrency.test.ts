@@ -387,55 +387,119 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
     const mismatchLockKey = "m5-observation-mismatch-lock-key";
     const monitor = postgres(requireDatabaseUrl(), { max: 1 });
 
-    const startedAt = Date.now();
-    await expect(
-      runConcurrentSubmitsWithContentionEvidence(
-        mismatchLockKey,
-        [
-          (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
-          (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
-        ],
-        {
-          observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
-          runnerSettleMs: R19_RUNNER_SETTLE_MS,
-        },
-      ),
-    ).rejects.toThrow(/Timed out waiting for all submit backends waiting/);
+    try {
+      const startedAt = Date.now();
+      await expect(
+        runConcurrentSubmitsWithContentionEvidence(
+          mismatchLockKey,
+          [
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+          ],
+          {
+            observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+            runnerSettleMs: R19_RUNNER_SETTLE_MS,
+          },
+        ),
+      ).rejects.toThrow(/Timed out waiting for all submit backends waiting/);
 
-    expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
-    expect(await countAdvisoryLocksForKey(monitor, mismatchLockKey)).toBe(0);
-    expect(await countAdvisoryLocksForKey(monitor, realLockKey)).toBe(0);
-
-    await monitor.end({ timeout: 5 }).catch(() => undefined);
+      expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+      expect(await countAdvisoryLocksForKey(monitor, mismatchLockKey)).toBe(0);
+      expect(await countAdvisoryLocksForKey(monitor, realLockKey)).toBe(0);
+    } finally {
+      await monitor.end({ timeout: 5 }).catch(() => undefined);
+    }
   });
 
   it("P1-R19: runner early failure still releases gate within bounded time", async () => {
     const lockKey = FIXED_NEGATIVE_HASH_LOCK_KEY;
     const monitor = postgres(requireDatabaseUrl(), { max: 1 });
 
-    const startedAt = Date.now();
-    await expect(
-      runConcurrentSubmitsWithContentionEvidence(
-        lockKey,
-        [
-          async () => {
-            throw new Error("runner failed before submit");
+    try {
+      const startedAt = Date.now();
+      await expect(
+        runConcurrentSubmitsWithContentionEvidence(
+          lockKey,
+          [
+            async () => {
+              throw new Error("runner failed before submit");
+            },
+            (db) => acquireSubmitStyleAdvisoryLock(db, lockKey),
+          ],
+          {
+            observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+            runnerSettleMs: R19_RUNNER_SETTLE_MS,
           },
-          (db) => acquireSubmitStyleAdvisoryLock(db, lockKey),
-        ],
-        {
-          observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
-          runnerSettleMs: R19_RUNNER_SETTLE_MS,
-        },
-      ),
-    ).rejects.toThrow(
-      /runner failed before submit|Timed out waiting for all submit backends waiting/,
-    );
+        ),
+      ).rejects.toThrow(
+        /runner failed before submit|Timed out waiting for all submit backends waiting/,
+      );
 
-    expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
-    expect(await countAdvisoryLocksForKey(monitor, lockKey)).toBe(0);
+      expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+      expect(await countAdvisoryLocksForKey(monitor, lockKey)).toBe(0);
+    } finally {
+      await monitor.end({ timeout: 5 }).catch(() => undefined);
+    }
+  });
 
-    await monitor.end({ timeout: 5 }).catch(() => undefined);
+  it("P1-R23: forced gate unlock throw closes gate before single bounded runner settle", async () => {
+    const realLockKey = FIXED_POSITIVE_HASH_LOCK_KEY;
+    const mismatchLockKey = "m5-unlock-failure-throw-lock-key";
+    const monitor = postgres(requireDatabaseUrl(), { max: 1 });
+
+    try {
+      const startedAt = Date.now();
+      await expect(
+        runConcurrentSubmitsWithContentionEvidence(
+          mismatchLockKey,
+          [
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+          ],
+          {
+            observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+            runnerSettleMs: R19_RUNNER_SETTLE_MS,
+            injectGateUnlockFailure: "throw",
+          },
+        ),
+      ).rejects.toThrow(/Timed out waiting for all submit backends waiting/);
+
+      expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+      expect(await countAdvisoryLocksForKey(monitor, mismatchLockKey)).toBe(0);
+      expect(await countAdvisoryLocksForKey(monitor, realLockKey)).toBe(0);
+    } finally {
+      await monitor.end({ timeout: 5 }).catch(() => undefined);
+    }
+  });
+
+  it("P1-R23: forced gate unlock false closes gate before single bounded runner settle", async () => {
+    const realLockKey = FIXED_POSITIVE_HASH_LOCK_KEY;
+    const mismatchLockKey = "m5-unlock-failure-false-lock-key";
+    const monitor = postgres(requireDatabaseUrl(), { max: 1 });
+
+    try {
+      const startedAt = Date.now();
+      await expect(
+        runConcurrentSubmitsWithContentionEvidence(
+          mismatchLockKey,
+          [
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+            (db) => acquireSubmitStyleAdvisoryLock(db, realLockKey),
+          ],
+          {
+            observationTimeoutMs: R19_OBSERVATION_TIMEOUT_MS,
+            runnerSettleMs: R19_RUNNER_SETTLE_MS,
+            injectGateUnlockFailure: "return_false",
+          },
+        ),
+      ).rejects.toThrow(/Timed out waiting for all submit backends waiting/);
+
+      expect(Date.now() - startedAt).toBeLessThan(R19_HELPER_BOUND_MS);
+      expect(await countAdvisoryLocksForKey(monitor, mismatchLockKey)).toBe(0);
+      expect(await countAdvisoryLocksForKey(monitor, realLockKey)).toBe(0);
+    } finally {
+      await monitor.end({ timeout: 5 }).catch(() => undefined);
+    }
   });
 
   it("P1-R02: practice session does not overwrite effective projection", async () => {

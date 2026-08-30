@@ -63,26 +63,59 @@ async function waitForCondition(
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-type GateLockState = {
-  holding: boolean;
-  released: boolean;
-};
+/** Single gate lifecycle phase; mutually exclusive, no contradictory booleans. */
+type GateLockPhase = "unheld" | "holding" | "released" | "closed";
 
-async function releaseGateLock(
+export type GateUnlockInjection = "throw" | "return_false";
+
+async function queryAdvisoryUnlock(gate: postgres.Sql, lockKey: string): Promise<boolean> {
+  const rows = await gate<{ pg_advisory_unlock: boolean }[]>`
+    SELECT pg_advisory_unlock(hashtext(${lockKey})) AS pg_advisory_unlock
+  `;
+  return rows[0]?.pg_advisory_unlock ?? false;
+}
+
+async function closeGateConnection(
   gate: postgres.Sql,
-  lockKey: string,
-  gateState: GateLockState,
+  gatePhase: { value: GateLockPhase },
 ): Promise<void> {
-  if (gateState.released || !gateState.holding) {
+  if (gatePhase.value === "closed") {
     return;
   }
-  gateState.released = true;
-  gateState.holding = false;
-  try {
-    await gate`SELECT pg_advisory_unlock(hashtext(${lockKey}))`;
-  } catch {
-    // gate connection may already be closed or lock already released
+  await gate.end({ timeout: 5 }).catch(() => undefined);
+  gatePhase.value = "closed";
+}
+
+async function releaseGateLockOrClose(
+  gate: postgres.Sql,
+  lockKey: string,
+  gatePhase: { value: GateLockPhase },
+  injectUnlock?: GateUnlockInjection,
+): Promise<void> {
+  if (gatePhase.value !== "holding") {
+    return;
   }
+
+  try {
+    let unlocked: boolean;
+    if (injectUnlock === "throw") {
+      throw new Error("injected gate unlock failure");
+    }
+    if (injectUnlock === "return_false") {
+      unlocked = false;
+    } else {
+      unlocked = await queryAdvisoryUnlock(gate, lockKey);
+    }
+
+    if (unlocked) {
+      gatePhase.value = "released";
+      return;
+    }
+  } catch {
+    // fall through to terminate gate connection below
+  }
+
+  await closeGateConnection(gate, gatePhase);
 }
 
 async function waitForRunnersBounded<T>(
@@ -115,6 +148,8 @@ async function waitForRunnersBounded<T>(
 export type ConcurrentSubmitRaceOptions = {
   observationTimeoutMs?: number;
   runnerSettleMs?: number;
+  /** Test-only: force gate unlock failure during cleanup. */
+  injectGateUnlockFailure?: GateUnlockInjection;
 };
 
 export async function runConcurrentSubmitsWithContentionEvidence<T>(
@@ -128,17 +163,20 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
 
   const observationTimeoutMs = options.observationTimeoutMs ?? DEFAULT_OBSERVATION_TIMEOUT_MS;
   const runnerSettleMs = options.runnerSettleMs ?? DEFAULT_RUNNER_SETTLE_MS;
+  const injectUnlock = options.injectGateUnlockFailure;
 
   const gate = postgres(requireDatabaseUrl(), { max: 1 });
   const monitor = postgres(requireDatabaseUrl(), { max: 1 });
   const clients = runners.map(() => postgres(requireDatabaseUrl(), { max: 1 }));
   let submitPromises: Array<Promise<T>> = [];
-  const gateState: GateLockState = { holding: false, released: false };
+  const gatePhase: { value: GateLockPhase } = { value: "unheld" };
+
+  let result: T[] | undefined;
+  let primaryError: unknown;
 
   try {
     await gate`SELECT pg_advisory_lock(hashtext(${lockKey}))`;
-    gateState.holding = true;
-    gateState.released = false;
+    gatePhase.value = "holding";
 
     const pids: number[] = [];
     for (const client of clients) {
@@ -161,9 +199,12 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
       observationTimeoutMs,
     );
 
-    await gate`SELECT pg_advisory_unlock(hashtext(${lockKey}))`;
-    gateState.holding = false;
-    gateState.released = true;
+    const unlocked = await queryAdvisoryUnlock(gate, lockKey);
+    if (!unlocked) {
+      await closeGateConnection(gate, gatePhase);
+      throw new Error(`Failed to release competition advisory lock for ${lockKey}`);
+    }
+    gatePhase.value = "released";
 
     await waitForCondition(
       async () => {
@@ -174,22 +215,23 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
       observationTimeoutMs,
     );
 
-    return await Promise.all(submitPromises);
+    result = await Promise.all(submitPromises);
   } catch (error) {
-    await releaseGateLock(gate, lockKey, gateState);
-    await waitForRunnersBounded(
-      submitPromises,
-      "runners after observation failure",
-      runnerSettleMs,
-    ).catch(() => undefined);
-    throw error;
+    primaryError = error;
   } finally {
-    await releaseGateLock(gate, lockKey, gateState);
+    await releaseGateLockOrClose(gate, lockKey, gatePhase, injectUnlock);
     await waitForRunnersBounded(submitPromises, "runners during cleanup", runnerSettleMs).catch(
       () => undefined,
     );
-    await gate.end({ timeout: 5 }).catch(() => undefined);
+    if (gatePhase.value !== "closed") {
+      await closeGateConnection(gate, gatePhase);
+    }
     await monitor.end({ timeout: 5 }).catch(() => undefined);
     await Promise.all(clients.map((client) => client.end({ timeout: 5 }).catch(() => undefined)));
   }
+
+  if (primaryError) {
+    throw primaryError;
+  }
+  return result!;
 }
