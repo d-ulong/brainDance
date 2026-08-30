@@ -233,4 +233,137 @@ describe.skipIf(!hasDb)("M5 training protocols", () => {
       );
     expect(outboxRows).toHaveLength(1);
   });
+
+  it("P1-R01: start replay and submit use session definition snapshot after v1 deactivation", async () => {
+    const student = await seedStudentUser(db, {
+      username: `snapshot_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    const started = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "snapshot-start-v1",
+    });
+    expect(started.definitionVersion).toBe(1);
+    expect(started.expectedTrialCount).toBe(5);
+
+    await db
+      .update(trainingDefinitions)
+      .set({ active: 0 })
+      .where(
+        and(
+          eq(trainingDefinitions.trainingKey, REACTION_TRAINING_KEY),
+          eq(trainingDefinitions.version, 1),
+          eq(trainingDefinitions.ageBand, started.ageBand),
+        ),
+      );
+
+    await db.insert(trainingDefinitions).values({
+      trainingKey: REACTION_TRAINING_KEY,
+      version: 2,
+      ageBand: started.ageBand,
+      metricSchema: { trialCount: 10 },
+      active: 1,
+    });
+
+    const replay = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "snapshot-start-v1",
+    });
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.expectedTrialCount).toBe(5);
+    expect(replay.definitionVersion).toBe(1);
+
+    let sequence = 0;
+    for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+      await appendTrainingEvent(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        sequence,
+        eventType: "trial.stimulus",
+        payload: { trialIndex },
+      });
+      sequence += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await appendTrainingEvent(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        sequence,
+        eventType: "trial.response",
+        payload: { trialIndex, correct: true, inputMethod: "keyboard" },
+      });
+      sequence += 1;
+    }
+
+    const submitted = await submitTrainingSession(db, {
+      studentId: student.studentId,
+      sessionId: started.sessionId,
+      idempotencyKey: "snapshot-submit-v1",
+    });
+    expect(submitted.status).toBe("completed");
+    expect(submitted.sessionKind).toBe("effective");
+  });
+
+  it("P1-R01: existing session replay and submit succeed when no active definition remains", async () => {
+    const student = await seedStudentUser(db, {
+      username: `snapshot_none_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    const started = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "snapshot-none-start",
+    });
+
+    await db
+      .update(trainingDefinitions)
+      .set({ active: 0 })
+      .where(
+        and(
+          eq(trainingDefinitions.trainingKey, REACTION_TRAINING_KEY),
+          eq(trainingDefinitions.ageBand, started.ageBand),
+        ),
+      );
+
+    const replay = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "snapshot-none-start",
+    });
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.expectedTrialCount).toBe(5);
+
+    let sequence = 0;
+    for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+      await appendTrainingEvent(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        sequence,
+        eventType: "trial.stimulus",
+        payload: { trialIndex },
+      });
+      sequence += 1;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await appendTrainingEvent(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        sequence,
+        eventType: "trial.response",
+        payload: { trialIndex, correct: true, inputMethod: "keyboard" },
+      });
+      sequence += 1;
+    }
+
+    const submitted = await submitTrainingSession(db, {
+      studentId: student.studentId,
+      sessionId: started.sessionId,
+      idempotencyKey: "snapshot-none-submit",
+    });
+    expect(submitted.status).toBe("completed");
+  });
 });

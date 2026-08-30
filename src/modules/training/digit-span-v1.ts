@@ -58,16 +58,13 @@ export function decodeDigitSpanMetricSchema(
   const attemptsPerLength = raw.attemptsPerLength;
 
   if (
-    typeof forwardMinLength !== "number" ||
-    typeof forwardMaxLength !== "number" ||
-    typeof backwardMinLength !== "number" ||
-    typeof backwardMaxLength !== "number" ||
-    typeof attemptsPerLength !== "number" ||
-    forwardMinLength <= 0 ||
+    !isSafePositiveInt(forwardMinLength) ||
+    !isSafePositiveInt(forwardMaxLength) ||
+    !isSafePositiveInt(backwardMinLength) ||
+    !isSafePositiveInt(backwardMaxLength) ||
+    !isSafePositiveInt(attemptsPerLength) ||
     forwardMaxLength < forwardMinLength ||
-    backwardMinLength <= 0 ||
-    backwardMaxLength < backwardMinLength ||
-    attemptsPerLength <= 0
+    backwardMaxLength < backwardMinLength
   ) {
     return null;
   }
@@ -88,8 +85,7 @@ export function getDigitSpanSchemaForAgeBand(ageBand: string): DigitSpanMetricSc
 export function getDigitSpanExpectedAttemptCount(schema: Record<string, unknown>): number {
   const decoded = decodeDigitSpanMetricSchema(schema);
   if (!decoded) {
-    const fallback = getDigitSpanSchemaForAgeBand("9-12");
-    return countAttemptsForSchema(fallback);
+    return 0;
   }
   return countAttemptsForSchema(decoded);
 }
@@ -175,7 +171,10 @@ export function validateDigitSpanEvents(
         response: parsed.response,
         correct,
       });
+      continue;
     }
+
+    return { valid: false, reason: `Unknown event type: ${event.eventType}` };
   }
 
   const expectedAttempts = countAttemptsForSchema(schema);
@@ -356,6 +355,10 @@ function arraysEqual(a: number[], b: number[]): boolean {
     }
   }
   return true;
+}
+
+function isSafePositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 export { DEFAULT_DIGIT_SPAN_SCHEMAS };

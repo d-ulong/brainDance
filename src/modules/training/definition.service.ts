@@ -39,6 +39,50 @@ export async function getActiveTrainingDefinition(
   return definition;
 }
 
+export async function getTrainingDefinitionById(db: Database, definitionId: string) {
+  const [definition] = await db
+    .select()
+    .from(trainingDefinitions)
+    .where(eq(trainingDefinitions.id, definitionId))
+    .limit(1);
+
+  if (!definition) {
+    throw new TrainingError("TRAINING_DEFINITION_NOT_FOUND", "Training definition not found");
+  }
+
+  return definition;
+}
+
+export async function getSessionTrainingDefinition(
+  db: Database,
+  session: {
+    definitionId: string;
+    trainingKey: string;
+    definitionVersion: number;
+    ageBand: string;
+  },
+) {
+  const definition = await getTrainingDefinitionById(db, session.definitionId);
+
+  if (definition.trainingKey !== session.trainingKey) {
+    throw new TrainingError(
+      "TRAINING_DEFINITION_NOT_FOUND",
+      "Session definition training key mismatch",
+    );
+  }
+  if (definition.version !== session.definitionVersion) {
+    throw new TrainingError("TRAINING_DEFINITION_NOT_FOUND", "Session definition version mismatch");
+  }
+  if (definition.ageBand !== session.ageBand) {
+    throw new TrainingError(
+      "TRAINING_DEFINITION_NOT_FOUND",
+      "Session definition age band mismatch",
+    );
+  }
+
+  return definition;
+}
+
 const AGE_BANDS: AgeBand[] = ["5-8", "9-12", "13-18"];
 
 async function seedDefinitionForKey(

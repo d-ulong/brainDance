@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { STROOP_COLORS } from "@/modules/training/constants";
 import {
   computeStroopMetrics,
+  decodeStroopMetricSchema,
   getStroopSchemaForAgeBand,
   validateStroopEvents,
 } from "@/modules/training/stroop-v1";
@@ -86,6 +87,86 @@ describe("stroop-v1 validation", () => {
     });
     const result = validateStroopEvents(buildStroopEvents({ trials }), schema);
     expect(result.valid).toBe(true);
+  });
+
+  it("AC-M5-02: rejects unknown event types", () => {
+    const result = validateStroopEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.unknown",
+          payload: { trialIndex: 0 },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-02: rejects duplicate stimulus events", () => {
+    const base = new Date("2026-01-01T00:00:00.000Z");
+    const result = validateStroopEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.stimulus",
+          payload: { trialIndex: 0, inkColor: "red", wordColor: "red" },
+          occurredAt: base,
+        },
+        {
+          sequence: 1,
+          eventType: "trial.stimulus",
+          payload: { trialIndex: 0, inkColor: "red", wordColor: "red" },
+          occurredAt: base,
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-02: rejects response without matching stimulus", () => {
+    const result = validateStroopEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.response",
+          payload: { trialIndex: 0, selectedColor: "red" },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe("stroop-v1 schema", () => {
+  it("AC-M5-02: rejects non-integer trial counts and quotas", () => {
+    expect(
+      decodeStroopMetricSchema({
+        trialCount: 16.5,
+        congruentQuota: 8,
+        incongruentQuota: 8,
+        colors: [...STROOP_COLORS],
+        minValidMs: 200,
+        maxValidMs: 4000,
+      }),
+    ).toBeNull();
+  });
+
+  it("AC-M5-02: rejects non-finite time boundaries", () => {
+    expect(
+      decodeStroopMetricSchema({
+        trialCount: 16,
+        congruentQuota: 8,
+        incongruentQuota: 8,
+        colors: [...STROOP_COLORS],
+        minValidMs: Number.NaN,
+        maxValidMs: 4000,
+      }),
+    ).toBeNull();
   });
 });
 

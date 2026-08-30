@@ -65,14 +65,13 @@ export function decodeStroopMetricSchema(raw: Record<string, unknown>): StroopMe
   const maxValidMs = raw.maxValidMs;
 
   if (
-    typeof trialCount !== "number" ||
-    typeof congruentQuota !== "number" ||
-    typeof incongruentQuota !== "number" ||
+    !isSafePositiveInt(trialCount) ||
+    !isSafeNonNegativeInt(congruentQuota) ||
+    !isSafeNonNegativeInt(incongruentQuota) ||
     typeof minValidMs !== "number" ||
     typeof maxValidMs !== "number" ||
-    trialCount <= 0 ||
-    congruentQuota < 0 ||
-    incongruentQuota < 0 ||
+    !Number.isFinite(minValidMs) ||
+    !Number.isFinite(maxValidMs) ||
     congruentQuota + incongruentQuota !== trialCount ||
     minValidMs <= 0 ||
     maxValidMs <= minValidMs ||
@@ -106,7 +105,7 @@ export function getStroopSchemaForAgeBand(ageBand: string): StroopMetricSchema {
 
 export function getStroopExpectedTrialCount(schema: Record<string, unknown>): number {
   const decoded = decodeStroopMetricSchema(schema);
-  return decoded?.trialCount ?? getStroopSchemaForAgeBand("9-12").trialCount;
+  return decoded?.trialCount ?? 0;
 }
 
 export function validateStroopEvents(
@@ -159,7 +158,10 @@ export function validateStroopEvents(
         correct: selectedColor === stimulus.inkColor,
         reactionMs,
       });
+      continue;
     }
+
+    return { valid: false, reason: `Unknown event type: ${event.eventType}` };
   }
 
   if (trials.length !== schema.trialCount) {
@@ -324,6 +326,14 @@ function median(values: number[]): number {
     return values[mid]!;
   }
   return (values[mid - 1]! + values[mid]!) / 2;
+}
+
+function isSafePositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isSafeNonNegativeInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 export { DEFAULT_STROOP_SCHEMAS };

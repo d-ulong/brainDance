@@ -41,7 +41,7 @@ export function decodeReactionMetricSchema(
   raw: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const trialCount = raw.trialCount;
-  if (trialCount !== undefined && (typeof trialCount !== "number" || trialCount <= 0)) {
+  if (trialCount !== undefined && !isSafePositiveInt(trialCount)) {
     return null;
   }
   return raw;
@@ -86,7 +86,10 @@ export function validateReactionEvents(
 
       const reactionMs = event.occurredAt.getTime() - stimulusAt.getTime();
       trials.push({ trialIndex, reactionMs, correct });
+      continue;
     }
+
+    return { valid: false, reason: `Unknown event type: ${event.eventType}` };
   }
 
   if (trials.length !== expectedTrialCount) {
@@ -133,6 +136,10 @@ function readTrialIndex(payload: Record<string, unknown>): number | null {
     return null;
   }
   return trialIndex;
+}
+
+function isSafePositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function median(values: number[]): number {

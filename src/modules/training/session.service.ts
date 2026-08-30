@@ -11,7 +11,10 @@ import {
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
-import { getActiveTrainingDefinition } from "@/modules/training/definition.service";
+import {
+  getActiveTrainingDefinition,
+  getSessionTrainingDefinition,
+} from "@/modules/training/definition.service";
 import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/training/constants";
 import { TrainingError } from "@/modules/training/errors";
 import {
@@ -284,11 +287,7 @@ async function buildStartReplayResult(
   db: Database,
   existing: typeof trainingSessions.$inferSelect,
 ): Promise<StartTrainingSessionResult> {
-  const definition = await getActiveTrainingDefinition(
-    db,
-    existing.trainingKey,
-    existing.ageBand as AgeBand,
-  );
+  const definition = await getSessionTrainingDefinition(db, existing);
   const schema = resolveDecodedSchema(existing.trainingKey, definition.metricSchema ?? {});
 
   return {
@@ -550,6 +549,49 @@ export async function abandonTrainingSession(
   return { sessionId: input.sessionId, status: "abandoned" };
 }
 
+async function finalizeInvalidSession(
+  db: Database,
+  input: SubmitTrainingSessionInput & { reason: string },
+): Promise<SubmitTrainingSessionResult> {
+  const finishedAt = new Date();
+  try {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(trainingSessions)
+        .set({
+          status: "invalid",
+          finishedAt,
+          invalidReason: input.reason,
+          submitIdempotencyKey: input.idempotencyKey,
+        })
+        .where(eq(trainingSessions.id, input.sessionId));
+
+      await appendAuditEvent(tx, {
+        actorId: input.studentId,
+        action: "training_session.invalid",
+        resourceType: "training_session",
+        resourceId: input.sessionId,
+        requestId: input.requestId,
+        idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
+        metadata: { reason: input.reason },
+      });
+    });
+  } catch (error) {
+    if (isPostgresUniqueViolation(error)) {
+      return replayOrMismatchOnSubmitKeyConflict(db, input);
+    }
+    throw error;
+  }
+
+  return {
+    sessionId: input.sessionId,
+    status: "invalid",
+    sessionKind: null,
+    metrics: [],
+    idempotentReplay: false,
+  };
+}
+
 async function replayOrMismatchOnSubmitKeyConflict(
   db: Database,
   input: SubmitTrainingSessionInput,
@@ -614,89 +656,23 @@ export async function submitTrainingSession(
   }
 
   const events = await loadSessionEvents(db, input.sessionId);
-  const definition = await getActiveTrainingDefinition(
-    db,
-    session.trainingKey,
-    session.ageBand as AgeBand,
-  );
+  const definition = await getSessionTrainingDefinition(db, session);
   const schema = resolveDecodedSchema(session.trainingKey, definition.metricSchema ?? {});
   const validation = validateTrainingEvents(session.trainingKey, events, schema);
 
   if (!validation.valid) {
-    const finishedAt = new Date();
-    try {
-      await db
-        .update(trainingSessions)
-        .set({
-          status: "invalid",
-          finishedAt,
-          invalidReason: validation.reason,
-          submitIdempotencyKey: input.idempotencyKey,
-        })
-        .where(eq(trainingSessions.id, input.sessionId));
-    } catch (error) {
-      if (isPostgresUniqueViolation(error)) {
-        return replayOrMismatchOnSubmitKeyConflict(db, input);
-      }
-      throw error;
-    }
-
-    await appendAuditEvent(db, {
-      actorId: input.studentId,
-      action: "training_session.invalid",
-      resourceType: "training_session",
-      resourceId: input.sessionId,
-      requestId: input.requestId,
-      idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
-      metadata: { reason: validation.reason },
+    return finalizeInvalidSession(db, {
+      ...input,
+      reason: validation.reason,
     });
-
-    return {
-      sessionId: input.sessionId,
-      status: "invalid",
-      sessionKind: null,
-      metrics: [],
-      idempotentReplay: false,
-    };
   }
 
   const computed = computeTrainingMetrics(session.trainingKey, validation.data, schema);
   if (computed.rejectReason) {
-    const finishedAt = new Date();
-    try {
-      await db
-        .update(trainingSessions)
-        .set({
-          status: "invalid",
-          finishedAt,
-          invalidReason: computed.rejectReason,
-          submitIdempotencyKey: input.idempotencyKey,
-        })
-        .where(eq(trainingSessions.id, input.sessionId));
-    } catch (error) {
-      if (isPostgresUniqueViolation(error)) {
-        return replayOrMismatchOnSubmitKeyConflict(db, input);
-      }
-      throw error;
-    }
-
-    await appendAuditEvent(db, {
-      actorId: input.studentId,
-      action: "training_session.invalid",
-      resourceType: "training_session",
-      resourceId: input.sessionId,
-      requestId: input.requestId,
-      idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
-      metadata: { reason: computed.rejectReason },
+    return finalizeInvalidSession(db, {
+      ...input,
+      reason: computed.rejectReason,
     });
-
-    return {
-      sessionId: input.sessionId,
-      status: "invalid",
-      sessionKind: null,
-      metrics: [],
-      idempotentReplay: false,
-    };
   }
 
   const metricRows = metricRowsToDbValues(input.sessionId, computed.rows);
@@ -769,14 +745,16 @@ export async function submitTrainingSession(
         calculationVersion: row.calculationVersion,
       }));
 
-      await upsertProfileProjection(tx, {
-        studentId: input.studentId,
-        trainingKey: lockedSession.trainingKey,
-        definitionVersion: lockedSession.definitionVersion,
-        ageBand: lockedSession.ageBand,
-        sessionId: input.sessionId,
-        metrics,
-      });
+      if (sessionKind === "effective") {
+        await upsertProfileProjection(tx, {
+          studentId: input.studentId,
+          trainingKey: lockedSession.trainingKey,
+          definitionVersion: lockedSession.definitionVersion,
+          ageBand: lockedSession.ageBand,
+          sessionId: input.sessionId,
+          metrics,
+        });
+      }
 
       await appendAuditEvent(tx, {
         actorId: input.studentId,
@@ -823,6 +801,12 @@ export async function submitTrainingSession(
   } catch (error) {
     if (isPostgresUniqueViolation(error)) {
       return replayOrMismatchOnSubmitKeyConflict(db, input);
+    }
+    if (error instanceof TrainingError && error.code === "SESSION_INVALID_STATE") {
+      const raced = await findSubmitSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+      if (raced && raced.id === input.sessionId) {
+        return resolveSubmitIdempotencyReplay(db, input, raced);
+      }
     }
     throw error;
   }

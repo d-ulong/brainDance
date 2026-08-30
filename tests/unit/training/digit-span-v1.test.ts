@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeDigitSpanMetrics,
+  decodeDigitSpanMetricSchema,
   getDigitSpanSchemaForAgeBand,
   validateDigitSpanEvents,
 } from "@/modules/training/digit-span-v1";
@@ -93,6 +94,87 @@ describe("digit-span-v1 validation", () => {
   it("accepts full forward and backward ladder", () => {
     const result = validateDigitSpanEvents(buildDigitSpanEvents(schema, {}), schema);
     expect(result.valid).toBe(true);
+  });
+
+  it("AC-M5-03: rejects unknown event types", () => {
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.unknown",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: rejects duplicate span stimulus", () => {
+    const base = new Date("2026-01-01T00:00:00.000Z");
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: base,
+        },
+        {
+          sequence: 1,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: base,
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: rejects span length outside definition range", () => {
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.stimulus",
+          payload: { mode: "forward", length: 99, attemptIndex: 0, sequence: [1, 2] },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("AC-M5-03: rejects invalid span response payload", () => {
+    const result = validateDigitSpanEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "span.response",
+          payload: { mode: "forward", length: 2, attemptIndex: 0, sequence: [1, 2], response: [1] },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      schema,
+    );
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe("digit-span-v1 schema", () => {
+  it("AC-M5-03: rejects non-integer length and quota fields", () => {
+    expect(
+      decodeDigitSpanMetricSchema({
+        forwardMinLength: 2.5,
+        forwardMaxLength: 5,
+        backwardMinLength: 2,
+        backwardMaxLength: 4,
+        attemptsPerLength: 2,
+      }),
+    ).toBeNull();
   });
 });
 

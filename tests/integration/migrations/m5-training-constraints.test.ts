@@ -74,4 +74,60 @@ describe.skipIf(!hasDb)("M5 training schema constraints", () => {
     `);
     expect(rows.length).toBeGreaterThan(0);
   });
+
+  it("enforces immutable training definition fields at database level", async () => {
+    const trainingKey = `immutable-test-${crypto.randomUUID().slice(0, 8)}`;
+    const [inserted] = await db.execute(sql`
+      INSERT INTO training_definitions (training_key, version, age_band, metric_schema, active)
+      VALUES (${trainingKey}, 1, '9-12', '{"trialCount": 4}'::jsonb, 1)
+      RETURNING id
+    `);
+    const definitionId = (inserted as { id: string }).id;
+
+    try {
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET training_key = 'other'
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected training_key immutability violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET metric_schema = '{"trialCount": 99}'::jsonb
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected metric_schema immutability violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+
+      await db.execute(sql`
+        UPDATE training_definitions
+        SET active = 0
+        WHERE id = ${definitionId}::uuid
+      `);
+
+      try {
+        await db.execute(sql`
+          UPDATE training_definitions
+          SET active = 1
+          WHERE id = ${definitionId}::uuid
+        `);
+        throw new Error("Expected reactivation violation");
+      } catch (error) {
+        expect(unwrapPgFailure(error).code).toBe("23514");
+      }
+    } finally {
+      await db.execute(sql`
+        DELETE FROM training_definitions
+        WHERE id = ${definitionId}::uuid
+      `);
+    }
+  });
 });

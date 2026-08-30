@@ -327,7 +327,7 @@ describe.skipIf(!hasDb)("m3 schema constraints", () => {
     const tags = journal.entries.map((entry) => entry.tag);
     expect(tags).toContain("0014_m3_ledger_reliability");
     expect(tags).toContain("0017_m3_reversal_settlement_semantics");
-    expect(tags.at(-1)).toBe("0020_m5_training_constraints");
+    expect(tags.at(-1)).toBe("0021_m5_definition_immutability");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,

@@ -100,10 +100,11 @@ const reactionHandler: TrainingProtocolHandler = {
       data: { kind: "reaction", trials: result.trials },
     };
   },
-  computeMetrics(data, _schema) {
+  computeMetrics(data, schema) {
     if (data.kind !== "reaction") {
       return { calculationVersion: "reaction-v1", rows: [], rejectReason: "Invalid protocol data" };
     }
+    void schema;
     const metrics = computeReactionMetrics(data.trials);
     const rows: ProtocolMetricRow[] = [
       {
@@ -210,7 +211,7 @@ const digitSpanHandler: TrainingProtocolHandler = {
       data: { kind: "digit-span", data: result.data },
     };
   },
-  computeMetrics(data, _schema) {
+  computeMetrics(data, schema) {
     if (data.kind !== "digit-span") {
       return {
         calculationVersion: "digit-span-v1",
@@ -218,6 +219,7 @@ const digitSpanHandler: TrainingProtocolHandler = {
         rejectReason: "Invalid protocol data",
       };
     }
+    void schema;
     const metrics = computeDigitSpanMetrics(data.data);
     return { calculationVersion: metrics.calculationVersion, rows: metrics.rows };
   },

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { computeReactionMetrics, validateReactionEvents } from "@/modules/training/reaction-v1";
+import {
+  computeReactionMetrics,
+  decodeReactionMetricSchema,
+  validateReactionEvents,
+} from "@/modules/training/reaction-v1";
 
 describe("reaction-v1 metrics", () => {
   it("computes median reaction time from valid correct trials only", () => {
@@ -69,5 +73,30 @@ describe("reaction-v1 validation", () => {
     if (result.valid) {
       expect(result.trials[0]?.reactionMs).toBe(300);
     }
+  });
+
+  it("rejects unknown event types", () => {
+    const result = validateReactionEvents(
+      [
+        {
+          sequence: 0,
+          eventType: "trial.unknown",
+          payload: { trialIndex: 0 },
+          occurredAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      ],
+      1,
+    );
+    expect(result.valid).toBe(false);
+  });
+});
+
+describe("reaction-v1 schema", () => {
+  it("keeps missing trialCount compatible with historical v1 definitions", () => {
+    expect(decodeReactionMetricSchema({})).toEqual({});
+  });
+
+  it("rejects non-integer trialCount values", () => {
+    expect(decodeReactionMetricSchema({ trialCount: 5.5 })).toBeNull();
   });
 });
