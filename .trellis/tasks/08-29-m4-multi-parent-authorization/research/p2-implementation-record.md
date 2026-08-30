@@ -2,7 +2,7 @@
 
 > branch: `feat/m4-multi-parent-authorization`
 >
-> execution_baseline: `bb04d5bebe94e13c94a9433d5cd42aa34b7061c2`
+> execution_baseline: `fce66a98dca8cddaaa2068c1443cb7ca4ef17940`
 
 ## P2 交付范围
 
@@ -30,8 +30,9 @@
 
 | ID | 修订 | 证据 |
 | --- | --- | --- |
-| P2-F01 | `grantPrivateAccess` 先 `lockUsersInOrder` 再校验 active relationship；grant/end 交错后无残留 active grant，重新关联不恢复历史可读权 | `reflection-privacy.test.ts` P2-F01 |
-| P2-F02 | 并发读/撤权交错后 fresh read 拒绝且错误序列化不含正文 | `reflection-privacy.test.ts` P2-F02 |
+| P2-F01 | `grantPrivateAccess` 先 `lockUsersInOrder` 再校验 active relationship；grant/end 交错后无残留 active grant，重新关联不恢复历史可读权 | `reflection-privacy.test.ts` P2-F01（顺序 end→grant + 独立连接 barrier 并发 grant/end） |
+| P2-F02 | 并发读/撤权交错后 fresh read 拒绝且错误序列化不含正文 | `reflection-privacy.test.ts` P2-F02（独立连接 barrier 并发 read/revoke） |
+| P2-F03 | 从生产 service 输入与实现移除 `testHooks`；并发同步完全由测试侧 barrier/独立连接承担 | `grant-private-access.service.ts` 无 testHooks；P2-F01/P2-F02 仍绿 |
 
 ## 验收矩阵
 
@@ -48,12 +49,12 @@
 | Command | Exit | Summary |
 | --- | --- | --- |
 | `pnpm db:migrate` | 0 | 0019 applied |
-| `pnpm test` | 0 | **50 files / 367 tests** passed (~405s) |
+| `pnpm test` | 0 | **50 files / 367 tests** passed (~406s) |
 | `pnpm typecheck` | 0 | clean |
 | `pnpm lint` | 0 | 0 errors, 3 pre-existing warnings |
 | `pnpm format` | 0 | All matched files use Prettier code style |
 | `pnpm build` | 0 | next build OK |
-| `pnpm test:e2e` | 0 | **14 passed** (1 worker, desktop + mobile-360, 2.0m) |
+| `pnpm test:e2e` | 0 | **14 passed** (1 worker, desktop + mobile-360, 1.9m) |
 
 ## Blocker
 

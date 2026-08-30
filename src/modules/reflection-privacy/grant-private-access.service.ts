@@ -49,17 +49,12 @@ async function findGrantReplay(
   return existing?.resourceId ?? null;
 }
 
-export type GrantPrivateAccessTestHooks = {
-  beforeUserLock?: () => void | Promise<void>;
-};
-
 export type GrantPrivateAccessInput = {
   studentId: string;
   familyDate: string;
   parentId: string;
   idempotencyKey: string;
   requestId?: string;
-  testHooks?: GrantPrivateAccessTestHooks;
 };
 
 export type GrantPrivateAccessResult = {
@@ -100,10 +95,6 @@ export async function grantPrivateAccess(
     }
     if (reflection.visibility !== "private") {
       throw new ReflectionPrivacyError("STATE_CONFLICT", "Only private reflections can be granted");
-    }
-
-    if (input.testHooks?.beforeUserLock) {
-      await input.testHooks.beforeUserLock();
     }
 
     await lockUsersInOrder(tx, [input.studentId, input.parentId]);
@@ -198,17 +189,12 @@ export async function grantPrivateAccess(
   });
 }
 
-export type RevokePrivateAccessTestHooks = {
-  afterUserLock?: () => void | Promise<void>;
-};
-
 export type RevokePrivateAccessInput = {
   studentId: string;
   familyDate: string;
   parentId: string;
   idempotencyKey: string;
   requestId?: string;
-  testHooks?: RevokePrivateAccessTestHooks;
 };
 
 export type RevokePrivateAccessResult = {
@@ -249,10 +235,6 @@ export async function revokePrivateAccess(
     }
 
     await lockUsersInOrder(tx, [input.studentId, input.parentId]);
-
-    if (input.testHooks?.afterUserLock) {
-      await input.testHooks.afterUserLock();
-    }
 
     const [activeGrant] = await tx
       .select()
