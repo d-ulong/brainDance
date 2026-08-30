@@ -14,6 +14,9 @@ const DEFAULT_RUNNER_SETTLE_MS = 5000;
 export const FIXED_POSITIVE_HASH_LOCK_KEY = "m5-lock-probe-1";
 export const FIXED_NEGATIVE_HASH_LOCK_KEY = "m5-lock-probe-0";
 
+export const INJECTED_GATE_UNLOCK_FAILURE_MESSAGE = "injected gate unlock failure";
+export const INJECTED_GATE_CLOSE_FAILURE_MESSAGE = "injected gate close failure";
+
 async function readBackendPid(client: postgres.Sql): Promise<number> {
   const rows = await client<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
   return rows[0]!.pid;
@@ -66,7 +69,11 @@ async function waitForCondition(
 /** Single gate lifecycle phase; mutually exclusive, no contradictory booleans. */
 type GateLockPhase = "unheld" | "holding" | "released" | "closed";
 
-export type GateUnlockInjection = "throw" | "return_false";
+export type GateUnlockInjection = "throw" | "return_false" | "throw_undefined";
+
+type GateCloseOptions = {
+  injectCloseFailure?: boolean;
+};
 
 async function queryAdvisoryUnlock(gate: postgres.Sql, lockKey: string): Promise<boolean> {
   const rows = await gate<{ pg_advisory_unlock: boolean }[]>`
@@ -78,11 +85,15 @@ async function queryAdvisoryUnlock(gate: postgres.Sql, lockKey: string): Promise
 async function closeGateConnection(
   gate: postgres.Sql,
   gatePhase: { value: GateLockPhase },
+  options: GateCloseOptions = {},
 ): Promise<void> {
   if (gatePhase.value === "closed") {
     return;
   }
-  await gate.end({ timeout: 5 }).catch(() => undefined);
+  if (options.injectCloseFailure) {
+    throw new Error(INJECTED_GATE_CLOSE_FAILURE_MESSAGE);
+  }
+  await gate.end({ timeout: 5 });
   gatePhase.value = "closed";
 }
 
@@ -90,23 +101,14 @@ async function releaseGateLockOrClose(
   gate: postgres.Sql,
   lockKey: string,
   gatePhase: { value: GateLockPhase },
-  injectUnlock?: GateUnlockInjection,
+  closeOptions: GateCloseOptions = {},
 ): Promise<void> {
   if (gatePhase.value !== "holding") {
     return;
   }
 
   try {
-    let unlocked: boolean;
-    if (injectUnlock === "throw") {
-      throw new Error("injected gate unlock failure");
-    }
-    if (injectUnlock === "return_false") {
-      unlocked = false;
-    } else {
-      unlocked = await queryAdvisoryUnlock(gate, lockKey);
-    }
-
+    const unlocked = await queryAdvisoryUnlock(gate, lockKey);
     if (unlocked) {
       gatePhase.value = "released";
       return;
@@ -115,7 +117,7 @@ async function releaseGateLockOrClose(
     // fall through to terminate gate connection below
   }
 
-  await closeGateConnection(gate, gatePhase);
+  await closeGateConnection(gate, gatePhase, closeOptions);
 }
 
 async function waitForRunnersBounded<T>(
@@ -145,11 +147,43 @@ async function waitForRunnersBounded<T>(
   }
 }
 
+function combinePrimaryAndCleanupErrors(
+  primaryError: unknown,
+  cleanupError: unknown,
+): AggregateError {
+  const errors: unknown[] = [primaryError, cleanupError];
+  return new AggregateError(errors, "Concurrent submit race failed with cleanup error");
+}
+
+async function unlockGateAfterObservation(
+  gate: postgres.Sql,
+  lockKey: string,
+  gatePhase: { value: GateLockPhase },
+  injectUnlock?: GateUnlockInjection,
+): Promise<void> {
+  if (injectUnlock === "throw") {
+    throw new Error(INJECTED_GATE_UNLOCK_FAILURE_MESSAGE);
+  }
+  if (injectUnlock === "throw_undefined") {
+    throw undefined;
+  }
+
+  const unlocked =
+    injectUnlock === "return_false" ? false : await queryAdvisoryUnlock(gate, lockKey);
+
+  if (!unlocked) {
+    throw new Error(`Failed to release competition advisory lock for ${lockKey}`);
+  }
+  gatePhase.value = "released";
+}
+
 export type ConcurrentSubmitRaceOptions = {
   observationTimeoutMs?: number;
   runnerSettleMs?: number;
-  /** Test-only: force gate unlock failure during cleanup. */
+  /** Test-only: force gate unlock failure after observation succeeds. */
   injectGateUnlockFailure?: GateUnlockInjection;
+  /** Test-only: force gate connection close failure during cleanup. */
+  injectGateCloseFailure?: boolean;
 };
 
 export async function runConcurrentSubmitsWithContentionEvidence<T>(
@@ -164,6 +198,9 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
   const observationTimeoutMs = options.observationTimeoutMs ?? DEFAULT_OBSERVATION_TIMEOUT_MS;
   const runnerSettleMs = options.runnerSettleMs ?? DEFAULT_RUNNER_SETTLE_MS;
   const injectUnlock = options.injectGateUnlockFailure;
+  const closeOptions: GateCloseOptions = {
+    injectCloseFailure: options.injectGateCloseFailure,
+  };
 
   const gate = postgres(requireDatabaseUrl(), { max: 1 });
   const monitor = postgres(requireDatabaseUrl(), { max: 1 });
@@ -172,7 +209,16 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
   const gatePhase: { value: GateLockPhase } = { value: "unheld" };
 
   let result: T[] | undefined;
+  let caughtPrimary = false;
   let primaryError: unknown;
+  let cleanupError: unknown;
+
+  const recordCleanupError = (error: unknown) => {
+    cleanupError =
+      cleanupError === undefined
+        ? error
+        : new AggregateError([cleanupError, error], "Multiple cleanup errors during race teardown");
+  };
 
   try {
     await gate`SELECT pg_advisory_lock(hashtext(${lockKey}))`;
@@ -199,12 +245,7 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
       observationTimeoutMs,
     );
 
-    const unlocked = await queryAdvisoryUnlock(gate, lockKey);
-    if (!unlocked) {
-      await closeGateConnection(gate, gatePhase);
-      throw new Error(`Failed to release competition advisory lock for ${lockKey}`);
-    }
-    gatePhase.value = "released";
+    await unlockGateAfterObservation(gate, lockKey, gatePhase, injectUnlock);
 
     await waitForCondition(
       async () => {
@@ -217,21 +258,44 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
 
     result = await Promise.all(submitPromises);
   } catch (error) {
+    caughtPrimary = true;
     primaryError = error;
   } finally {
-    await releaseGateLockOrClose(gate, lockKey, gatePhase, injectUnlock);
+    if (gatePhase.value === "holding") {
+      try {
+        await releaseGateLockOrClose(gate, lockKey, gatePhase, closeOptions);
+      } catch (error) {
+        recordCleanupError(error);
+      }
+    }
+
     await waitForRunnersBounded(submitPromises, "runners during cleanup", runnerSettleMs).catch(
       () => undefined,
     );
+
     if (gatePhase.value !== "closed") {
-      await closeGateConnection(gate, gatePhase);
+      try {
+        await closeGateConnection(gate, gatePhase, closeOptions);
+      } catch (error) {
+        recordCleanupError(error);
+      }
     }
+
     await monitor.end({ timeout: 5 }).catch(() => undefined);
     await Promise.all(clients.map((client) => client.end({ timeout: 5 }).catch(() => undefined)));
   }
 
-  if (primaryError) {
+  if (caughtPrimary) {
+    if (cleanupError !== undefined) {
+      throw combinePrimaryAndCleanupErrors(primaryError, cleanupError);
+    }
     throw primaryError;
   }
-  return result!;
+  if (cleanupError !== undefined) {
+    throw cleanupError;
+  }
+  if (result === undefined) {
+    throw new Error("Concurrent submit race finished without result");
+  }
+  return result;
 }
