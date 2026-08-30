@@ -68,6 +68,29 @@ async function withIndependentConnection<T>(fn: (db: TestDb) => Promise<T>): Pro
   }
 }
 
+function createDeterministicGate() {
+  let openGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  let ready!: () => void;
+  const readyPromise = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  return {
+    signalReady: ready,
+    readyPromise,
+    waitForRelease: () => gate,
+    release: openGate,
+  };
+}
+
+function expectForbiddenWithoutBodyLeak(error: unknown, secretBody: string) {
+  expect(error).toBeInstanceOf(ReflectionPrivacyError);
+  expect((error as ReflectionPrivacyError).code).toBe("FORBIDDEN");
+  expect(String(error)).not.toContain(secretBody);
+}
+
 describe.skipIf(!hasDb)("M4 reflection privacy", () => {
   const db = getTestDb();
 
@@ -624,5 +647,161 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
       .from(users)
       .where(eq(users.id, parent2Id));
     expect(parent2Epoch?.authorizationEpoch).toBeGreaterThan(0);
+  });
+
+  it("P2-F01: grant/end interleaving leaves no active grant; re-link does not restore read", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const email = `parent_${suffix}@test.local`;
+    const secretBody = `Interleave secret ${suffix}`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, email);
+    const student = await seedStudentUser(db, {
+      username: `student_${suffix}`,
+      password: "StudentPass123!Student",
+    });
+    const link = await acceptParentForStudent(db, { parentId, studentId: student.studentId });
+
+    await upsertDailyReflection(db, {
+      studentId: student.studentId,
+      familyDate: today,
+      body: secretBody,
+      visibility: "private",
+      idempotencyKey: `upsert-f01-${suffix}`,
+    });
+
+    const gate = createDeterministicGate();
+    const grantPromise = withIndependentConnection((conn) =>
+      grantPrivateAccess(conn, {
+        studentId: student.studentId,
+        familyDate: today,
+        parentId,
+        idempotencyKey: `grant-f01-${suffix}`,
+        testHooks: {
+          beforeUserLock: async () => {
+            gate.signalReady();
+            await gate.waitForRelease();
+          },
+        },
+      }),
+    );
+
+    await gate.readyPromise;
+    await withIndependentConnection((conn) =>
+      endRelationship(conn, {
+        actorId: parentId,
+        relationshipId: link.relationshipId,
+        idempotencyKey: `end-f01-${suffix}`,
+      }),
+    );
+    gate.release();
+
+    await expect(grantPromise).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const activeGrants = await db
+      .select()
+      .from(privateAccessGrants)
+      .where(
+        and(eq(privateAccessGrants.parentId, parentId), isNull(privateAccessGrants.revokedAt)),
+      );
+    expect(activeGrants).toHaveLength(0);
+
+    await acceptParentForStudent(db, {
+      parentId,
+      studentId: student.studentId,
+      idempotencySuffix: `relink-${suffix}`,
+    });
+
+    try {
+      await getDailyReflection(db, {
+        actorId: parentId,
+        actorRole: "parent",
+        studentId: student.studentId,
+        familyDate: today,
+      });
+      throw new Error("Expected forbidden after re-link");
+    } catch (error) {
+      expectForbiddenWithoutBodyLeak(error, secretBody);
+    }
+  });
+
+  it("P2-F02: concurrent read/revoke completes with no body leak after revoke", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const email = `parent_${suffix}@test.local`;
+    const secretBody = `Concurrent revoke secret ${suffix}`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, email);
+    const student = await seedStudentUser(db, {
+      username: `student_${suffix}`,
+      password: "StudentPass123!Student",
+    });
+    await acceptParentForStudent(db, { parentId, studentId: student.studentId });
+
+    await upsertDailyReflection(db, {
+      studentId: student.studentId,
+      familyDate: today,
+      body: secretBody,
+      visibility: "private",
+      idempotencyKey: `upsert-f02-${suffix}`,
+    });
+
+    await grantPrivateAccess(db, {
+      studentId: student.studentId,
+      familyDate: today,
+      parentId,
+      idempotencyKey: `grant-f02-${suffix}`,
+    });
+
+    const gate = createDeterministicGate();
+    let readDone!: () => void;
+    const readCompleted = new Promise<void>((resolve) => {
+      readDone = resolve;
+    });
+
+    const [readResult, revokeResult] = await Promise.allSettled([
+      withIndependentConnection(async (conn) => {
+        await gate.readyPromise;
+        try {
+          return await getDailyReflection(conn, {
+            actorId: parentId,
+            actorRole: "parent",
+            studentId: student.studentId,
+            familyDate: today,
+          });
+        } finally {
+          readDone();
+        }
+      }),
+      withIndependentConnection(async (conn) =>
+        revokePrivateAccess(conn, {
+          studentId: student.studentId,
+          familyDate: today,
+          parentId,
+          idempotencyKey: `revoke-f02-${suffix}`,
+          testHooks: {
+            afterUserLock: async () => {
+              gate.signalReady();
+              await readCompleted;
+            },
+          },
+        }),
+      ),
+    ]);
+
+    expect(revokeResult.status).toBe("fulfilled");
+    if (readResult.status === "rejected") {
+      expectForbiddenWithoutBodyLeak(readResult.reason, secretBody);
+    } else if (readResult.status === "fulfilled") {
+      expect(readResult.value.body).toBe(secretBody);
+    }
+
+    try {
+      await getDailyReflection(db, {
+        actorId: parentId,
+        actorRole: "parent",
+        studentId: student.studentId,
+        familyDate: today,
+      });
+      throw new Error("Expected forbidden after concurrent revoke");
+    } catch (error) {
+      expectForbiddenWithoutBodyLeak(error, secretBody);
+    }
   });
 });

@@ -12,6 +12,13 @@ import {
   type ReflectionGrantDto,
 } from "@/modules/reflection-privacy/get-daily-reflection.service";
 
+async function lockUsersInOrder(tx: Database, userIds: string[]) {
+  const ordered = [...new Set(userIds)].sort();
+  for (const userId of ordered) {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+  }
+}
+
 async function incrementAuthorizationEpoch(tx: Database, userId: string) {
   const [updated] = await tx
     .update(users)
@@ -42,12 +49,17 @@ async function findGrantReplay(
   return existing?.resourceId ?? null;
 }
 
+export type GrantPrivateAccessTestHooks = {
+  beforeUserLock?: () => void | Promise<void>;
+};
+
 export type GrantPrivateAccessInput = {
   studentId: string;
   familyDate: string;
   parentId: string;
   idempotencyKey: string;
   requestId?: string;
+  testHooks?: GrantPrivateAccessTestHooks;
 };
 
 export type GrantPrivateAccessResult = {
@@ -90,14 +102,16 @@ export async function grantPrivateAccess(
       throw new ReflectionPrivacyError("STATE_CONFLICT", "Only private reflections can be granted");
     }
 
+    if (input.testHooks?.beforeUserLock) {
+      await input.testHooks.beforeUserLock();
+    }
+
+    await lockUsersInOrder(tx, [input.studentId, input.parentId]);
+
     const active = await hasActiveRelationship(tx, input.parentId, input.studentId);
     if (!active) {
       throw new ReflectionPrivacyError("FORBIDDEN", "Parent has no active relationship");
     }
-
-    await tx.execute(
-      sql`SELECT id FROM users WHERE id IN (${input.studentId}, ${input.parentId}) ORDER BY id FOR UPDATE`,
-    );
 
     const [existingGrant] = await tx
       .select()
@@ -184,12 +198,17 @@ export async function grantPrivateAccess(
   });
 }
 
+export type RevokePrivateAccessTestHooks = {
+  afterUserLock?: () => void | Promise<void>;
+};
+
 export type RevokePrivateAccessInput = {
   studentId: string;
   familyDate: string;
   parentId: string;
   idempotencyKey: string;
   requestId?: string;
+  testHooks?: RevokePrivateAccessTestHooks;
 };
 
 export type RevokePrivateAccessResult = {
@@ -229,9 +248,11 @@ export async function revokePrivateAccess(
       throw new ReflectionPrivacyError("NOT_FOUND", "Daily reflection not found");
     }
 
-    await tx.execute(
-      sql`SELECT id FROM users WHERE id IN (${input.studentId}, ${input.parentId}) ORDER BY id FOR UPDATE`,
-    );
+    await lockUsersInOrder(tx, [input.studentId, input.parentId]);
+
+    if (input.testHooks?.afterUserLock) {
+      await input.testHooks.afterUserLock();
+    }
 
     const [activeGrant] = await tx
       .select()
