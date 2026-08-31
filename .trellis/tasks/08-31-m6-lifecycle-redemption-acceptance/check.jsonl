@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"审核 schema、迁移、事务锁和并发不变量"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"审核错误边界与资源存在性泄露"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"审核正文、令牌、链接和身份字段泄露"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审核后端证据与全量门"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"审核 desktop/mobile-360 与危险操作 UX"}
+{"file":"docs/implementation-roadmap.md","reason":"审核 M6 联合验收范围和回滚"}
+{"file":"docs/data-model.md","reason":"审核兑换唯一扣减、删除和 tombstone 不变量"}
+{"file":"docs/deployment.md","reason":"审核容量/恢复证据不被误述为生产保证"}
+{"file":"CONTEXT.md","reason":"审核术语、权限和生命周期产品约束"}

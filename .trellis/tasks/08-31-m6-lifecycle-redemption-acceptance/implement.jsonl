@@ -1,0 +1,13 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端模块、Route、数据库与服务约定入口"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"M6 migration、约束、事务锁与幂等实现规范"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"兑换和生命周期领域错误及 HTTP 映射规范"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"导出令牌、正文和删除诊断的敏感日志边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端测试层级和完整质量门"}
+{"file":".trellis/spec/frontend/index.md","reason":"P3 前端结构与约定入口"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"授权、兑换与生命周期 DTO 类型边界"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"双视口、可访问性和 E2E 验收规范"}
+{"file":"docs/implementation-roadmap.md","reason":"M6 冻结范围、联合验收与回滚来源"}
+{"file":"docs/data-model.md","reason":"兑换、导出、删除、tombstone 权威模型与不变量"}
+{"file":"docs/architecture.md","reason":"Redemption/Data Lifecycle/Background Delivery 模块边界"}
+{"file":"docs/deployment.md","reason":"容量档位、RPO/RTO、备份恢复和对象存储边界"}
+{"file":"CONTEXT.md","reason":"项目统一术语与产品不变量"}

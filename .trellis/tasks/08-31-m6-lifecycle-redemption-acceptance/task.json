@@ -1,0 +1,37 @@
+{
+  "id": "m6-lifecycle-redemption-acceptance",
+  "name": "m6-lifecycle-redemption-acceptance",
+  "title": "M6 生命周期兑换与联合验收",
+  "description": "完成兑换、授权范围导出、删除/tombstone 与容量恢复联合验收。",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "M6 redemption, data export, deletion lifecycle, capacity and recovery acceptance",
+  "package": null,
+  "priority": "P2",
+  "creator": "wangyoulong",
+  "assignee": "wangyoulong",
+  "createdAt": "2026-08-31",
+  "completedAt": null,
+  "branch": "feat/m6-lifecycle-redemption-acceptance",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "b23eb1f2cb77ba6b26fe5b47e7ce8febf2166dc0",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "CONTEXT.md",
+    "docs/product-scope.md",
+    "docs/data-model.md",
+    "docs/architecture.md",
+    "docs/deployment.md",
+    "docs/implementation-roadmap.md"
+  ],
+  "notes": "Planning only; implementation requires approval of the final planning summary and task activation.",
+  "meta": {
+    "planning_base_sha": "b23eb1f2cb77ba6b26fe5b47e7ce8febf2166dc0",
+    "active_stage": "planning_final_review",
+    "account_deletion_scope_approved": true
+  }
+}
