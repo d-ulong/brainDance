@@ -22,7 +22,12 @@ import {
   createRelationshipRequest,
 } from "@/modules/family-access/relationship-request.service";
 import { requireStudentReadAccess } from "@/app/api/_lib/student-read-access";
-import { cancelTrainingSession, startTrainingSession } from "@/modules/training/session.service";
+import {
+  appendTrainingEvent,
+  cancelTrainingSession,
+  startTrainingSession,
+  submitTrainingSession,
+} from "@/modules/training/session.service";
 import {
   loadTrainingProfileProjectionRows,
   projectionRowsEquivalent,
@@ -373,6 +378,7 @@ describe.skipIf(!hasDb)("M5 training trends", () => {
           bestValue: row.bestValue,
           lastValue: row.lastValue,
           lastSourceSessionId: row.lastSourceSessionId,
+          windowSummary: row.windowSummary,
         })),
         rebuiltRows.map((row) => ({
           trainingKey: row.trainingKey,
@@ -382,9 +388,128 @@ describe.skipIf(!hasDb)("M5 training trends", () => {
           bestValue: row.bestValue,
           lastValue: row.lastValue,
           lastSourceSessionId: row.lastSourceSessionId,
+          windowSummary: row.windowSummary,
         })),
       ),
     ).toBe(true);
+  });
+
+  it("P2-R02 / P2-R03: second effective session updates last fields and lastFamilyDate", async () => {
+    const student = await seedStudentUser(db, {
+      username: `last_family_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    async function completeReactionWithFamilyDate(
+      familyDate: string,
+      reactionMs: number,
+      keys: { start: string; submit: string },
+    ) {
+      const started = await startTrainingSession(db, {
+        studentId: student.studentId,
+        trainingKey: REACTION_TRAINING_KEY,
+        idempotencyKey: keys.start,
+      });
+      await db
+        .update(trainingSessions)
+        .set({ familyDate })
+        .where(eq(trainingSessions.id, started.sessionId));
+
+      let sequence = 0;
+      for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+        await appendTrainingEvent(db, {
+          studentId: student.studentId,
+          sessionId: started.sessionId,
+          sequence,
+          eventType: "trial.stimulus",
+          payload: { trialIndex, stimulusId: `s-${trialIndex}` },
+        });
+        sequence += 1;
+        await new Promise((resolve) => setTimeout(resolve, reactionMs));
+        await appendTrainingEvent(db, {
+          studentId: student.studentId,
+          sessionId: started.sessionId,
+          sequence,
+          eventType: "trial.response",
+          payload: { trialIndex, correct: true, inputMethod: "keyboard" },
+        });
+        sequence += 1;
+      }
+
+      return submitTrainingSession(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        idempotencyKey: keys.submit,
+      });
+    }
+
+    await completeReactionWithFamilyDate("2026-08-20", 350, {
+      start: "last-family-1-start",
+      submit: "last-family-1-submit",
+    });
+    const second = await completeReactionWithFamilyDate("2026-08-25", 500, {
+      start: "last-family-2-start",
+      submit: "last-family-2-submit",
+    });
+
+    const incrementalRows = await loadTrainingProfileProjectionRows(db, student.studentId);
+    const accuracyRow = incrementalRows.find((row) => row.metricKey === "accuracy");
+    const medianRow = incrementalRows.find((row) => row.metricKey === "median_reaction_ms");
+
+    expect(accuracyRow?.lastSourceSessionId).toBe(second.sessionId);
+    expect((accuracyRow?.windowSummary as { lastFamilyDate?: string })?.lastFamilyDate).toBe(
+      "2026-08-25",
+    );
+    expect(medianRow?.lastSourceSessionId).toBe(second.sessionId);
+    expect(Number(medianRow?.bestValue)).toBeLessThan(Number(medianRow?.lastValue));
+
+    await db.transaction(async (tx) => {
+      await rebuildTrainingProfileProjectionForStudent(tx, student.studentId);
+    });
+
+    const rebuiltRows = await loadTrainingProfileProjectionRows(db, student.studentId);
+    expect(
+      projectionRowsEquivalent(
+        incrementalRows.map((row) => ({
+          trainingKey: row.trainingKey,
+          definitionVersion: row.definitionVersion,
+          ageBand: row.ageBand,
+          metricKey: row.metricKey,
+          bestValue: row.bestValue,
+          lastValue: row.lastValue,
+          lastSourceSessionId: row.lastSourceSessionId,
+          windowSummary: row.windowSummary,
+        })),
+        rebuiltRows.map((row) => ({
+          trainingKey: row.trainingKey,
+          definitionVersion: row.definitionVersion,
+          ageBand: row.ageBand,
+          metricKey: row.metricKey,
+          bestValue: row.bestValue,
+          lastValue: row.lastValue,
+          lastSourceSessionId: row.lastSourceSessionId,
+          windowSummary: row.windowSummary,
+        })),
+      ),
+    ).toBe(true);
+  });
+
+  it("P2-R03: projection excludes non-eligible metrics via shared reducer", async () => {
+    const student = await seedStudentUser(db, {
+      username: `exclude_metric_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    await completeReactionSession(db, student.studentId, {
+      startIdempotencyKey: "exclude-metric-start",
+      submitIdempotencyKey: "exclude-metric-submit",
+    });
+
+    const rows = await loadTrainingProfileProjectionRows(db, student.studentId);
+    expect(rows.some((row) => row.metricKey === "total_trial_count")).toBe(false);
+    expect(rows.some((row) => row.metricKey === "accuracy")).toBe(true);
   });
 
   it("AC-M5-07: student self-read succeeds and cross-student read is forbidden", async () => {

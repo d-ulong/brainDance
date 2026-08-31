@@ -19,15 +19,16 @@ import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/train
 import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
 import { TrainingError } from "@/modules/training/errors";
 import {
-  computeBestValue,
+  buildProjectionStateFromRows,
   filterProjectionEligibleMetrics,
   getProjectionMetricDefinitions,
+  mergeMetricIntoProjectionState,
+  type ProjectionMetricInput,
 } from "@/modules/training/profile-projection-reducer";
 import {
   computeTrainingMetrics,
   decodeMetricSchema,
   getExpectedSessionCount,
-  getMetricDefinitions,
   getTrainingProtocol,
   metricRowsToDbValues,
   validateTrainingEvents,
@@ -202,38 +203,37 @@ async function upsertProfileProjection(
     metrics: TrainingMetricDto[];
   },
 ) {
-  const directionByKey = new Map(
-    getMetricDefinitions(input.trainingKey).map((definition) => [
-      definition.metricKey,
-      definition.direction,
-    ]),
-  );
+  const existingRows = await tx
+    .select()
+    .from(trainingProfileProjection)
+    .where(
+      and(
+        eq(trainingProfileProjection.studentId, input.studentId),
+        eq(trainingProfileProjection.trainingKey, input.trainingKey),
+        eq(trainingProfileProjection.definitionVersion, input.definitionVersion),
+        eq(trainingProfileProjection.ageBand, input.ageBand),
+      ),
+    );
 
-  for (const metric of filterProjectionEligibleMetrics(input.trainingKey, input.metrics)) {
-    const direction = directionByKey.get(metric.metricKey);
-    if (!direction) {
+  const state = buildProjectionStateFromRows(existingRows, input.familyDate);
+  const sessionMetrics: ProjectionMetricInput[] = input.metrics.map((metric) => ({
+    metricKey: metric.metricKey,
+    value: metric.value,
+    isValid: metric.isValid,
+  }));
+
+  mergeMetricIntoProjectionState(state, {
+    trainingKey: input.trainingKey,
+    sessionId: input.sessionId,
+    familyDate: input.familyDate,
+    metrics: sessionMetrics,
+  });
+
+  for (const metric of filterProjectionEligibleMetrics(input.trainingKey, sessionMetrics)) {
+    const row = state.get(metric.metricKey);
+    if (!row) {
       continue;
     }
-
-    const [existing] = await tx
-      .select()
-      .from(trainingProfileProjection)
-      .where(
-        and(
-          eq(trainingProfileProjection.studentId, input.studentId),
-          eq(trainingProfileProjection.trainingKey, input.trainingKey),
-          eq(trainingProfileProjection.definitionVersion, input.definitionVersion),
-          eq(trainingProfileProjection.ageBand, input.ageBand),
-          eq(trainingProfileProjection.metricKey, metric.metricKey),
-        ),
-      )
-      .limit(1);
-
-    const bestValue = computeBestValue(
-      existing === undefined ? undefined : Number(existing.bestValue),
-      metric.value,
-      direction,
-    );
 
     await tx
       .insert(trainingProfileProjection)
@@ -242,11 +242,11 @@ async function upsertProfileProjection(
         trainingKey: input.trainingKey,
         definitionVersion: input.definitionVersion,
         ageBand: input.ageBand,
-        metricKey: metric.metricKey,
-        bestValue: bestValue.toFixed(6),
-        lastValue: metric.value.toFixed(6),
-        lastSourceSessionId: input.sessionId,
-        windowSummary: { lastFamilyDate: input.familyDate },
+        metricKey: row.metricKey,
+        bestValue: row.bestValue.toFixed(6),
+        lastValue: row.lastValue.toFixed(6),
+        lastSourceSessionId: row.lastSourceSessionId,
+        windowSummary: { lastFamilyDate: row.lastFamilyDate },
       })
       .onConflictDoUpdate({
         target: [
@@ -257,9 +257,10 @@ async function upsertProfileProjection(
           trainingProfileProjection.metricKey,
         ],
         set: {
-          bestValue: bestValue.toFixed(6),
-          lastValue: metric.value.toFixed(6),
-          lastSourceSessionId: input.sessionId,
+          bestValue: row.bestValue.toFixed(6),
+          lastValue: row.lastValue.toFixed(6),
+          lastSourceSessionId: row.lastSourceSessionId,
+          windowSummary: { lastFamilyDate: row.lastFamilyDate },
           updatedAt: new Date(),
         },
       });

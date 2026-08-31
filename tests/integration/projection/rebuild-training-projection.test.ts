@@ -6,6 +6,7 @@ import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
 import {
   loadTrainingProfileProjectionRows,
   projectionRowsEquivalent,
+  rebuildTrainingProfileProjection,
   rebuildTrainingProfileProjectionForStudent,
 } from "@/modules/training/trends.service";
 import { seedStudentUser } from "../../helpers/family-access";
@@ -106,6 +107,67 @@ describe.skipIf(!hasDb)("M5 training projection rebuild", () => {
         })),
       ),
     ).toBe(true);
+  });
+
+  it("P2-R01: full rebuild removes stale projection for student without authoritative sessions", async () => {
+    const studentA = await seedStudentUser(db, {
+      username: `rebuild_orphan_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+    const studentB = await seedStudentUser(db, {
+      username: `rebuild_active_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    await db.insert(trainingProfileProjection).values({
+      studentId: studentA.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      definitionVersion: 1,
+      ageBand: "9-12",
+      metricKey: "accuracy",
+      bestValue: "0.500000",
+      lastValue: "0.500000",
+      windowSummary: { lastFamilyDate: "2026-01-01" },
+    });
+
+    await completeReactionSession(db, studentB.studentId, {
+      startIdempotencyKey: "rebuild-dual-b-start",
+      submitIdempotencyKey: "rebuild-dual-b-submit",
+    });
+
+    await rebuildTrainingProfileProjection(db);
+
+    const rowsA = await loadTrainingProfileProjectionRows(db, studentA.studentId);
+    const rowsB = await loadTrainingProfileProjectionRows(db, studentB.studentId);
+
+    expect(rowsA).toHaveLength(0);
+    expect(rowsB.some((row) => row.metricKey === "accuracy")).toBe(true);
+    expect(rowsB.every((row) => row.trainingKey === REACTION_TRAINING_KEY)).toBe(true);
+  });
+
+  it("P2-R01: full rebuild clears all projections when no authoritative sessions exist", async () => {
+    const student = await seedStudentUser(db, {
+      username: `rebuild_empty_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    await db.insert(trainingProfileProjection).values({
+      studentId: student.studentId,
+      trainingKey: REACTION_TRAINING_KEY,
+      definitionVersion: 1,
+      ageBand: "9-12",
+      metricKey: "accuracy",
+      bestValue: "1.000000",
+      lastValue: "1.000000",
+    });
+
+    await rebuildTrainingProfileProjection(db);
+
+    const rows = await loadTrainingProfileProjectionRows(db, student.studentId);
+    expect(rows).toHaveLength(0);
   });
 
   it("AC-M5-06: rebuild removes stale projection rows for inactive training keys", async () => {

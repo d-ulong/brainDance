@@ -47,6 +47,30 @@ export function computeBestValue(
     : Math.max(existing, newValue);
 }
 
+export function buildProjectionStateFromRows(
+  rows: Array<{
+    metricKey: string;
+    bestValue: string | number;
+    lastValue: string | number;
+    lastSourceSessionId: string | null;
+    windowSummary: unknown;
+  }>,
+  fallbackFamilyDate: string,
+): Map<string, ProjectionRowState> {
+  const state = new Map<string, ProjectionRowState>();
+  for (const row of rows) {
+    const windowSummary = row.windowSummary as { lastFamilyDate?: string } | null;
+    state.set(row.metricKey, {
+      metricKey: row.metricKey,
+      bestValue: Number(row.bestValue),
+      lastValue: Number(row.lastValue),
+      lastSourceSessionId: row.lastSourceSessionId ?? "",
+      lastFamilyDate: windowSummary?.lastFamilyDate ?? fallbackFamilyDate,
+    });
+  }
+  return state;
+}
+
 export function mergeMetricIntoProjectionState(
   state: Map<string, ProjectionRowState>,
   input: {

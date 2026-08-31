@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import {
@@ -310,6 +310,7 @@ export function projectionRowsEquivalent(
     bestValue: string | number;
     lastValue: string | number;
     lastSourceSessionId: string | null;
+    windowSummary?: unknown;
   }>,
   right: Array<{
     trainingKey: string;
@@ -319,6 +320,7 @@ export function projectionRowsEquivalent(
     bestValue: string | number;
     lastValue: string | number;
     lastSourceSessionId: string | null;
+    windowSummary?: unknown;
   }>,
 ): boolean {
   if (left.length !== right.length) {
@@ -334,18 +336,23 @@ export function projectionRowsEquivalent(
       bestValue: string | number;
       lastValue: string | number;
       lastSourceSessionId: string | null;
+      windowSummary?: unknown;
     }>,
   ) =>
     rows
-      .map((row) => ({
-        trainingKey: row.trainingKey,
-        definitionVersion: row.definitionVersion,
-        ageBand: row.ageBand,
-        metricKey: row.metricKey,
-        bestValue: Number(row.bestValue).toFixed(6),
-        lastValue: Number(row.lastValue).toFixed(6),
-        lastSourceSessionId: row.lastSourceSessionId,
-      }))
+      .map((row) => {
+        const windowSummary = row.windowSummary as { lastFamilyDate?: string } | null | undefined;
+        return {
+          trainingKey: row.trainingKey,
+          definitionVersion: row.definitionVersion,
+          ageBand: row.ageBand,
+          metricKey: row.metricKey,
+          bestValue: Number(row.bestValue).toFixed(6),
+          lastValue: Number(row.lastValue).toFixed(6),
+          lastSourceSessionId: row.lastSourceSessionId,
+          lastFamilyDate: windowSummary?.lastFamilyDate ?? null,
+        };
+      })
       .sort((a, b) =>
         `${a.trainingKey}:${a.definitionVersion}:${a.ageBand}:${a.metricKey}`.localeCompare(
           `${b.trainingKey}:${b.definitionVersion}:${b.ageBand}:${b.metricKey}`,
@@ -364,7 +371,8 @@ export function projectionRowsEquivalent(
       row.metricKey === other.metricKey &&
       row.bestValue === other.bestValue &&
       row.lastValue === other.lastValue &&
-      row.lastSourceSessionId === other.lastSourceSessionId
+      row.lastSourceSessionId === other.lastSourceSessionId &&
+      row.lastFamilyDate === other.lastFamilyDate
     );
   });
 }
@@ -501,6 +509,10 @@ export async function rebuildTrainingProfileProjection(
 
     if (studentIds.length === 0) {
       await tx.delete(trainingProfileProjection);
+    } else {
+      await tx
+        .delete(trainingProfileProjection)
+        .where(notInArray(trainingProfileProjection.studentId, studentIds));
     }
   });
 
