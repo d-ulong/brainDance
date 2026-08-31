@@ -3,7 +3,7 @@
   "name": "m6-lifecycle-redemption-acceptance",
   "title": "M6 生命周期兑换与联合验收",
   "description": "完成兑换、授权范围导出、删除/tombstone 与容量恢复联合验收。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "feature",
   "scope": "M6 redemption, data export, deletion lifecycle, capacity and recovery acceptance",
   "package": null,
@@ -28,10 +28,10 @@
     "docs/deployment.md",
     "docs/implementation-roadmap.md"
   ],
-  "notes": "Planning only; implementation requires approval of the final planning summary and task activation.",
+  "notes": "Final plan approved on 2026-08-31; P1 is authorized through the unique repository directive.",
   "meta": {
     "planning_base_sha": "b23eb1f2cb77ba6b26fe5b47e7ce8febf2166dc0",
-    "active_stage": "planning_final_review",
+    "active_stage": "P1_authorized",
     "account_deletion_scope_approved": true
   }
 }
