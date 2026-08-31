@@ -56,6 +56,10 @@ export function useTrainingBlur({
       coordinatorRef.current.onVisibilityChange();
     }
 
+    if (document.hidden) {
+      handleVisibilityChange();
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {

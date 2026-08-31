@@ -9,7 +9,11 @@ loadEnv({ override: true });
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include: [
+      "tests/unit/**/*.test.ts",
+      "tests/unit/**/*.test.tsx",
+      "tests/integration/**/*.test.ts",
+    ],
     globalSetup: ["tests/global-setup.ts"],
     setupFiles: ["tests/setup.ts"],
     testTimeout: 30_000,
@@ -29,5 +33,8 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  esbuild: {
+    jsx: "automatic",
   },
 });

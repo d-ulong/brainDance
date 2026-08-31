@@ -33,6 +33,8 @@ export default function DigitSpanTrainingPage() {
   const displayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayRemainingRef = useRef(0);
   const displayStartedAtRef = useRef<number | null>(null);
+  const resumeFromDisplayExpiryRef = useRef(false);
+  const prevPausedRef = useRef(false);
 
   phaseRef.current = phase;
   currentAttemptRef.current = currentAttempt;
@@ -57,6 +59,7 @@ export default function DigitSpanTrainingPage() {
     setPhase("response");
     displayRemainingRef.current = 0;
     displayStartedAtRef.current = null;
+    resumeFromDisplayExpiryRef.current = false;
   }, []);
 
   const isInteractionAllowed = lifecycle.isInteractionAllowed;
@@ -65,17 +68,25 @@ export default function DigitSpanTrainingPage() {
     (remainingMs: number) => {
       clearDisplayTimer();
       if (remainingMs <= 0) {
-        openResponsePhase();
         return;
       }
       displayRemainingRef.current = remainingMs;
       displayStartedAtRef.current = performance.now();
       displayTimerRef.current = setTimeout(() => {
         displayTimerRef.current = null;
-        displayRemainingRef.current = 0;
-        displayStartedAtRef.current = null;
         if (shouldAdvanceDisplayOnTimer(isInteractionAllowed())) {
+          displayRemainingRef.current = 0;
+          displayStartedAtRef.current = null;
           openResponsePhase();
+          return;
+        }
+        if (displayStartedAtRef.current !== null) {
+          const elapsed = performance.now() - displayStartedAtRef.current;
+          displayRemainingRef.current = Math.max(0, displayRemainingRef.current - elapsed);
+          displayStartedAtRef.current = null;
+        }
+        if (displayRemainingRef.current <= 0) {
+          resumeFromDisplayExpiryRef.current = true;
         }
       }, remainingMs);
     },
@@ -83,12 +94,23 @@ export default function DigitSpanTrainingPage() {
   );
 
   useEffect(() => {
+    const wasPaused = prevPausedRef.current;
+    prevPausedRef.current = lifecycle.paused;
+
     if (phase !== "stimulus" || lifecycle.paused) {
       if (lifecycle.paused && displayStartedAtRef.current !== null) {
         const elapsed = performance.now() - displayStartedAtRef.current;
         displayRemainingRef.current = Math.max(0, displayRemainingRef.current - elapsed);
         displayStartedAtRef.current = null;
         clearDisplayTimer();
+      }
+      return;
+    }
+
+    if (wasPaused && resumeFromDisplayExpiryRef.current && displayTimerRef.current === null) {
+      resumeFromDisplayExpiryRef.current = false;
+      if (shouldAdvanceDisplayOnTimer(isInteractionAllowed())) {
+        openResponsePhase();
       }
       return;
     }
@@ -108,6 +130,7 @@ export default function DigitSpanTrainingPage() {
       setResponseDigits([]);
       displayRemainingRef.current = 0;
       displayStartedAtRef.current = null;
+      resumeFromDisplayExpiryRef.current = false;
 
       try {
         await lifecycle.appendEvent("span.stimulus", {

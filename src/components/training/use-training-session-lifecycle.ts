@@ -55,17 +55,24 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   const eventQueueRef = useRef(createTrainingEventQueue<AppendTrainingEventResult>());
   const terminatedRef = useRef(false);
   const pausedRef = useRef(false);
-  pausedRef.current = paused;
 
-  const markTerminated = useCallback((message: string) => {
-    if (terminatedRef.current) return;
-    terminatedRef.current = true;
-    setTerminated(true);
-    setError(message);
-    setSubmitting(false);
-    setPendingRetry(false);
-    setPaused(true);
+  const setPausedSync = useCallback((value: boolean) => {
+    pausedRef.current = value;
+    setPaused(value);
   }, []);
+
+  const markTerminated = useCallback(
+    (message: string) => {
+      if (terminatedRef.current) return;
+      terminatedRef.current = true;
+      setTerminated(true);
+      setError(message);
+      setSubmitting(false);
+      setPendingRetry(false);
+      setPausedSync(true);
+    },
+    [setPausedSync],
+  );
 
   const handleAbandoned = useCallback(() => {
     markTerminated("训练因失焦时间过长已终止，请重新开始。");
@@ -136,7 +143,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     sessionId: session?.sessionId ?? null,
     enabled: !loading && !error && !submitting && !terminated,
     paused,
-    setPaused,
+    setPaused: setPausedSync,
     appendEvent,
     onAbandoned: handleAbandoned,
     onRecoveryFailed: handleRecoveryFailed,
