@@ -1,58 +1,43 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { TrainingButton } from "@/components/training/training-button";
+import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import {
+  useKeyboardAction,
+  useTrainingSessionLifecycle,
+} from "@/components/training/use-training-session-lifecycle";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
-import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
-
-type StartResult = {
-  sessionId: string;
-  expectedTrialCount: number;
-};
+import { REACTION_MIN_VALID_MS } from "@/modules/training/constants";
 
 export default function ReactionTrainingPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [expectedTrials, setExpectedTrials] = useState(5);
+  const lifecycle = useTrainingSessionLifecycle("reaction");
   const [trialIndex, setTrialIndex] = useState(0);
   const [awaitingResponse, setAwaitingResponse] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const sequenceRef = useRef(0);
-  const stimulusShownAtRef = useRef<number>(0);
-  const startedRef = useRef(false);
+  const stimulusShownAtRef = useRef(0);
+  const initializedRef = useRef(false);
 
-  const appendEvent = useCallback(
-    async (sid: string, eventType: string, payload: Record<string, unknown>) => {
-      await apiFetch(`/api/training/sessions/${sid}/events`, {
-        method: "POST",
-        body: JSON.stringify({
-          sequence: sequenceRef.current,
-          eventType,
-          payload,
-        }),
-      });
-      sequenceRef.current += 1;
-    },
-    [],
-  );
+  const expectedTrials = lifecycle.session?.expectedTrialCount ?? 5;
 
   const showStimulus = useCallback(
-    async (sid: string, index: number) => {
+    async (index: number) => {
+      if (!lifecycle.session) return;
       setAwaitingResponse(true);
-      stimulusShownAtRef.current = Date.now();
-      await appendEvent(sid, "trial.stimulus", { trialIndex: index, stimulusId: `s-${index}` });
+      stimulusShownAtRef.current = performance.now();
+      await lifecycle.appendEvent("trial.stimulus", {
+        trialIndex: index,
+        stimulusId: `s-${index}`,
+      });
     },
-    [appendEvent],
+    [lifecycle],
   );
 
   const respond = useCallback(async () => {
-    if (!sessionId || !awaitingResponse || submitting) return;
+    if (!lifecycle.session || !awaitingResponse || lifecycle.submitting || lifecycle.paused) return;
 
-    const elapsed = Date.now() - stimulusShownAtRef.current;
-    if (elapsed < 120) {
+    const elapsed = performance.now() - stimulusShownAtRef.current;
+    if (elapsed < REACTION_MIN_VALID_MS) {
       return;
     }
 
@@ -60,7 +45,7 @@ export default function ReactionTrainingPage() {
     const currentTrial = trialIndex;
 
     try {
-      await appendEvent(sessionId, "trial.response", {
+      await lifecycle.appendEvent("trial.response", {
         trialIndex: currentTrial,
         correct: true,
         inputMethod: "keyboard",
@@ -68,84 +53,29 @@ export default function ReactionTrainingPage() {
 
       const nextTrial = currentTrial + 1;
       if (nextTrial >= expectedTrials) {
-        setSubmitting(true);
-        await apiFetch(`/api/training/sessions/${sessionId}/submit`, {
-          method: "POST",
-          body: JSON.stringify({ idempotencyKey: newIdempotencyKey("submit-training") }),
-        });
-        router.push(`/student/training/${sessionId}`);
+        await lifecycle.submitSession();
         return;
       }
 
       setTrialIndex(nextTrial);
-      await showStimulus(sessionId, nextTrial);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "训练记录失败");
-      setSubmitting(false);
+      await showStimulus(nextTrial);
+    } catch {
+      setAwaitingResponse(true);
     }
-  }, [
-    appendEvent,
-    awaitingResponse,
-    expectedTrials,
-    router,
-    sessionId,
-    showStimulus,
-    submitting,
-    trialIndex,
-  ]);
+  }, [awaitingResponse, expectedTrials, lifecycle, showStimulus, trialIndex]);
+
+  useKeyboardAction(
+    () => void respond(),
+    awaitingResponse && !lifecycle.paused && !lifecycle.submitting,
+  );
 
   useEffect(() => {
-    void (async () => {
-      const session = await fetchSession();
-      if (!session || session.role !== "student") {
-        router.replace("/login");
-        return;
-      }
-      if (session.mustChangePassword) {
-        router.replace("/student/change-password");
-        return;
-      }
+    if (!lifecycle.session || initializedRef.current) return;
+    initializedRef.current = true;
+    void showStimulus(0);
+  }, [lifecycle.session, showStimulus]);
 
-      if (startedRef.current) {
-        setLoading(false);
-        return;
-      }
-      startedRef.current = true;
-
-      try {
-        const started = await apiFetch<StartResult>("/api/training/sessions", {
-          method: "POST",
-          body: JSON.stringify({
-            trainingKey: "reaction",
-            idempotencyKey: newIdempotencyKey("start-training"),
-          }),
-        });
-        setSessionId(started.sessionId);
-        setExpectedTrials(started.expectedTrialCount);
-        sequenceRef.current = 0;
-        setTrialIndex(0);
-        await showStimulus(started.sessionId, 0);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "无法开始训练");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [router, showStimulus]);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === " " || event.key === "Enter") {
-        event.preventDefault();
-        void respond();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [respond]);
-
-  if (loading) {
+  if (lifecycle.loading) {
     return (
       <PageShell title="反应力训练">
         <LoadingState label="准备训练…" />
@@ -153,10 +83,10 @@ export default function ReactionTrainingPage() {
     );
   }
 
-  if (error) {
+  if (lifecycle.error) {
     return (
-      <PageShell title="反应力训练" backHref="/">
-        <Alert tone="error">{error}</Alert>
+      <PageShell title="反应力训练" backHref="/student/training">
+        <Alert tone="error">{lifecycle.error}</Alert>
       </PageShell>
     );
   }
@@ -165,28 +95,38 @@ export default function ReactionTrainingPage() {
     <PageShell
       title="反应力训练"
       subtitle={`第 ${Math.min(trialIndex + 1, expectedTrials)} / ${expectedTrials} 次`}
-      backHref="/"
+      backHref="/student/training"
       showLogout
     >
-      <button
-        type="button"
+      <TrainingDisclaimer />
+      {lifecycle.paused ? (
+        <Alert tone="info" data-testid="training-paused">
+          页面失焦，训练已暂停。回到本页后继续。
+        </Alert>
+      ) : null}
+      {lifecycle.pendingRetry ? (
+        <Alert tone="info" data-testid="training-retry">
+          网络不稳定，正在重试提交…
+        </Alert>
+      ) : null}
+      <TrainingButton
         data-testid="training-target"
-        disabled={!awaitingResponse || submitting}
+        disabled={!awaitingResponse || lifecycle.submitting || lifecycle.paused}
         onClick={() => void respond()}
-        className="flex min-h-[200px] w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-neutral-400 bg-white px-4 py-8 text-center disabled:opacity-60"
+        className="flex min-h-[200px] w-full flex-col items-center justify-center border-2 border-dashed border-neutral-400 bg-white text-neutral-900 hover:bg-white"
       >
         {awaitingResponse ? (
           <>
-            <span className="text-4xl font-bold text-neutral-900">+</span>
+            <span className="text-4xl font-bold">+</span>
             <span className="mt-3 text-sm text-neutral-600">点击或按 Space / Enter 响应</span>
           </>
-        ) : submitting ? (
+        ) : lifecycle.submitting ? (
           <span className="text-sm text-neutral-600">提交结果中…</span>
         ) : (
           <span className="text-sm text-neutral-600">准备下一次…</span>
         )}
-      </button>
-      {submitting ? <LoadingState label="正在提交训练结果…" /> : null}
+      </TrainingButton>
+      {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
     </PageShell>
   );
 }

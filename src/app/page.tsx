@@ -84,7 +84,7 @@ export default function HomePage() {
       <nav className="flex flex-col gap-3">
         <NavLink href="/student/schedule">今日日程</NavLink>
         <NavLink href="/student/link">关联家长</NavLink>
-        <NavLink href="/student/training/reaction">反应力训练</NavLink>
+        <NavLink href="/student/training">训练中心</NavLink>
       </nav>
     </PageShell>
   );
