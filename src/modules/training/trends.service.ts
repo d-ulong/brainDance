@@ -1,5 +1,7 @@
 import { and, asc, eq, notInArray, sql } from "drizzle-orm";
 
+import { buildFullRebuildProjectionLockKey } from "@/modules/training/submit-competition-lock-key";
+
 import type { Database } from "@/db";
 import {
   trainingEvents,
@@ -377,6 +379,16 @@ export function projectionRowsEquivalent(
   });
 }
 
+export type RebuildTrainingProfileProjectionTestHooks = {
+  beforeOrphanCleanup?: () => Promise<void>;
+};
+
+async function acquireFullRebuildProjectionLock(tx: Database): Promise<void> {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext(${buildFullRebuildProjectionLockKey()}))`,
+  );
+}
+
 export async function rebuildTrainingProfileProjectionForStudent(
   tx: Database,
   studentId: string,
@@ -467,7 +479,11 @@ export async function rebuildTrainingProfileProjectionForStudent(
 
 export async function rebuildTrainingProfileProjection(
   db: Database,
-  options?: { studentId?: string; now?: Date },
+  options?: {
+    studentId?: string;
+    now?: Date;
+    testHooks?: RebuildTrainingProfileProjectionTestHooks;
+  },
 ): Promise<{
   studentsScanned: number;
   sessionsScanned: number;
@@ -477,6 +493,7 @@ export async function rebuildTrainingProfileProjection(
 
   if (options?.studentId) {
     return db.transaction(async (tx) => {
+      await acquireFullRebuildProjectionLock(tx);
       const result = await rebuildTrainingProfileProjectionForStudent(tx, options.studentId!, now);
       return {
         studentsScanned: 1,
@@ -486,25 +503,33 @@ export async function rebuildTrainingProfileProjection(
     });
   }
 
-  const studentRows = await db.execute(sql`
-    SELECT DISTINCT student_id
-    FROM training_sessions
-    WHERE status = 'completed' AND session_kind = 'effective'
-    ORDER BY student_id
-  `);
-
-  const studentIds = (studentRows as unknown as { student_id: string }[]).map(
-    (row) => row.student_id,
-  );
-
   let sessionsScanned = 0;
   let projectionRowsWritten = 0;
+  let studentsScanned = 0;
 
   await db.transaction(async (tx) => {
+    await acquireFullRebuildProjectionLock(tx);
+
+    const studentRows = await tx.execute(sql`
+      SELECT DISTINCT student_id
+      FROM training_sessions
+      WHERE status = 'completed' AND session_kind = 'effective'
+      ORDER BY student_id
+    `);
+
+    const studentIds = (studentRows as unknown as { student_id: string }[]).map(
+      (row) => row.student_id,
+    );
+    studentsScanned = studentIds.length;
+
     for (const studentId of studentIds) {
       const result = await rebuildTrainingProfileProjectionForStudent(tx, studentId, now);
       sessionsScanned += result.sessionsScanned;
       projectionRowsWritten += result.projectionRowsWritten;
+    }
+
+    if (options?.testHooks?.beforeOrphanCleanup) {
+      await options.testHooks.beforeOrphanCleanup();
     }
 
     if (studentIds.length === 0) {
@@ -517,7 +542,7 @@ export async function rebuildTrainingProfileProjection(
   });
 
   return {
-    studentsScanned: studentIds.length,
+    studentsScanned,
     sessionsScanned,
     projectionRowsWritten,
   };
