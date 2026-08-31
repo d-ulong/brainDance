@@ -22,7 +22,10 @@ export async function GET(request: Request, context: RouteContext) {
     const url = new URL(request.url);
     const activeOnly = url.searchParams.get("activeOnly") === "true";
 
-    const items = await listCatalogItems(db, studentId, { activeOnly });
+    const items = await listCatalogItems(db, studentId, {
+      viewerRole: dbUser.role === "student" ? "student" : "parent",
+      activeOnly,
+    });
     return NextResponse.json({ items });
   } catch (error) {
     const { status, body } = toRouteErrorResponse(error);

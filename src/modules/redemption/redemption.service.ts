@@ -1,17 +1,13 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import {
-  auditEvents,
-  pointBalanceProjection,
-  pointRedemptions,
-  redemptionCatalogItems,
-} from "@/db/schema";
+import { auditEvents, pointRedemptions, redemptionCatalogItems } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { appendLedgerForRedemption } from "@/modules/redemption/ledger-redemption.service";
+import { lockStudentBalanceThenMonthlyUsage } from "@/modules/redemption/approve-lock-order";
 import { RedemptionError } from "@/modules/redemption/errors";
 import { toFamilyMonth } from "@/modules/redemption/to-family-month";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
@@ -88,13 +84,22 @@ async function countMonthlyUsage(
   return rows.length;
 }
 
+function readStoredPayloadHash(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== "object") {
+    return undefined;
+  }
+  const value = (metadata as { payloadHash?: unknown }).payloadHash;
+  return typeof value === "string" ? value : undefined;
+}
+
 async function findCommandReplay(
   db: Database,
   auditKey: string,
   resourceId: string,
+  expectedPayloadHash: string,
 ): Promise<boolean> {
   const [existing] = await db
-    .select({ resourceId: auditEvents.resourceId })
+    .select({ resourceId: auditEvents.resourceId, metadata: auditEvents.metadata })
     .from(auditEvents)
     .where(eq(auditEvents.idempotencyKey, auditKey))
     .limit(1);
@@ -104,6 +109,11 @@ async function findCommandReplay(
   }
 
   if (existing.resourceId !== resourceId) {
+    throw new RedemptionError("IDEMPOTENCY_CONFLICT", "Redemption command idempotency conflict");
+  }
+
+  const storedHash = readStoredPayloadHash(existing.metadata);
+  if (storedHash !== expectedPayloadHash) {
     throw new RedemptionError("IDEMPOTENCY_CONFLICT", "Redemption command idempotency conflict");
   }
 
@@ -307,7 +317,8 @@ export async function cancelRedemptionRequest(
   }
 
   const auditKey = `audit:redemption-cancelled:${input.idempotencyKey}`;
-  const replay = await findCommandReplay(db, auditKey, input.redemptionId);
+  const cancelPayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
+  const replay = await findCommandReplay(db, auditKey, input.redemptionId, cancelPayloadHash);
   if (replay) {
     const [row] = await db
       .select()
@@ -323,7 +334,7 @@ export async function cancelRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    if (await findCommandReplay(tx, auditKey, input.redemptionId)) {
+    if (await findCommandReplay(tx, auditKey, input.redemptionId, cancelPayloadHash)) {
       const [row] = await tx
         .select()
         .from(pointRedemptions)
@@ -368,7 +379,7 @@ export async function cancelRedemptionRequest(
       resourceId: input.redemptionId,
       requestId: input.requestId ?? null,
       idempotencyKey: auditKey,
-      metadata: { studentId: input.studentId },
+      metadata: { studentId: input.studentId, payloadHash: cancelPayloadHash },
     });
 
     await appendOutboxEvent(tx, {
@@ -399,7 +410,8 @@ export async function approveRedemptionRequest(
   await requireActiveRelationship(db, input.parentId, input.studentId);
 
   const auditKey = `audit:redemption-approved:${input.idempotencyKey}`;
-  const replay = await findCommandReplay(db, auditKey, input.redemptionId);
+  const approvePayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
+  const replay = await findCommandReplay(db, auditKey, input.redemptionId, approvePayloadHash);
   if (replay) {
     const [row] = await db
       .select()
@@ -415,7 +427,7 @@ export async function approveRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    if (await findCommandReplay(tx, auditKey, input.redemptionId)) {
+    if (await findCommandReplay(tx, auditKey, input.redemptionId, approvePayloadHash)) {
       const [row] = await tx
         .select()
         .from(pointRedemptions)
@@ -427,6 +439,7 @@ export async function approveRedemptionRequest(
       return { redemption: toRedemptionDto(row), idempotentReplay: true };
     }
 
+    // Frozen lock order: redemption row → student/balance → monthly usage rows.
     const row = await lockRedemptionRow(tx, input.redemptionId);
 
     if (row.studentId !== input.studentId) {
@@ -449,22 +462,14 @@ export async function approveRedemptionRequest(
 
     await requireActiveRelationship(tx, input.parentId, input.studentId);
 
-    if (catalogItem.monthlyLimit != null) {
-      const monthlyRows = await lockMonthlyRedemptions(tx, catalogItem.id, row.requestMonth);
-      if ((await countMonthlyUsage(monthlyRows)) > catalogItem.monthlyLimit) {
-        throw new RedemptionError("MONTHLY_LIMIT_EXCEEDED", "Monthly redemption limit exceeded");
-      }
-    }
-
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
-
-    const [balanceRow] = await tx
-      .select({ balance: pointBalanceProjection.balance })
-      .from(pointBalanceProjection)
-      .where(eq(pointBalanceProjection.studentId, input.studentId))
-      .limit(1);
-
-    const balance = balanceRow?.balance ?? 0;
+    const { balance } = await lockStudentBalanceThenMonthlyUsage(tx, {
+      studentId: input.studentId,
+      catalogItemId: catalogItem.id,
+      requestMonth: row.requestMonth,
+      monthlyLimit: catalogItem.monthlyLimit,
+      lockMonthlyRows: lockMonthlyRedemptions,
+      countMonthlyUsage,
+    });
     if (balance < 0) {
       throw new RedemptionError("INSUFFICIENT_BALANCE", "Balance is negative");
     }
@@ -509,6 +514,7 @@ export async function approveRedemptionRequest(
         studentId: input.studentId,
         ledgerEntryId: ledger.ledgerEntryId,
         costSnapshot: row.costSnapshot,
+        payloadHash: approvePayloadHash,
       },
     });
 
@@ -538,7 +544,11 @@ export async function rejectRedemptionRequest(
   }
 
   const auditKey = `audit:redemption-rejected:${input.idempotencyKey}`;
-  const replay = await findCommandReplay(db, auditKey, input.redemptionId);
+  const rejectPayloadHash = hashIdempotencyPayload({
+    redemptionId: input.redemptionId,
+    reason: trimmedReason,
+  });
+  const replay = await findCommandReplay(db, auditKey, input.redemptionId, rejectPayloadHash);
   if (replay) {
     const [row] = await db
       .select()
@@ -554,7 +564,7 @@ export async function rejectRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
-    if (await findCommandReplay(tx, auditKey, input.redemptionId)) {
+    if (await findCommandReplay(tx, auditKey, input.redemptionId, rejectPayloadHash)) {
       const [row] = await tx
         .select()
         .from(pointRedemptions)
@@ -605,6 +615,7 @@ export async function rejectRedemptionRequest(
       metadata: {
         studentId: input.studentId,
         reason: trimmedReason,
+        payloadHash: rejectPayloadHash,
       },
     });
 
