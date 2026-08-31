@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import { createPendingStimulusGate } from "@/components/training/pending-stimulus-gate";
 import {
   useTrainingSessionLifecycle,
   useKeyboardAction,
@@ -21,6 +22,12 @@ export default function ReactionTrainingPage() {
   const [awaitingResponse, setAwaitingResponse] = useState(false);
   const stimulusShownAtRef = useRef(0);
   const initializedRef = useRef(false);
+  const isInteractionAllowed = lifecycle.isInteractionAllowed;
+  const stimulusGateRef = useRef(createPendingStimulusGate(() => isInteractionAllowed()));
+
+  useEffect(() => {
+    stimulusGateRef.current = createPendingStimulusGate(() => isInteractionAllowed());
+  }, [isInteractionAllowed]);
 
   const expectedTrials = lifecycle.session?.expectedTrialCount ?? 5;
 
@@ -31,15 +38,19 @@ export default function ReactionTrainingPage() {
     async (index: number) => {
       if (!lifecycle.session) return;
       setAwaitingResponse(false);
+      stimulusGateRef.current.reset();
       try {
         await lifecycle.appendEvent("trial.stimulus", {
           trialIndex: index,
           stimulusId: `s-${index}`,
         });
-        stimulusShownAtRef.current = performance.now();
-        setAwaitingResponse(true);
+        if (stimulusGateRef.current.afterAppendSuccess() === "open") {
+          stimulusShownAtRef.current = performance.now();
+          setAwaitingResponse(true);
+        }
       } catch {
         setAwaitingResponse(false);
+        stimulusGateRef.current.reset();
       }
     },
     [lifecycle],
@@ -86,6 +97,13 @@ export default function ReactionTrainingPage() {
     initializedRef.current = true;
     void showStimulus(0);
   }, [lifecycle.session, lifecycle.terminated, showStimulus]);
+
+  useEffect(() => {
+    if (stimulusGateRef.current.onGateOpen() === "open") {
+      stimulusShownAtRef.current = performance.now();
+      setAwaitingResponse(true);
+    }
+  }, [lifecycle.paused, lifecycle.terminated]);
 
   if (lifecycle.loading) {
     return (

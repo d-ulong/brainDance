@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
+import { createTrainingBlurCoordinator } from "@/components/training/training-blur-coordinator";
 import type { AppendTrainingEventResult } from "@/lib/client/training-api";
 
 type AppendEventFn = (
@@ -27,49 +28,32 @@ export function useTrainingBlur({
   onAbandoned,
   onRecoveryFailed,
 }: UseTrainingBlurOptions) {
-  const blurStartRef = useRef<number | null>(null);
-  const reportingRef = useRef(false);
+  const appendEventRef = useRef(appendEvent);
+  const setPausedRef = useRef(setPaused);
+  const onAbandonedRef = useRef(onAbandoned);
+  const onRecoveryFailedRef = useRef(onRecoveryFailed);
 
-  const reportBlur = useCallback(
-    async (durationMs: number) => {
-      if (!sessionId || durationMs <= 0 || reportingRef.current) return;
-      reportingRef.current = true;
-      try {
-        const result = await appendEvent("session.blur", { durationMs: Math.round(durationMs) });
-        if (result.abandoned) {
-          onAbandoned();
-        } else {
-          setPaused(false);
-        }
-      } catch {
-        onRecoveryFailed();
-      } finally {
-        reportingRef.current = false;
-      }
-    },
-    [appendEvent, onAbandoned, onRecoveryFailed, sessionId, setPaused],
+  appendEventRef.current = appendEvent;
+  setPausedRef.current = setPaused;
+  onAbandonedRef.current = onAbandoned;
+  onRecoveryFailedRef.current = onRecoveryFailed;
+
+  const coordinatorRef = useRef(
+    createTrainingBlurCoordinator({
+      appendEvent: (...args) => appendEventRef.current(...args),
+      setPaused: (paused) => setPausedRef.current(paused),
+      onAbandoned: () => onAbandonedRef.current(),
+      onRecoveryFailed: () => onRecoveryFailedRef.current(),
+      isDocumentHidden: () => document.hidden,
+      now: () => performance.now(),
+    }),
   );
 
   useEffect(() => {
     if (!enabled || !sessionId) return;
 
     function handleVisibilityChange() {
-      if (document.hidden) {
-        blurStartRef.current = performance.now();
-        setPaused(true);
-        return;
-      }
-
-      const startedAt = blurStartRef.current;
-      blurStartRef.current = null;
-
-      if (startedAt !== null) {
-        const durationMs = performance.now() - startedAt;
-        void reportBlur(durationMs);
-        return;
-      }
-
-      setPaused(false);
+      coordinatorRef.current.onVisibilityChange();
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -77,5 +61,5 @@ export function useTrainingBlur({
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [enabled, reportBlur, sessionId, setPaused]);
+  }, [enabled, sessionId]);
 }

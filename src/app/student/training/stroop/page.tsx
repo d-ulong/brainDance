@@ -11,6 +11,7 @@ import {
 } from "@/components/training/stroop-trial-plan";
 import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import { createPendingStimulusGate } from "@/components/training/pending-stimulus-gate";
 import { useTrainingSessionLifecycle } from "@/components/training/use-training-session-lifecycle";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import type { StroopColor } from "@/modules/training/constants";
@@ -27,6 +28,12 @@ export default function StroopTrainingPage() {
   const [currentTrial, setCurrentTrial] = useState<StroopTrialPlan | null>(null);
   const stimulusShownAtRef = useRef(0);
   const initializedRef = useRef(false);
+  const isInteractionAllowed = lifecycle.isInteractionAllowed;
+  const stimulusGateRef = useRef(createPendingStimulusGate(() => isInteractionAllowed()));
+
+  useEffect(() => {
+    stimulusGateRef.current = createPendingStimulusGate(() => isInteractionAllowed());
+  }, [isInteractionAllowed]);
 
   const trials = useMemo(
     () => (lifecycle.session ? buildStroopTrialPlan(lifecycle.session.ageBand) : []),
@@ -40,16 +47,20 @@ export default function StroopTrainingPage() {
     async (plan: StroopTrialPlan) => {
       setCurrentTrial(plan);
       setAwaitingResponse(false);
+      stimulusGateRef.current.reset();
       try {
         await lifecycle.appendEvent("trial.stimulus", {
           trialIndex: plan.trialIndex,
           inkColor: plan.inkColor,
           wordColor: plan.wordColor,
         });
-        stimulusShownAtRef.current = performance.now();
-        setAwaitingResponse(true);
+        if (stimulusGateRef.current.afterAppendSuccess() === "open") {
+          stimulusShownAtRef.current = performance.now();
+          setAwaitingResponse(true);
+        }
       } catch {
         setAwaitingResponse(false);
+        stimulusGateRef.current.reset();
       }
     },
     [lifecycle],
@@ -108,6 +119,13 @@ export default function StroopTrainingPage() {
     initializedRef.current = true;
     void showStimulus(trials[0]!);
   }, [lifecycle.session, lifecycle.terminated, showStimulus, trials]);
+
+  useEffect(() => {
+    if (stimulusGateRef.current.onGateOpen() === "open") {
+      stimulusShownAtRef.current = performance.now();
+      setAwaitingResponse(true);
+    }
+  }, [lifecycle.paused, lifecycle.terminated]);
 
   if (lifecycle.loading) {
     return (

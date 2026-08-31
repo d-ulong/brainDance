@@ -6,6 +6,10 @@ import {
   buildDigitSpanAttemptPlan,
   type DigitSpanAttemptPlan,
 } from "@/components/training/digit-span-plan";
+import {
+  displayActionAfterAppend,
+  shouldAdvanceDisplayOnTimer,
+} from "@/components/training/pending-stimulus-gate";
 import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { useTrainingSessionLifecycle } from "@/components/training/use-training-session-lifecycle";
@@ -55,6 +59,8 @@ export default function DigitSpanTrainingPage() {
     displayStartedAtRef.current = null;
   }, []);
 
+  const isInteractionAllowed = lifecycle.isInteractionAllowed;
+
   const scheduleDisplayEnd = useCallback(
     (remainingMs: number) => {
       clearDisplayTimer();
@@ -68,12 +74,12 @@ export default function DigitSpanTrainingPage() {
         displayTimerRef.current = null;
         displayRemainingRef.current = 0;
         displayStartedAtRef.current = null;
-        if (!lifecycle.paused && !lifecycle.terminated) {
+        if (shouldAdvanceDisplayOnTimer(isInteractionAllowed())) {
           openResponsePhase();
         }
       }, remainingMs);
     },
-    [clearDisplayTimer, lifecycle.paused, lifecycle.terminated, openResponsePhase],
+    [clearDisplayTimer, isInteractionAllowed, openResponsePhase],
   );
 
   useEffect(() => {
@@ -111,16 +117,17 @@ export default function DigitSpanTrainingPage() {
           sequence: plan.digits,
         });
         const displayMs = STIMULUS_BASE_MS + plan.length * STIMULUS_MS_PER_DIGIT;
-        if (!lifecycle.paused && !lifecycle.terminated) {
-          scheduleDisplayEnd(displayMs);
+        const displayAction = displayActionAfterAppend(isInteractionAllowed(), displayMs);
+        if (displayAction.action === "schedule") {
+          scheduleDisplayEnd(displayAction.ms);
         } else {
-          displayRemainingRef.current = displayMs;
+          displayRemainingRef.current = displayAction.ms;
         }
       } catch {
         setPhase("stimulus");
       }
     },
-    [clearDisplayTimer, lifecycle, scheduleDisplayEnd],
+    [clearDisplayTimer, isInteractionAllowed, lifecycle, scheduleDisplayEnd],
   );
 
   const submitResponse = useCallback(async () => {

@@ -31,6 +31,7 @@ export type TrainingSessionLifecycle = {
   pendingRetry: boolean;
   submitting: boolean;
   terminated: boolean;
+  isInteractionAllowed: () => boolean;
   appendEvent: (
     eventType: string,
     payload: Record<string, unknown>,
@@ -53,6 +54,8 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   const submitKeyRef = useRef<string | null>(null);
   const eventQueueRef = useRef(createTrainingEventQueue<AppendTrainingEventResult>());
   const terminatedRef = useRef(false);
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
 
   const markTerminated = useCallback((message: string) => {
     if (terminatedRef.current) return;
@@ -71,6 +74,8 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   const handleRecoveryFailed = useCallback(() => {
     markTerminated("失焦恢复失败，训练已终止，请重新开始。");
   }, [markTerminated]);
+
+  const isInteractionAllowed = useCallback(() => !pausedRef.current && !terminatedRef.current, []);
 
   const appendEventInternal = useCallback(
     async (
@@ -210,6 +215,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     pendingRetry,
     submitting,
     terminated,
+    isInteractionAllowed,
     appendEvent,
     submitSession,
     navigateToResult,
