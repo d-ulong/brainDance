@@ -5,6 +5,7 @@ import { FactsError, type FactsErrorCode } from "@/modules/facts/errors";
 import { OutboxError, type OutboxErrorCode } from "@/modules/outbox/errors";
 import { ScheduleError, type ScheduleErrorCode } from "@/modules/schedule/errors";
 import { SettlementError, type SettlementErrorCode } from "@/modules/settlement/errors";
+import { RedemptionError, type RedemptionErrorCode } from "@/modules/redemption/errors";
 
 export type M2ErrorBody = {
   error: {
@@ -81,6 +82,26 @@ function outboxErrorToStatus(code: OutboxErrorCode): number {
   }
 }
 
+function redemptionErrorToStatus(code: RedemptionErrorCode): number {
+  switch (code) {
+    case "NOT_FOUND":
+      return 404;
+    case "FORBIDDEN":
+      return 403;
+    case "VALIDATION_ERROR":
+      return 400;
+    case "INSUFFICIENT_BALANCE":
+    case "MONTHLY_LIMIT_EXCEEDED":
+    case "CATALOG_INACTIVE":
+      return 409;
+    case "IDEMPOTENCY_CONFLICT":
+    case "STATE_CONFLICT":
+      return 409;
+    default:
+      return 500;
+  }
+}
+
 function flatToNested(body: { error: string; code?: string }): M2ErrorBody {
   return {
     error: {
@@ -111,6 +132,13 @@ export function toRouteErrorResponse(error: unknown): {
   if (error instanceof SettlementError) {
     return {
       status: settlementErrorToStatus(error.code),
+      body: { error: { code: error.code, message: error.message } },
+    };
+  }
+
+  if (error instanceof RedemptionError) {
+    return {
+      status: redemptionErrorToStatus(error.code),
       body: { error: { code: error.code, message: error.message } },
     };
   }

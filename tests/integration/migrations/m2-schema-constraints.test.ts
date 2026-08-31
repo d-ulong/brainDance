@@ -367,7 +367,7 @@ async function assertMigratedHead(connectionString: string): Promise<void> {
     const tags = journal.entries.map((entry) => entry.tag);
     expect(tags).toContain("0013_schedule_horizon_maintains");
     expect(tags).toContain("0017_m3_reversal_settlement_semantics");
-    expect(tags.at(-1)).toBe("0023_m5_definition_active_domain");
+    expect(tags.at(-1)).toBe("0025_m6_ledger_source_check");
 
     const applied = await db.execute(
       sql`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
@@ -577,7 +577,6 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       point_ledger_entries: [
         "id",
         "student_id",
-        "settlement_id",
         "amount",
         "reason",
         "source_type",
@@ -621,7 +620,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       ],
       point_rule_templates: ["negative_effect_schema", "limits"],
       point_rule_versions: ["priority"],
-      point_ledger_entries: ["reverses_entry_id", "created_by"],
+      point_ledger_entries: ["reverses_entry_id", "created_by", "settlement_id"],
       point_balance_projection: ["last_ledger_entry_id"],
     };
 
@@ -1210,9 +1209,7 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
       { code: "23505", constraint: "schedule_horizon_maintains_student_actor_idempotency_unique" },
     );
 
-    const sourceFk = await foreignKeyTarget(db, "point_ledger_entries", "source_id");
     const settlementFk = await foreignKeyTarget(db, "point_ledger_entries", "settlement_id");
-    expect(sourceFk.table).toBe("settlements");
     expect(settlementFk.table).toBe("settlements");
 
     await db.execute(sql`
@@ -1232,11 +1229,21 @@ describe.skipIf(!hasDb)("m2 schema constraints", () => {
           student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
         ) VALUES (
           ${graph.studentId}::uuid, NULL, 10, 'schedule.completed', 'settlement',
-          'null settlement', ${settlementB}::uuid, 'ledger-null-settlement'
+          'null settlement settlement-type', ${settlementB}::uuid, 'ledger-null-settlement'
         )
       `,
-      { code: "23502", column: "settlement_id" },
+      { code: "23514", constraint: "point_ledger_entries_source_check" },
     );
+
+    const redemptionSourceId = crypto.randomUUID();
+    await db.execute(sql`
+      INSERT INTO point_ledger_entries (
+        student_id, settlement_id, amount, reason, source_type, explanation, source_id, idempotency_key
+      ) VALUES (
+        ${graph.studentId}::uuid, NULL, -5, 'redemption.approved', 'redemption',
+        'redemption deduct', ${redemptionSourceId}::uuid, 'ledger-redemption-ok'
+      )
+    `);
     await expectConstraintFailure(
       db,
       sql`

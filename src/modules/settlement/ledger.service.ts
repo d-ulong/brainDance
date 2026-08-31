@@ -15,7 +15,7 @@ export type PointsBalanceDto = {
 
 export type PointsLedgerEntryDto = {
   id: string;
-  settlementId: string;
+  settlementId: string | null;
   amount: number;
   reason: string;
   sourceType: string;
@@ -113,6 +113,19 @@ export async function loadExistingLedgerForSettlement(
   return existing;
 }
 
+async function findLedgerBySettlementId(
+  tx: Database,
+  settlementId: string,
+): Promise<{ id: string } | null> {
+  const [existing] = await tx
+    .select({ id: pointLedgerEntries.id })
+    .from(pointLedgerEntries)
+    .where(eq(pointLedgerEntries.settlementId, settlementId))
+    .limit(1);
+
+  return existing ?? null;
+}
+
 export async function appendLedgerForSettlement(
   tx: Database,
   input: AppendLedgerInput,
@@ -126,30 +139,40 @@ export async function appendLedgerForSettlement(
 
   const now = input.now ?? new Date();
 
-  const [inserted] = await tx
-    .insert(pointLedgerEntries)
-    .values({
-      studentId: input.studentId,
-      settlementId: input.settlementId,
-      amount: input.amount,
-      reason: "schedule_complete",
-      sourceType: "settlement",
-      sourceId: input.settlementId,
-      explanation,
-      reversesEntryId: null,
-      createdBy: null,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: now,
-    })
-    .onConflictDoNothing({ target: pointLedgerEntries.settlementId })
-    .returning({ id: pointLedgerEntries.id });
+  const existingLedger = await findLedgerBySettlementId(tx, input.settlementId);
+  if (existingLedger) {
+    return { ledgerEntryId: existingLedger.id, created: false };
+  }
 
-  if (inserted) {
+  const insertRows = await tx.execute(sql`
+    INSERT INTO point_ledger_entries (
+      student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+      reverses_entry_id, created_by, idempotency_key, created_at
+    ) VALUES (
+      ${input.studentId}::uuid,
+      ${input.settlementId}::uuid,
+      ${input.amount},
+      'schedule_complete',
+      'settlement',
+      ${explanation},
+      ${input.settlementId}::uuid,
+      NULL,
+      NULL,
+      ${input.idempotencyKey},
+      ${now.toISOString()}::timestamptz
+    )
+    ON CONFLICT (settlement_id) WHERE settlement_id IS NOT NULL DO NOTHING
+    RETURNING id
+  `);
+
+  const insertedId = (insertRows[0] as { id: string } | undefined)?.id;
+
+  if (insertedId) {
     await upsertBalanceFromLedgerEntry(
       tx,
       {
         studentId: input.studentId,
-        ledgerEntryId: inserted.id,
+        ledgerEntryId: insertedId,
         amount: input.amount,
         createdAt: now,
         now,
@@ -160,8 +183,8 @@ export async function appendLedgerForSettlement(
     await appendAuditEvent(tx, {
       action: "point_ledger.created",
       resourceType: "point_ledger_entry",
-      resourceId: inserted.id,
-      idempotencyKey: `audit:point-ledger-created:${inserted.id}`,
+      resourceId: insertedId,
+      idempotencyKey: `audit:point-ledger-created:${insertedId}`,
       metadata: {
         settlementId: input.settlementId,
         amount: input.amount,
@@ -176,13 +199,18 @@ export async function appendLedgerForSettlement(
       dedupeKey: `points.settled:${input.settlementId}`,
       payload: {
         settlementId: input.settlementId,
-        ledgerEntryId: inserted.id,
+        ledgerEntryId: insertedId,
         studentId: input.studentId,
         amount: input.amount,
       },
     });
 
-    return { ledgerEntryId: inserted.id, created: true };
+    return { ledgerEntryId: insertedId, created: true };
+  }
+
+  const raced = await findLedgerBySettlementId(tx, input.settlementId);
+  if (raced) {
+    return { ledgerEntryId: raced.id, created: false };
   }
 
   const existing = await loadExistingLedgerForSettlement(tx, input.settlementId);
@@ -271,28 +299,38 @@ export async function appendLedgerForErrorCountSettlement(
   const now = input.now ?? new Date();
   const explanation = `+${input.amount} points for error_count=${input.errorCount}`;
 
-  const [inserted] = await tx
-    .insert(pointLedgerEntries)
-    .values({
-      studentId: input.studentId,
-      settlementId: input.settlementId,
-      amount: input.amount,
-      reason: "schedule.error_count",
-      sourceType: "settlement",
-      sourceId: input.settlementId,
-      explanation,
-      reversesEntryId: null,
-      createdBy: null,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: now,
-    })
-    .onConflictDoNothing({ target: pointLedgerEntries.settlementId })
-    .returning({ id: pointLedgerEntries.id });
+  const existingLedger = await findLedgerBySettlementId(tx, input.settlementId);
+  if (existingLedger) {
+    return { ledgerEntryId: existingLedger.id, created: false };
+  }
 
-  if (inserted) {
+  const insertRows = await tx.execute(sql`
+    INSERT INTO point_ledger_entries (
+      student_id, settlement_id, amount, reason, source_type, explanation, source_id,
+      reverses_entry_id, created_by, idempotency_key, created_at
+    ) VALUES (
+      ${input.studentId}::uuid,
+      ${input.settlementId}::uuid,
+      ${input.amount},
+      'schedule.error_count',
+      'settlement',
+      ${explanation},
+      ${input.settlementId}::uuid,
+      NULL,
+      NULL,
+      ${input.idempotencyKey},
+      ${now.toISOString()}::timestamptz
+    )
+    ON CONFLICT (settlement_id) WHERE settlement_id IS NOT NULL DO NOTHING
+    RETURNING id
+  `);
+
+  const insertedId = (insertRows[0] as { id: string } | undefined)?.id;
+
+  if (insertedId) {
     await upsertBalanceFromLedgerEntry(tx, {
       studentId: input.studentId,
-      ledgerEntryId: inserted.id,
+      ledgerEntryId: insertedId,
       amount: input.amount,
       createdAt: now,
       now,
@@ -301,8 +339,8 @@ export async function appendLedgerForErrorCountSettlement(
     await appendAuditEvent(tx, {
       action: "point_ledger.created",
       resourceType: "point_ledger_entry",
-      resourceId: inserted.id,
-      idempotencyKey: `audit:point-ledger-created:${inserted.id}`,
+      resourceId: insertedId,
+      idempotencyKey: `audit:point-ledger-created:${insertedId}`,
       metadata: {
         settlementId: input.settlementId,
         amount: input.amount,
@@ -317,13 +355,13 @@ export async function appendLedgerForErrorCountSettlement(
       dedupeKey: `points.settled:${input.settlementId}`,
       payload: {
         settlementId: input.settlementId,
-        ledgerEntryId: inserted.id,
+        ledgerEntryId: insertedId,
         studentId: input.studentId,
         amount: input.amount,
       },
     });
 
-    return { ledgerEntryId: inserted.id, created: true };
+    return { ledgerEntryId: insertedId, created: true };
   }
 
   const existing = await loadExistingLedgerForSettlement(tx, input.settlementId);

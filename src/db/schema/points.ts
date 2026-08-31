@@ -177,30 +177,31 @@ export const pointLedgerEntries = pgTable(
     studentId: uuid("student_id")
       .notNull()
       .references(() => users.id),
-    settlementId: uuid("settlement_id")
-      .notNull()
-      .references(() => settlements.id),
+    settlementId: uuid("settlement_id").references(() => settlements.id),
     amount: integer("amount").notNull(),
     reason: text("reason").notNull(),
     sourceType: text("source_type").notNull(),
     explanation: text("explanation").notNull(),
-    sourceId: uuid("source_id")
-      .notNull()
-      .references(() => settlements.id),
+    sourceId: uuid("source_id").notNull(),
     reversesEntryId: uuid("reverses_entry_id").references((): AnyPgColumn => pointLedgerEntries.id),
     createdBy: uuid("created_by").references(() => users.id),
     idempotencyKey: text("idempotency_key").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("point_ledger_entries_settlement_id_unique").on(table.settlementId),
+    uniqueIndex("point_ledger_entries_settlement_id_unique")
+      .on(table.settlementId)
+      .where(sql`${table.settlementId} IS NOT NULL`),
     check(
       "point_ledger_entries_source_check",
-      sql`(${table.sourceType} = 'settlement' AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL AND ${table.amount} >= 0) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0)`,
+      sql`(${table.sourceType} = 'settlement' AND ${table.settlementId} IS NOT NULL AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL AND ${table.amount} >= 0) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'redemption' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0)`,
     ),
     uniqueIndex("point_ledger_entries_reversal_unique")
       .on(table.reversesEntryId)
       .where(sql`${table.reversesEntryId} IS NOT NULL`),
+    uniqueIndex("point_ledger_entries_redemption_source_unique")
+      .on(table.sourceId)
+      .where(sql`${table.sourceType} = 'redemption'`),
   ],
 );
 

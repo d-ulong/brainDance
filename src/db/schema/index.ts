@@ -5,6 +5,7 @@ export * from "./guardian-consents";
 export * from "./identity";
 export * from "./outbox";
 export * from "./points";
+export * from "./redemption";
 export * from "./reflection-privacy";
 export * from "./schedule";
 export * from "./training";

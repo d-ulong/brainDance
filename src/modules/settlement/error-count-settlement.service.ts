@@ -202,7 +202,7 @@ export async function settleForErrorCountFact(
 export async function loadLedgerEntriesForFact(
   tx: Database,
   factVersionId: string,
-): Promise<Array<{ id: string; amount: number; settlementId: string }>> {
+): Promise<Array<{ id: string; amount: number; settlementId: string | null }>> {
   const rows = await tx
     .select({
       id: pointLedgerEntries.id,
@@ -229,7 +229,7 @@ export async function reverseLedgerEntriesForFact(
   const reversalIds: string[] = [];
 
   for (const entry of entries) {
-    if (entry.amount <= 0) {
+    if (entry.amount <= 0 || !entry.settlementId) {
       continue;
     }
 
