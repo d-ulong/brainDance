@@ -25,8 +25,9 @@
   "meta": {
     "planning_base_sha": "fd87ae680ad79072456bcbdbfe659af0638a01b8",
     "protocol_scope": "fixed-standard-sessions",
-    "active_stage": "P3",
+    "active_stage": "P3_remediation",
     "p1_signed_sha": "6f39d5f5eb68fead9a395e4cbc18682357f984aa",
-    "p2_signed_sha": "a9b32f20fd419ed9e5b6f02d818c5553764bbdb8"
+    "p2_signed_sha": "a9b32f20fd419ed9e5b6f02d818c5553764bbdb8",
+    "p3_candidate_sha": "a5d021eb6b057bb9cfb93a11a560060c9b2cc138"
   }
 }
