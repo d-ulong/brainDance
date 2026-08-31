@@ -135,3 +135,27 @@ Signed off M4 P2 reflection privacy after deterministic grant/end and read/revok
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Complete M5 training expansion and trends
+
+**Date**: 2026-08-31
+**Task**: Complete M5 training expansion and trends
+**Branch**: `main`
+
+### Summary
+
+Signed off M5 P3 lifecycle and dual-viewport acceptance, fast-forwarded the milestone to main, reconciled the residual test dependency lockfile entries, independently verified frozen install/build/typecheck, and archived the completed task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `efa4e021dc61776f64173773a279a024324600ec` | (see git log) |
+| `0d9f240a9991e48cb3da892ed25e56ec3a7ea6d6` | (see git log) |
+| `4379bca843c8cf4870768358928885ba92202a5b` | (see git log) |
+| `4619db2bd1f2b34fdc58f2a7c41387516f784806` | (see git log) |
+
+### Status
+
+[OK] **Completed**
