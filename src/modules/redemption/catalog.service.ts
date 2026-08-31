@@ -4,7 +4,6 @@ import type { Database } from "@/db";
 import { auditEvents, redemptionCatalogItems, users } from "@/db/schema";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
-import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { RedemptionError } from "@/modules/redemption/errors";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
@@ -135,28 +134,30 @@ export async function createCatalogItem(
       return { item: toCatalogDto(existingInTx), idempotentReplay: true };
     }
 
-    try {
-      const [inserted] = await tx
-        .insert(redemptionCatalogItems)
-        .values({
-          studentId: input.studentId,
-          creatorParentId: input.parentId,
-          title: input.body.title,
-          description: input.body.description ?? null,
-          cost: input.body.cost,
-          monthlyLimit: input.body.monthlyLimit ?? null,
-          active: true,
-          createIdempotencyKey: input.idempotencyKey,
-          createIdempotencyPayloadHash: payloadHash,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
+    const [inserted] = await tx
+      .insert(redemptionCatalogItems)
+      .values({
+        studentId: input.studentId,
+        creatorParentId: input.parentId,
+        title: input.body.title,
+        description: input.body.description ?? null,
+        cost: input.body.cost,
+        monthlyLimit: input.body.monthlyLimit ?? null,
+        active: true,
+        createIdempotencyKey: input.idempotencyKey,
+        createIdempotencyPayloadHash: payloadHash,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [
+          redemptionCatalogItems.creatorParentId,
+          redemptionCatalogItems.createIdempotencyKey,
+        ],
+      })
+      .returning();
 
-      if (!inserted) {
-        throw new RedemptionError("STATE_CONFLICT", "Failed to create catalog item");
-      }
-
+    if (inserted) {
       await appendAuditEvent(tx, {
         actorId: input.parentId,
         action: "redemption_catalog.created",
@@ -185,28 +186,28 @@ export async function createCatalogItem(
       });
 
       return { item: toCatalogDto(inserted), idempotentReplay: false };
-    } catch (error) {
-      if (isPostgresUniqueViolation(error)) {
-        const [replay] = await tx
-          .select()
-          .from(redemptionCatalogItems)
-          .where(
-            and(
-              eq(redemptionCatalogItems.creatorParentId, input.parentId),
-              eq(redemptionCatalogItems.createIdempotencyKey, input.idempotencyKey),
-            ),
-          )
-          .limit(1);
-
-        if (replay) {
-          if (replay.createIdempotencyPayloadHash !== payloadHash) {
-            throw new RedemptionError("IDEMPOTENCY_CONFLICT", "Catalog item idempotency conflict");
-          }
-          return { item: toCatalogDto(replay), idempotentReplay: true };
-        }
-      }
-      throw error;
     }
+
+    const [replay] = await tx
+      .select()
+      .from(redemptionCatalogItems)
+      .where(
+        and(
+          eq(redemptionCatalogItems.creatorParentId, input.parentId),
+          eq(redemptionCatalogItems.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+
+    if (!replay) {
+      throw new RedemptionError("STATE_CONFLICT", "Failed to create catalog item");
+    }
+
+    if (replay.createIdempotencyPayloadHash !== payloadHash) {
+      throw new RedemptionError("IDEMPOTENCY_CONFLICT", "Catalog item idempotency conflict");
+    }
+
+    return { item: toCatalogDto(replay), idempotentReplay: true };
   });
 }
 

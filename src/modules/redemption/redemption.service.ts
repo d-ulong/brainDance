@@ -207,6 +207,9 @@ export async function createRedemptionRequest(
     }
 
     if (catalogItem.monthlyLimit != null) {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`redemption-monthly-create:${catalogItem.id}:${requestMonth}`}))`,
+      );
       const monthlyRows = await lockMonthlyRedemptions(tx, catalogItem.id, requestMonth);
       if ((await countMonthlyUsage(monthlyRows)) >= catalogItem.monthlyLimit) {
         throw new RedemptionError("MONTHLY_LIMIT_EXCEEDED", "Monthly redemption limit exceeded");

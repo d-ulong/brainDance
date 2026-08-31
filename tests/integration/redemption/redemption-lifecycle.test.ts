@@ -345,23 +345,43 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
       monthlyLimit: 1,
     });
 
-    await createRedemptionRequest(db, {
-      studentId,
-      actorId: studentId,
-      catalogItemId: item.id,
-      idempotencyKey: "req-at-limit",
-      now: FIXED_NOW,
+    const barrier = createConcurrentBarrier(2);
+    const results = await Promise.allSettled([
+      withIndependentConnection(async (conn) => {
+        await barrier.wait();
+        return createRedemptionRequest(conn, {
+          studentId,
+          actorId: studentId,
+          catalogItemId: item.id,
+          idempotencyKey: "req-concurrent-a",
+          now: FIXED_NOW,
+        });
+      }),
+      withIndependentConnection(async (conn) => {
+        await barrier.wait();
+        return createRedemptionRequest(conn, {
+          studentId,
+          actorId: studentId,
+          catalogItemId: item.id,
+          idempotencyKey: "req-concurrent-b",
+          now: FIXED_NOW,
+        });
+      }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: "MONTHLY_LIMIT_EXCEEDED",
     });
 
-    await expect(
-      createRedemptionRequest(db, {
-        studentId,
-        actorId: studentId,
-        catalogItemId: item.id,
-        idempotencyKey: "req-over-limit",
-        now: FIXED_NOW,
-      }),
-    ).rejects.toMatchObject({ code: "MONTHLY_LIMIT_EXCEEDED" });
+    const redemptions = await db
+      .select()
+      .from(pointRedemptions)
+      .where(eq(pointRedemptions.studentId, studentId));
+    expect(redemptions).toHaveLength(1);
   });
 
   it("concurrent approve and reject yields one terminal state", async () => {
@@ -684,6 +704,63 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
       .from(redemptionCatalogItems)
       .where(eq(redemptionCatalogItems.id, activeCatalog.item.id));
     expect(activeRow?.active).toBe(true);
+  });
+
+  it("P1-F01: concurrent catalog create with same idempotency key converges without 500", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const body = { title: "Concurrent Reward", cost: 5 };
+    const idempotencyKey = "concurrent-catalog-create";
+
+    const barrier = createConcurrentBarrier(2);
+    const results = await Promise.allSettled([
+      withIndependentConnection(async (conn) => {
+        await barrier.wait();
+        return createCatalogItem(conn, {
+          parentId,
+          studentId,
+          idempotencyKey,
+          body,
+          now: FIXED_NOW,
+        });
+      }),
+      withIndependentConnection(async (conn) => {
+        await barrier.wait();
+        return createCatalogItem(conn, {
+          parentId,
+          studentId,
+          idempotencyKey,
+          body,
+          now: FIXED_NOW,
+        });
+      }),
+    ]);
+
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+    const fulfilled = results.filter((r) => r.status === "fulfilled") as Array<
+      PromiseFulfilledResult<Awaited<ReturnType<typeof createCatalogItem>>>
+    >;
+    const itemIds = new Set(fulfilled.map((r) => r.value.item.id));
+    expect(itemIds.size).toBe(1);
+    expect(fulfilled.some((r) => r.value.idempotentReplay)).toBe(true);
+    expect(fulfilled.some((r) => !r.value.idempotentReplay)).toBe(true);
+
+    const catalogRows = await db
+      .select()
+      .from(redemptionCatalogItems)
+      .where(eq(redemptionCatalogItems.studentId, studentId));
+    expect(catalogRows).toHaveLength(1);
+
+    const audits = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.idempotencyKey, `audit:redemption-catalog-created:${idempotencyKey}`));
+    expect(audits).toHaveLength(1);
+
+    const outbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.dedupeKey, `redemption_catalog.created:${idempotencyKey}`));
+    expect(outbox).toHaveLength(1);
   });
 
   it("P1-F01: rolls back catalog create when audit append fails", async () => {
