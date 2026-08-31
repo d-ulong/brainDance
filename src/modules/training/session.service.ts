@@ -19,6 +19,11 @@ import { REACTION_TRAINING_KEY, TRAINING_BLUR_ABANDON_MS } from "@/modules/train
 import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
 import { TrainingError } from "@/modules/training/errors";
 import {
+  computeBestValue,
+  filterProjectionEligibleMetrics,
+  getProjectionMetricDefinitions,
+} from "@/modules/training/profile-projection-reducer";
+import {
   computeTrainingMetrics,
   decodeMetricSchema,
   getExpectedSessionCount,
@@ -193,26 +198,23 @@ async function upsertProfileProjection(
     definitionVersion: number;
     ageBand: string;
     sessionId: string;
+    familyDate: string;
     metrics: TrainingMetricDto[];
   },
 ) {
-  const metricDefinitions = getMetricDefinitions(input.trainingKey);
   const directionByKey = new Map(
-    metricDefinitions.map((definition) => [definition.metricKey, definition.direction]),
-  );
-  const excluded = new Set(
-    metricDefinitions
-      .filter((definition) => definition.excludeFromProjection)
-      .map((d) => d.metricKey),
+    getMetricDefinitions(input.trainingKey).map((definition) => [
+      definition.metricKey,
+      definition.direction,
+    ]),
   );
 
-  for (const metric of input.metrics) {
-    if (!metric.isValid || excluded.has(metric.metricKey)) {
+  for (const metric of filterProjectionEligibleMetrics(input.trainingKey, input.metrics)) {
+    const direction = directionByKey.get(metric.metricKey);
+    if (!direction) {
       continue;
     }
 
-    const direction = directionByKey.get(metric.metricKey);
-    const lowerIsBetter = direction === "lower-is-better";
     const [existing] = await tx
       .select()
       .from(trainingProfileProjection)
@@ -227,12 +229,11 @@ async function upsertProfileProjection(
       )
       .limit(1);
 
-    const bestValue =
-      existing === undefined
-        ? metric.value
-        : lowerIsBetter
-          ? Math.min(Number(existing.bestValue), metric.value)
-          : Math.max(Number(existing.bestValue), metric.value);
+    const bestValue = computeBestValue(
+      existing === undefined ? undefined : Number(existing.bestValue),
+      metric.value,
+      direction,
+    );
 
     await tx
       .insert(trainingProfileProjection)
@@ -245,7 +246,7 @@ async function upsertProfileProjection(
         bestValue: bestValue.toFixed(6),
         lastValue: metric.value.toFixed(6),
         lastSourceSessionId: input.sessionId,
-        windowSummary: { lastFamilyDate: toFamilyDate() },
+        windowSummary: { lastFamilyDate: input.familyDate },
       })
       .onConflictDoUpdate({
         target: [
@@ -757,6 +758,7 @@ export async function submitTrainingSession(
           definitionVersion: lockedSession.definitionVersion,
           ageBand: lockedSession.ageBand,
           sessionId: input.sessionId,
+          familyDate: lockedSession.familyDate,
           metrics,
         });
       }
@@ -874,6 +876,10 @@ export async function getTrainingSummaryForParent(
       ),
     );
 
+  const projectionMetricKeys = new Set(
+    getProjectionMetricDefinitions(trainingKey).map((definition) => definition.metricKey),
+  );
+
   let lastSession: ParentTrainingSummary["lastSession"] = null;
   if (latestSession) {
     const metrics = await loadSessionMetrics(db, latestSession.id);
@@ -882,7 +888,7 @@ export async function getTrainingSummaryForParent(
       status: latestSession.status,
       sessionKind: latestSession.sessionKind,
       finishedAt: latestSession.finishedAt?.toISOString() ?? null,
-      metrics: metrics.filter((m) => ["median_reaction_ms", "accuracy"].includes(m.metricKey)),
+      metrics: metrics.filter((metric) => projectionMetricKeys.has(metric.metricKey)),
     };
   }
 
@@ -895,7 +901,7 @@ export async function getTrainingSummaryForParent(
     familyDate: latestSession?.familyDate ?? toFamilyDate(),
     lastSession,
     projection: projectionRows
-      .filter((row) => ["median_reaction_ms", "accuracy"].includes(row.metricKey))
+      .filter((row) => projectionMetricKeys.has(row.metricKey))
       .map((row) => ({
         metricKey: row.metricKey,
         bestValue: Number(row.bestValue),
