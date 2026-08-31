@@ -12,7 +12,7 @@
   "assignee": "wangyoulong",
   "createdAt": "2026-08-30",
   "completedAt": null,
-  "branch": "feat/m5-training-expansion-trends",
+  "branch": "fix/m5-lockfile-reconciliation",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
@@ -25,12 +25,13 @@
   "meta": {
     "planning_base_sha": "fd87ae680ad79072456bcbdbfe659af0638a01b8",
     "protocol_scope": "fixed-standard-sessions",
-    "active_stage": "M5_integration",
+    "active_stage": "post_integration_lockfile_reconciliation",
     "p1_signed_sha": "6f39d5f5eb68fead9a395e4cbc18682357f984aa",
     "p2_signed_sha": "a9b32f20fd419ed9e5b6f02d818c5553764bbdb8",
     "p3_candidate_sha": "a5d021eb6b057bb9cfb93a11a560060c9b2cc138",
     "p3_remediation_sha": "705ad71c23f4996661fdc6af0bbb574daa10f7d8",
     "p3_safety_candidate_sha": "e0f118e28621d9cd9705d5b2b848ee2bcffd19e0",
-    "p3_signed_sha": "efa4e021dc61776f64173773a279a024324600ec"
+    "p3_signed_sha": "efa4e021dc61776f64173773a279a024324600ec",
+    "m5_integrated_sha": "0d9f240a9991e48cb3da892ed25e56ec3a7ea6d6"
   }
 }
