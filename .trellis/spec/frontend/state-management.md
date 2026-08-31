@@ -31,6 +31,29 @@ Server/session state is loaded on demand through fetch helpers, not synchronized
 
 Use `useState` when the UI must re-render on change. Use `useRef` when values are read/written inside callbacks or timing logic without needing a render update.
 
+### Synchronous lifecycle gates for timed interactions
+
+Training pages have callbacks that can finish between a browser lifecycle event and React's next render. For interaction-safety state such as `paused` or `terminated`, keep a ref as the callback-time authority and update it before the corresponding render state:
+
+```typescript
+const pausedRef = useRef(false);
+const [paused, setPaused] = useState(false);
+
+const setPausedSync = useCallback((value: boolean) => {
+  pausedRef.current = value;
+  setPaused(value);
+}, []);
+
+const isInteractionAllowed = useCallback(
+  () => !pausedRef.current && !terminatedRef.current,
+  [],
+);
+```
+
+Timer callbacks must consult that authority before exposing a stimulus or response. If interaction is blocked, preserve the remaining duration and phase; only successful recovery may recreate one timer or perform one deferred zero-boundary transition. Do not clear timing refs before the gate check.
+
+Required lifecycle cases are: visibility changes before React rerenders, initially hidden binding, recovery failure or abandonment, and timer expiry during the visibility/pause-effect window. Assert both the blocked state and the single successful resume transition.
+
 ### Session handling
 
 `src/lib/client/api.ts` exports:
@@ -86,6 +109,7 @@ Label mapping helper: `scheduleStatusLabel()` in `src/lib/client/m2-api.ts`.
 - **Introducing global store for session** — not used; would diverge from per-page `fetchSession` pattern unless multiple nested trees need the same data simultaneously.
 - **Storing server data only in module-level variables** — breaks React rendering; always `useState` after fetch.
 - **Optimistic updates** — not implemented today; wait for API success before updating lists (see `onCompleteItem` in schedule page).
+- **Render state as a callback-time gate** — a closure over `paused` can remain stale until React rerenders; use a synchronously updated ref for browser events, deferred requests, and timers.
 
 ---
 
