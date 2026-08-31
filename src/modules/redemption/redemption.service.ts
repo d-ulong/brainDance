@@ -5,6 +5,7 @@ import { auditEvents, pointRedemptions, redemptionCatalogItems } from "@/db/sche
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { appendLedgerForRedemption } from "@/modules/redemption/ledger-redemption.service";
 import { lockStudentBalanceThenMonthlyUsage } from "@/modules/redemption/approve-lock-order";
@@ -141,6 +142,8 @@ export async function createRedemptionRequest(
   if (input.actorId !== input.studentId) {
     throw new RedemptionError("FORBIDDEN", "Only the student can create redemption requests");
   }
+
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const payload = { catalogItemId: input.catalogItemId };
   const payloadHash = hashIdempotencyPayload(payload);
@@ -319,6 +322,8 @@ export async function cancelRedemptionRequest(
     throw new RedemptionError("FORBIDDEN", "Only the student can cancel redemption requests");
   }
 
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+
   const auditKey = `audit:redemption-cancelled:${input.idempotencyKey}`;
   const cancelPayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
   const replay = await findCommandReplay(db, auditKey, input.redemptionId, cancelPayloadHash);
@@ -411,6 +416,7 @@ export async function approveRedemptionRequest(
   input: ApproveRedemptionInput,
 ): Promise<TerminalRedemptionResult> {
   await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const auditKey = `audit:redemption-approved:${input.idempotencyKey}`;
   const approvePayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
@@ -540,6 +546,7 @@ export async function rejectRedemptionRequest(
   input: RejectRedemptionInput,
 ): Promise<TerminalRedemptionResult> {
   await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const trimmedReason = input.reason.trim();
   if (!trimmedReason) {
@@ -635,6 +642,8 @@ export async function rejectRedemptionRequest(
 }
 
 export async function listRedemptions(db: Database, studentId: string): Promise<RedemptionDto[]> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const rows = await db
     .select()
     .from(pointRedemptions)

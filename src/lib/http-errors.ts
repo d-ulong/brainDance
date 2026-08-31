@@ -1,4 +1,5 @@
 import { FamilyAccessError } from "@/modules/family-access/errors";
+import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { IdentityError } from "@/modules/identity/errors";
 import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
 import { TrainingError } from "@/modules/training/errors";
@@ -49,6 +50,13 @@ export function appErrorToStatus(code: string): number {
     case "RELATIONSHIP_NOT_ACTIVE":
     case "REFLECTION_NOT_TODAY":
     case "REFLECTION_DELETED":
+    case "FROZEN":
+    case "TOKEN_EXPIRED":
+    case "TOKEN_CONSUMED":
+    case "TOKEN_INVALID":
+    case "ARTIFACT_UNAVAILABLE":
+    case "REVOCATION_EXPIRED":
+    case "CONFIRMATION_REQUIRED":
       return 400;
     default:
       return 400;
@@ -67,7 +75,8 @@ export function toErrorResponse(error: unknown): {
     error instanceof IdentityError ||
     error instanceof FamilyAccessError ||
     error instanceof ReflectionPrivacyError ||
-    error instanceof TrainingError
+    error instanceof TrainingError ||
+    error instanceof DataLifecycleError
   ) {
     return {
       status: appErrorToStatus(error.code),

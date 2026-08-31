@@ -103,11 +103,11 @@ describe.skipIf(!hasDb)("m6 schema constraints", () => {
     await closeIsolatedM2Database(isolated);
   });
 
-  it("journal head includes 0024_m6_redemption", () => {
+  it("journal head includes 0026_m6_data_lifecycle", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: Array<{ tag: string }> };
-    expect(journal.entries.at(-1)?.tag).toBe("0025_m6_ledger_source_check");
+    expect(journal.entries.at(-1)?.tag).toBe("0026_m6_data_lifecycle");
   });
 
   it("rejects non-positive catalog cost", async () => {
@@ -232,6 +232,70 @@ describe.skipIf(!hasDb)("m6 schema constraints", () => {
         )
       `,
       { code: "23505", constraint: "point_ledger_entries_redemption_source_unique" },
+    );
+  });
+
+  it("rejects invalid export job status", async () => {
+    const { parentId, studentId } = await seedParentStudent(isolated.db);
+    await expectConstraintFailure(
+      isolated.db,
+      sql`
+        INSERT INTO export_jobs (
+          requester_id, student_id, scope_snapshot, status,
+          create_idempotency_key, create_idempotency_payload_hash, created_at, updated_at
+        ) VALUES (
+          ${parentId}::uuid, ${studentId}::uuid, '{}'::jsonb, 'invalid',
+          'e1', 'h1', now(), now()
+        )
+      `,
+      { code: "23514", constraint: "export_jobs_status_check" },
+    );
+  });
+
+  it("rejects invalid deletion target type", async () => {
+    const { parentId, studentId } = await seedParentStudent(isolated.db);
+    await expectConstraintFailure(
+      isolated.db,
+      sql`
+        INSERT INTO deletion_requests (
+          target_type, target_id, student_id, requested_by, status,
+          revocable_until, create_idempotency_key, create_idempotency_payload_hash,
+          requested_at, created_at, updated_at
+        ) VALUES (
+          'invalid', ${studentId}::uuid, ${studentId}::uuid, ${parentId}::uuid, 'frozen',
+          now() + interval '30 days', 'd1', 'h1', now(), now(), now()
+        )
+      `,
+      { code: "23514", constraint: "deletion_requests_target_type_check" },
+    );
+  });
+
+  it("rejects duplicate active deletion target", async () => {
+    const { parentId, studentId } = await seedParentStudent(isolated.db);
+    await isolated.db.execute(sql`
+      INSERT INTO deletion_requests (
+        target_type, target_id, student_id, requested_by, status,
+        revocable_until, create_idempotency_key, create_idempotency_payload_hash,
+        requested_at, created_at, updated_at
+      ) VALUES (
+        'student_account', ${studentId}::uuid, ${studentId}::uuid, ${parentId}::uuid, 'frozen',
+        now() + interval '30 days', 'd-active-1', 'h1', now(), now(), now()
+      )
+    `);
+
+    await expectConstraintFailure(
+      isolated.db,
+      sql`
+        INSERT INTO deletion_requests (
+          target_type, target_id, student_id, requested_by, status,
+          revocable_until, create_idempotency_key, create_idempotency_payload_hash,
+          requested_at, created_at, updated_at
+        ) VALUES (
+          'student_account', ${studentId}::uuid, ${studentId}::uuid, ${parentId}::uuid, 'frozen',
+          now() + interval '30 days', 'd-active-2', 'h2', now(), now(), now()
+        )
+      `,
+      { code: "23505", constraint: "deletion_requests_active_target_unique" },
     );
   });
 });

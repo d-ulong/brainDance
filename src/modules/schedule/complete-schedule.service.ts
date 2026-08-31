@@ -7,6 +7,7 @@ import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.service";
 import { ScheduleError } from "@/modules/schedule/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { deriveCompletionKind } from "@/modules/time-policy/derive-completion-kind";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
 import { SettlementError } from "@/modules/settlement/errors";
@@ -155,6 +156,8 @@ export async function completeScheduleItem(
   if (preflightItem.studentId !== input.actorId) {
     throw new ScheduleError("FORBIDDEN", "Only the student can complete schedule items");
   }
+
+  await assertStudentAccountNotFrozen(db, preflightItem.studentId, "write");
 
   let expiredStudentId: string | null = null;
 

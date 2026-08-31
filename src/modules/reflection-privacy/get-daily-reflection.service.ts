@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { PRIVATE_RESOURCE_TYPES } from "@/modules/reflection-privacy/constants";
 import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { assertParentCanReadReflection } from "@/modules/reflection-privacy/read-access.service";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 
@@ -40,6 +41,8 @@ export async function getDailyReflection(
   db: Database,
   input: GetDailyReflectionInput,
 ): Promise<DailyReflectionDto> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "read");
+
   const [reflection] = await db
     .select()
     .from(dailyReflections)

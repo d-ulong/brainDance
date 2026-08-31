@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import type { Database } from "@/db";
 import { auditEvents, redemptionCatalogItems, users } from "@/db/schema";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { RedemptionError } from "@/modules/redemption/errors";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
@@ -83,6 +84,7 @@ export async function createCatalogItem(
 ): Promise<CreateCatalogItemResult> {
   await requireVerifiedParent(db, input.parentId);
   await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const payloadHash = hashIdempotencyPayload(input.body);
   const now = input.now ?? new Date();
@@ -238,6 +240,7 @@ export async function updateCatalogItem(
 ): Promise<UpdateCatalogItemResult> {
   await requireVerifiedParent(db, input.parentId);
   await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const payloadHash = hashIdempotencyPayload({ itemId: input.itemId, ...input.body });
   const auditKey = `audit:redemption-catalog-updated:${input.idempotencyKey}`;
@@ -355,6 +358,8 @@ export async function listCatalogItems(
   studentId: string,
   options: ListCatalogItemsOptions,
 ): Promise<CatalogItemDto[]> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const activeOnly = options.viewerRole === "student" ? true : (options.activeOnly ?? false);
 
   const conditions = [eq(redemptionCatalogItems.studentId, studentId)];
@@ -375,6 +380,8 @@ export async function getCatalogItemForStudent(
   studentId: string,
   itemId: string,
 ): Promise<typeof redemptionCatalogItems.$inferSelect | null> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const [item] = await db
     .select()
     .from(redemptionCatalogItems)

@@ -1,4 +1,5 @@
 export * from "./bootstrap";
+export * from "./data-lifecycle";
 export * from "./family-access";
 export * from "./goals";
 export * from "./guardian-consents";

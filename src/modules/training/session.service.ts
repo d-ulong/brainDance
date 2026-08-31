@@ -21,6 +21,7 @@ import {
   buildSubmitCompetitionLockKey,
 } from "@/modules/training/submit-competition-lock-key";
 import { TrainingError } from "@/modules/training/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import {
   buildProjectionStateFromRows,
   filterProjectionEligibleMetrics,
@@ -353,6 +354,8 @@ export async function startTrainingSession(
   db: Database,
   input: StartTrainingSessionInput,
 ): Promise<StartTrainingSessionResult> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+
   const existing = await findStartSessionByIdempotency(db, input.studentId, input.idempotencyKey);
 
   if (existing) {
@@ -831,6 +834,8 @@ export async function getTrainingSessionForStudent(
   studentId: string,
   sessionId: string,
 ): Promise<TrainingSessionDetail> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const session = await loadOwnedSession(db, studentId, sessionId);
   const metrics = await loadSessionMetrics(db, sessionId);
   const events = await loadSessionEvents(db, sessionId);

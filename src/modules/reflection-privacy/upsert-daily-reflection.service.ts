@@ -5,6 +5,7 @@ import { dailyReflectionVersions, dailyReflections } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import type { ReflectionVisibility } from "@/modules/reflection-privacy/constants";
 import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import {
   assertEditableFamilyDate,
   findReflectionByStudentDate,
@@ -52,6 +53,8 @@ export async function upsertDailyReflection(
   }
 
   assertEditableFamilyDate(input.familyDate);
+
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const replayId = await findReflectionReplayByAudit(db, input.idempotencyKey, "reflection.upsert");
   if (replayId) {

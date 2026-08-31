@@ -183,6 +183,13 @@
       "when": 1787736000000,
       "tag": "0025_m6_ledger_source_check",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1787739600000,
+      "tag": "0026_m6_data_lifecycle",
+      "breakpoints": true
     }
   ]
 }

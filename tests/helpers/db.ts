@@ -29,6 +29,10 @@ export async function resetIdentityTables(db: TestDb): Promise<void> {
   const run = resetQueue.then(async () => {
     await db.execute(sql`
       TRUNCATE TABLE
+        deletion_execution_steps,
+        deletion_tombstones,
+        deletion_requests,
+        export_jobs,
         audit_events,
         outbox_events,
         private_access_grants,

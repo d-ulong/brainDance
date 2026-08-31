@@ -3,6 +3,7 @@ import { and, eq, gte, lte } from "drizzle-orm";
 import type { Database } from "@/db";
 import { planScheduleSlots, plans, scheduleItems } from "@/db/schema";
 import { effectiveStatus } from "@/modules/schedule/effective-status";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type CurrentFormalPlanDto = {
   planId: string;
@@ -22,6 +23,8 @@ export async function queryCurrentFormalPlan(
   db: Database,
   studentId: string,
 ): Promise<CurrentFormalPlanDto | null> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const [plan] = await db
     .select()
     .from(plans)
@@ -86,6 +89,8 @@ export async function queryScheduleItems(
   db: Database,
   input: QueryScheduleItemsInput,
 ): Promise<ScheduleItemDto[]> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "read");
+
   const now = input.now ?? new Date();
 
   const rows = await db

@@ -26,6 +26,14 @@ export function hashAssociationCode(plaintext: string): string {
   return createHmac("sha256", getSecretPepper()).update(`assoc:${plaintext}`).digest("hex");
 }
 
+export function generateDownloadTokenPlaintext(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashDownloadToken(plaintext: string): string {
+  return createHmac("sha256", getSecretPepper()).update(`download:${plaintext}`).digest("hex");
+}
+
 export function generateOtpPlaintext(): string {
   return randomInt(100_000, 1_000_000).toString();
 }

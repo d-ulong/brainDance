@@ -6,6 +6,7 @@ import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { isLedgerEntryAfter } from "@/modules/settlement/ledger-order";
 import { SettlementError } from "@/modules/settlement/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type PointsBalanceDto = {
   balance: number;
@@ -30,6 +31,8 @@ export async function queryPointsBalance(
   db: Database,
   studentId: string,
 ): Promise<PointsBalanceDto> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const [row] = await db
     .select({
       balance: pointBalanceProjection.balance,
@@ -55,6 +58,8 @@ export async function queryPointsLedger(
   studentId: string,
   limit: number,
 ): Promise<PointsLedgerEntryDto[]> {
+  await assertStudentAccountNotFrozen(db, studentId, "read");
+
   const rows = await db
     .select({
       id: pointLedgerEntries.id,
