@@ -5,11 +5,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import {
-  useKeyboardAction,
   useTrainingSessionLifecycle,
+  useKeyboardAction,
 } from "@/components/training/use-training-session-lifecycle";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { REACTION_MIN_VALID_MS } from "@/modules/training/constants";
+
+function inputMethodFromClick(event: { detail: number }): "pointer" | "keyboard" {
+  return event.detail === 0 ? "keyboard" : "pointer";
+}
 
 export default function ReactionTrainingPage() {
   const lifecycle = useTrainingSessionLifecycle("reaction");
@@ -20,60 +24,68 @@ export default function ReactionTrainingPage() {
 
   const expectedTrials = lifecycle.session?.expectedTrialCount ?? 5;
 
+  const interactionLocked =
+    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+
   const showStimulus = useCallback(
     async (index: number) => {
       if (!lifecycle.session) return;
-      setAwaitingResponse(true);
-      stimulusShownAtRef.current = performance.now();
-      await lifecycle.appendEvent("trial.stimulus", {
-        trialIndex: index,
-        stimulusId: `s-${index}`,
-      });
+      setAwaitingResponse(false);
+      try {
+        await lifecycle.appendEvent("trial.stimulus", {
+          trialIndex: index,
+          stimulusId: `s-${index}`,
+        });
+        stimulusShownAtRef.current = performance.now();
+        setAwaitingResponse(true);
+      } catch {
+        setAwaitingResponse(false);
+      }
     },
     [lifecycle],
   );
 
-  const respond = useCallback(async () => {
-    if (!lifecycle.session || !awaitingResponse || lifecycle.submitting || lifecycle.paused) return;
+  const respond = useCallback(
+    async (inputMethod: "pointer" | "keyboard") => {
+      if (!lifecycle.session || !awaitingResponse || interactionLocked) return;
 
-    const elapsed = performance.now() - stimulusShownAtRef.current;
-    if (elapsed < REACTION_MIN_VALID_MS) {
-      return;
-    }
-
-    setAwaitingResponse(false);
-    const currentTrial = trialIndex;
-
-    try {
-      await lifecycle.appendEvent("trial.response", {
-        trialIndex: currentTrial,
-        correct: true,
-        inputMethod: "keyboard",
-      });
-
-      const nextTrial = currentTrial + 1;
-      if (nextTrial >= expectedTrials) {
-        await lifecycle.submitSession();
+      const elapsed = performance.now() - stimulusShownAtRef.current;
+      if (elapsed < REACTION_MIN_VALID_MS) {
         return;
       }
 
-      setTrialIndex(nextTrial);
-      await showStimulus(nextTrial);
-    } catch {
-      setAwaitingResponse(true);
-    }
-  }, [awaitingResponse, expectedTrials, lifecycle, showStimulus, trialIndex]);
+      setAwaitingResponse(false);
+      const currentTrial = trialIndex;
 
-  useKeyboardAction(
-    () => void respond(),
-    awaitingResponse && !lifecycle.paused && !lifecycle.submitting,
+      try {
+        await lifecycle.appendEvent("trial.response", {
+          trialIndex: currentTrial,
+          correct: true,
+          inputMethod,
+        });
+
+        const nextTrial = currentTrial + 1;
+        if (nextTrial >= expectedTrials) {
+          await lifecycle.submitSession();
+          return;
+        }
+
+        setTrialIndex(nextTrial);
+        await showStimulus(nextTrial);
+      } catch {
+        setAwaitingResponse(true);
+      }
+    },
+    [awaitingResponse, expectedTrials, interactionLocked, lifecycle, showStimulus, trialIndex],
   );
 
+  useKeyboardAction(() => void respond("keyboard"), awaitingResponse && !interactionLocked);
+
   useEffect(() => {
-    if (!lifecycle.session || initializedRef.current) return;
+    if (!lifecycle.session || initializedRef.current || lifecycle.terminated) return;
     initializedRef.current = true;
     void showStimulus(0);
-  }, [lifecycle.session, showStimulus]);
+  }, [lifecycle.session, lifecycle.terminated, showStimulus]);
 
   if (lifecycle.loading) {
     return (
@@ -111,8 +123,8 @@ export default function ReactionTrainingPage() {
       ) : null}
       <TrainingButton
         data-testid="training-target"
-        disabled={!awaitingResponse || lifecycle.submitting || lifecycle.paused}
-        onClick={() => void respond()}
+        disabled={!awaitingResponse || interactionLocked}
+        onClick={(event) => void respond(inputMethodFromClick(event))}
         className="flex min-h-[200px] w-full flex-col items-center justify-center border-2 border-dashed border-neutral-400 bg-white text-neutral-900 hover:bg-white"
       >
         {awaitingResponse ? (

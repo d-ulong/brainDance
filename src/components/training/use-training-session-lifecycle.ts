@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { createTrainingEventQueue } from "@/components/training/training-event-queue";
 import { useTrainingBlur } from "@/components/training/use-training-blur";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
@@ -29,6 +30,7 @@ export type TrainingSessionLifecycle = {
   paused: boolean;
   pendingRetry: boolean;
   submitting: boolean;
+  terminated: boolean;
   appendEvent: (
     eventType: string,
     payload: Record<string, unknown>,
@@ -45,14 +47,30 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   const [paused, setPaused] = useState(false);
   const [pendingRetry, setPendingRetry] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [terminated, setTerminated] = useState(false);
   const sequenceRef = useRef(0);
   const startedRef = useRef(false);
   const submitKeyRef = useRef<string | null>(null);
+  const eventQueueRef = useRef(createTrainingEventQueue<AppendTrainingEventResult>());
+  const terminatedRef = useRef(false);
+
+  const markTerminated = useCallback((message: string) => {
+    if (terminatedRef.current) return;
+    terminatedRef.current = true;
+    setTerminated(true);
+    setError(message);
+    setSubmitting(false);
+    setPendingRetry(false);
+    setPaused(true);
+  }, []);
 
   const handleAbandoned = useCallback(() => {
-    setError("训练因失焦时间过长已终止，请重新开始。");
-    setSubmitting(false);
-  }, []);
+    markTerminated("训练因失焦时间过长已终止，请重新开始。");
+  }, [markTerminated]);
+
+  const handleRecoveryFailed = useCallback(() => {
+    markTerminated("失焦恢复失败，训练已终止，请重新开始。");
+  }, [markTerminated]);
 
   const appendEventInternal = useCallback(
     async (
@@ -61,6 +79,9 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     ): Promise<AppendTrainingEventResult> => {
       if (!session) {
         throw new Error("训练会话未就绪");
+      }
+      if (terminatedRef.current) {
+        throw new Error("训练已终止");
       }
 
       let lastError: unknown;
@@ -75,6 +96,9 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
           );
           sequenceRef.current += 1;
           setPendingRetry(false);
+          if (result.abandoned) {
+            handleAbandoned();
+          }
           return result;
         } catch (err) {
           lastError = err;
@@ -87,16 +111,30 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
       setPendingRetry(false);
       throw lastError instanceof ApiError ? lastError : new Error("事件提交失败，请检查网络后重试");
     },
-    [session],
+    [handleAbandoned, session],
+  );
+
+  const appendEvent = useCallback(
+    async (
+      eventType: string,
+      payload: Record<string, unknown>,
+    ): Promise<AppendTrainingEventResult> => {
+      if (terminatedRef.current) {
+        throw new Error("训练已终止");
+      }
+      return eventQueueRef.current.enqueue(() => appendEventInternal(eventType, payload));
+    },
+    [appendEventInternal],
   );
 
   useTrainingBlur({
     sessionId: session?.sessionId ?? null,
-    enabled: !loading && !error && !submitting,
+    enabled: !loading && !error && !submitting && !terminated,
     paused,
     setPaused,
-    appendEvent: appendEventInternal,
+    appendEvent,
     onAbandoned: handleAbandoned,
+    onRecoveryFailed: handleRecoveryFailed,
   });
 
   useEffect(() => {
@@ -130,7 +168,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   }, [router, trainingKey]);
 
   const submitSession = useCallback(async () => {
-    if (!session || submitting) return;
+    if (!session || submitting || terminatedRef.current) return;
     setSubmitting(true);
     setError(null);
 
@@ -171,7 +209,8 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     paused,
     pendingRetry,
     submitting,
-    appendEvent: appendEventInternal,
+    terminated,
+    appendEvent,
     submitSession,
     navigateToResult,
   };

@@ -16,6 +16,10 @@ import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import type { StroopColor } from "@/modules/training/constants";
 import { STROOP_COLORS } from "@/modules/training/constants";
 
+function inputMethodFromClick(event: { detail: number }): "pointer" | "keyboard" {
+  return event.detail === 0 ? "keyboard" : "pointer";
+}
+
 export default function StroopTrainingPage() {
   const lifecycle = useTrainingSessionLifecycle("stroop");
   const [trialIndex, setTrialIndex] = useState(0);
@@ -29,29 +33,31 @@ export default function StroopTrainingPage() {
     [lifecycle.session],
   );
 
+  const interactionLocked =
+    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+
   const showStimulus = useCallback(
     async (plan: StroopTrialPlan) => {
       setCurrentTrial(plan);
-      setAwaitingResponse(true);
-      stimulusShownAtRef.current = performance.now();
-      await lifecycle.appendEvent("trial.stimulus", {
-        trialIndex: plan.trialIndex,
-        inkColor: plan.inkColor,
-        wordColor: plan.wordColor,
-      });
+      setAwaitingResponse(false);
+      try {
+        await lifecycle.appendEvent("trial.stimulus", {
+          trialIndex: plan.trialIndex,
+          inkColor: plan.inkColor,
+          wordColor: plan.wordColor,
+        });
+        stimulusShownAtRef.current = performance.now();
+        setAwaitingResponse(true);
+      } catch {
+        setAwaitingResponse(false);
+      }
     },
     [lifecycle],
   );
 
   const respond = useCallback(
     async (selectedColor: StroopColor, inputMethod: "pointer" | "keyboard") => {
-      if (
-        !lifecycle.session ||
-        !awaitingResponse ||
-        !currentTrial ||
-        lifecycle.submitting ||
-        lifecycle.paused
-      ) {
+      if (!lifecycle.session || !awaitingResponse || !currentTrial || interactionLocked) {
         return;
       }
 
@@ -79,30 +85,29 @@ export default function StroopTrainingPage() {
         setAwaitingResponse(true);
       }
     },
-    [awaitingResponse, currentTrial, lifecycle, showStimulus, trialIndex, trials],
+    [
+      awaitingResponse,
+      currentTrial,
+      interactionLocked,
+      lifecycle,
+      showStimulus,
+      trialIndex,
+      trials,
+    ],
   );
 
   useEffect(() => {
-    if (!lifecycle.session || initializedRef.current || trials.length === 0) return;
+    if (
+      !lifecycle.session ||
+      initializedRef.current ||
+      trials.length === 0 ||
+      lifecycle.terminated
+    ) {
+      return;
+    }
     initializedRef.current = true;
     void showStimulus(trials[0]!);
-  }, [lifecycle.session, showStimulus, trials]);
-
-  useEffect(() => {
-    if (!awaitingResponse || lifecycle.paused || lifecycle.submitting) return;
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === " " || event.key === "Enter") {
-        event.preventDefault();
-        if (currentTrial) {
-          void respond(currentTrial.inkColor, "keyboard");
-        }
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [awaitingResponse, currentTrial, lifecycle.paused, lifecycle.submitting, respond]);
+  }, [lifecycle.session, lifecycle.terminated, showStimulus, trials]);
 
   if (lifecycle.loading) {
     return (
@@ -143,6 +148,7 @@ export default function StroopTrainingPage() {
         <div
           className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-neutral-300 bg-white p-4"
           data-testid="stroop-stimulus"
+          data-ink-color={currentTrial.inkColor}
         >
           <p className="text-xs text-neutral-500">请选择墨水颜色（忽略文字含义）</p>
           <p className={`mt-2 text-4xl font-bold ${STROOP_COLOR_CLASSES[currentTrial.inkColor]}`}>
@@ -161,8 +167,8 @@ export default function StroopTrainingPage() {
             key={color}
             variant="option"
             data-testid={`stroop-option-${color}`}
-            disabled={!awaitingResponse || lifecycle.submitting || lifecycle.paused}
-            onClick={() => void respond(color, "pointer")}
+            disabled={!awaitingResponse || interactionLocked}
+            onClick={(event) => void respond(color, inputMethodFromClick(event))}
             className="flex min-h-11 items-center justify-center gap-2"
           >
             <span
@@ -174,7 +180,7 @@ export default function StroopTrainingPage() {
         ))}
       </div>
       <p className="text-xs text-neutral-500">
-        可点击颜色按钮，或按 Space / Enter 选择当前墨水颜色。
+        点击颜色按钮，或将焦点移到选项后按 Space / Enter 确认选择。
       </p>
       {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
     </PageShell>

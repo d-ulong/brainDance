@@ -17,7 +17,7 @@ export function buildDigitSpanAttemptPlan(ageBand: string): DigitSpanAttemptPlan
         mode: "forward",
         length,
         attemptIndex,
-        digits: Array.from({ length }, (_, index) => ((index + attemptIndex + length) % 9) + 1),
+        digits: stimulusDigitsForAttempt("forward", length, attemptIndex),
       });
     }
   }
@@ -28,7 +28,7 @@ export function buildDigitSpanAttemptPlan(ageBand: string): DigitSpanAttemptPlan
         mode: "backward",
         length,
         attemptIndex,
-        digits: Array.from({ length }, (_, index) => ((index + attemptIndex + 2) % 9) + 1),
+        digits: stimulusDigitsForAttempt("backward", length, attemptIndex),
       });
     }
   }
@@ -36,9 +36,27 @@ export function buildDigitSpanAttemptPlan(ageBand: string): DigitSpanAttemptPlan
   return attempts;
 }
 
-export function expectedDigitSpanResponse(plan: DigitSpanAttemptPlan): number[] {
-  if (plan.mode === "forward") {
-    return plan.digits;
+export function stimulusDigitsForAttempt(
+  mode: "forward" | "backward",
+  length: number,
+  attemptIndex: number,
+): number[] {
+  const offset = mode === "forward" ? length : 2;
+  return Array.from({ length }, (_, index) => ((index + attemptIndex + offset) % 9) + 1);
+}
+
+export function responseDigitsForAttempt(
+  mode: "forward" | "backward",
+  length: number,
+  attemptIndex: number,
+): number[] {
+  const digits = stimulusDigitsForAttempt(mode, length, attemptIndex);
+  if (mode === "forward") {
+    return digits;
   }
-  return [...plan.digits].reverse();
+  return [...digits].reverse();
+}
+
+export function expectedDigitSpanResponse(plan: DigitSpanAttemptPlan): number[] {
+  return responseDigitsForAttempt(plan.mode, plan.length, plan.attemptIndex);
 }

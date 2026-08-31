@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildDigitSpanAttemptPlan,
-  expectedDigitSpanResponse,
   type DigitSpanAttemptPlan,
 } from "@/components/training/digit-span-plan";
 import { TrainingButton } from "@/components/training/training-button";
@@ -13,6 +12,9 @@ import { useTrainingSessionLifecycle } from "@/components/training/use-training-
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 
 type Phase = "stimulus" | "response";
+
+const STIMULUS_BASE_MS = 400;
+const STIMULUS_MS_PER_DIGIT = 700;
 
 export default function DigitSpanTrainingPage() {
   const lifecycle = useTrainingSessionLifecycle("digit-span");
@@ -24,6 +26,9 @@ export default function DigitSpanTrainingPage() {
   const phaseRef = useRef<Phase>("stimulus");
   const currentAttemptRef = useRef<DigitSpanAttemptPlan | null>(null);
   const responseDigitsRef = useRef<number[]>([]);
+  const displayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const displayRemainingRef = useRef(0);
+  const displayStartedAtRef = useRef<number | null>(null);
 
   phaseRef.current = phase;
   currentAttemptRef.current = currentAttempt;
@@ -34,26 +39,96 @@ export default function DigitSpanTrainingPage() {
     [lifecycle.session],
   );
 
+  const interactionLocked =
+    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+
+  const clearDisplayTimer = useCallback(() => {
+    if (displayTimerRef.current !== null) {
+      clearTimeout(displayTimerRef.current);
+      displayTimerRef.current = null;
+    }
+  }, []);
+
+  const openResponsePhase = useCallback(() => {
+    setPhase("response");
+    displayRemainingRef.current = 0;
+    displayStartedAtRef.current = null;
+  }, []);
+
+  const scheduleDisplayEnd = useCallback(
+    (remainingMs: number) => {
+      clearDisplayTimer();
+      if (remainingMs <= 0) {
+        openResponsePhase();
+        return;
+      }
+      displayRemainingRef.current = remainingMs;
+      displayStartedAtRef.current = performance.now();
+      displayTimerRef.current = setTimeout(() => {
+        displayTimerRef.current = null;
+        displayRemainingRef.current = 0;
+        displayStartedAtRef.current = null;
+        if (!lifecycle.paused && !lifecycle.terminated) {
+          openResponsePhase();
+        }
+      }, remainingMs);
+    },
+    [clearDisplayTimer, lifecycle.paused, lifecycle.terminated, openResponsePhase],
+  );
+
+  useEffect(() => {
+    if (phase !== "stimulus" || lifecycle.paused) {
+      if (lifecycle.paused && displayStartedAtRef.current !== null) {
+        const elapsed = performance.now() - displayStartedAtRef.current;
+        displayRemainingRef.current = Math.max(0, displayRemainingRef.current - elapsed);
+        displayStartedAtRef.current = null;
+        clearDisplayTimer();
+      }
+      return;
+    }
+
+    if (displayRemainingRef.current > 0 && displayTimerRef.current === null) {
+      scheduleDisplayEnd(displayRemainingRef.current);
+    }
+  }, [clearDisplayTimer, lifecycle.paused, phase, scheduleDisplayEnd]);
+
+  useEffect(() => () => clearDisplayTimer(), [clearDisplayTimer]);
+
   const showStimulus = useCallback(
     async (plan: DigitSpanAttemptPlan) => {
+      clearDisplayTimer();
       setCurrentAttempt(plan);
       setPhase("stimulus");
       setResponseDigits([]);
-      await lifecycle.appendEvent("span.stimulus", {
-        mode: plan.mode,
-        length: plan.length,
-        attemptIndex: plan.attemptIndex,
-        sequence: plan.digits,
-      });
-      setPhase("response");
+      displayRemainingRef.current = 0;
+      displayStartedAtRef.current = null;
+
+      try {
+        await lifecycle.appendEvent("span.stimulus", {
+          mode: plan.mode,
+          length: plan.length,
+          attemptIndex: plan.attemptIndex,
+          sequence: plan.digits,
+        });
+        const displayMs = STIMULUS_BASE_MS + plan.length * STIMULUS_MS_PER_DIGIT;
+        if (!lifecycle.paused && !lifecycle.terminated) {
+          scheduleDisplayEnd(displayMs);
+        } else {
+          displayRemainingRef.current = displayMs;
+        }
+      } catch {
+        setPhase("stimulus");
+      }
     },
-    [lifecycle],
+    [clearDisplayTimer, lifecycle, scheduleDisplayEnd],
   );
 
   const submitResponse = useCallback(async () => {
     const attempt = currentAttemptRef.current;
     const digits = responseDigitsRef.current;
-    if (!lifecycle.session || !attempt || lifecycle.submitting || lifecycle.paused) return;
+    if (!lifecycle.session || !attempt || interactionLocked || phaseRef.current !== "response") {
+      return;
+    }
     if (digits.length !== attempt.length) return;
 
     try {
@@ -76,12 +151,12 @@ export default function DigitSpanTrainingPage() {
     } catch {
       // keep response phase for retry
     }
-  }, [attemptIndex, attempts, lifecycle, showStimulus]);
+  }, [attemptIndex, attempts, interactionLocked, lifecycle, showStimulus]);
 
   const appendDigit = useCallback(
     (digit: number) => {
       const attempt = currentAttemptRef.current;
-      if (phaseRef.current !== "response" || !attempt || lifecycle.paused || lifecycle.submitting) {
+      if (phaseRef.current !== "response" || !attempt || interactionLocked) {
         return;
       }
       setResponseDigits((prev) => {
@@ -89,18 +164,25 @@ export default function DigitSpanTrainingPage() {
         return [...prev, digit];
       });
     },
-    [lifecycle.paused, lifecycle.submitting],
+    [interactionLocked],
   );
 
   useEffect(() => {
-    if (!lifecycle.session || initializedRef.current || attempts.length === 0) return;
+    if (
+      !lifecycle.session ||
+      initializedRef.current ||
+      attempts.length === 0 ||
+      lifecycle.terminated
+    ) {
+      return;
+    }
     initializedRef.current = true;
     void showStimulus(attempts[0]!);
-  }, [attempts, lifecycle.session, showStimulus]);
+  }, [attempts, lifecycle.session, lifecycle.terminated, showStimulus]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (phaseRef.current !== "response" || lifecycle.paused || lifecycle.submitting) return;
+      if (phaseRef.current !== "response" || interactionLocked) return;
 
       if (event.key >= "0" && event.key <= "9") {
         event.preventDefault();
@@ -120,7 +202,7 @@ export default function DigitSpanTrainingPage() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appendDigit, lifecycle.paused, lifecycle.submitting, submitResponse]);
+  }, [appendDigit, interactionLocked, submitResponse]);
 
   if (lifecycle.loading) {
     return (
@@ -160,19 +242,33 @@ export default function DigitSpanTrainingPage() {
       ) : null}
 
       {currentAttempt ? (
-        <section className="rounded-xl border border-neutral-300 bg-white p-4">
+        <section
+          className="rounded-xl border border-neutral-300 bg-white p-4"
+          data-mode={currentAttempt.mode}
+          data-length={currentAttempt.length}
+          data-attempt-index={currentAttempt.attemptIndex}
+          data-phase={phase}
+        >
           <p className="text-xs text-neutral-500">
             {modeLabel} · 长度 {currentAttempt.length} · 第 {currentAttempt.attemptIndex + 1} 次尝试
           </p>
-          <p
-            className="mt-3 text-3xl font-bold tracking-widest text-neutral-900"
-            data-testid="digit-sequence"
-          >
-            {currentAttempt.digits.join(" ")}
-          </p>
-          <p className="mt-2 text-xs text-neutral-500">
-            {currentAttempt.mode === "forward" ? "请按相同顺序输入数字" : "请按相反顺序输入数字"}
-          </p>
+          {phase === "stimulus" ? (
+            <>
+              <p className="mt-2 text-xs text-neutral-500" data-testid="digit-stimulus-label">
+                请记住以下数字序列
+              </p>
+              <p
+                className="mt-3 text-3xl font-bold tracking-widest text-neutral-900"
+                data-testid="digit-stimulus"
+              >
+                {currentAttempt.digits.join(" ")}
+              </p>
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-neutral-700" data-testid="digit-recall-prompt">
+              {currentAttempt.mode === "forward" ? "请按相同顺序输入数字" : "请按相反顺序输入数字"}
+            </p>
+          )}
         </section>
       ) : null}
 
@@ -191,7 +287,7 @@ export default function DigitSpanTrainingPage() {
             key={digit}
             variant="option"
             data-testid={`digit-key-${digit}`}
-            disabled={phase !== "response" || lifecycle.submitting || lifecycle.paused}
+            disabled={phase !== "response" || interactionLocked}
             onClick={() => appendDigit(digit)}
             className="min-h-11 px-2"
           >
@@ -204,7 +300,7 @@ export default function DigitSpanTrainingPage() {
         <TrainingButton
           variant="option"
           data-testid="digit-clear"
-          disabled={phase !== "response" || lifecycle.submitting || lifecycle.paused}
+          disabled={phase !== "response" || interactionLocked}
           onClick={() => setResponseDigits([])}
           className="flex-1"
         >
@@ -214,8 +310,7 @@ export default function DigitSpanTrainingPage() {
           data-testid="digit-submit"
           disabled={
             phase !== "response" ||
-            lifecycle.submitting ||
-            lifecycle.paused ||
+            interactionLocked ||
             responseDigits.length !== (currentAttempt?.length ?? 0)
           }
           onClick={() => void submitResponse()}
@@ -224,19 +319,6 @@ export default function DigitSpanTrainingPage() {
           确认（Enter）
         </TrainingButton>
       </div>
-
-      {process.env.NODE_ENV === "test" ? null : (
-        <p className="text-xs text-neutral-400">提示：顺背按展示顺序，倒背按相反顺序输入。</p>
-      )}
-
-      {currentAttempt && phase === "response" ? (
-        <span
-          data-testid="digit-expected"
-          data-expected={expectedDigitSpanResponse(currentAttempt).join(",")}
-          className="sr-only"
-          aria-hidden
-        />
-      ) : null}
 
       {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
     </PageShell>

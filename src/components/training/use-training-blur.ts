@@ -16,6 +16,7 @@ type UseTrainingBlurOptions = {
   setPaused: (paused: boolean) => void;
   appendEvent: AppendEventFn;
   onAbandoned: () => void;
+  onRecoveryFailed: () => void;
 };
 
 export function useTrainingBlur({
@@ -24,6 +25,7 @@ export function useTrainingBlur({
   setPaused,
   appendEvent,
   onAbandoned,
+  onRecoveryFailed,
 }: UseTrainingBlurOptions) {
   const blurStartRef = useRef<number | null>(null);
   const reportingRef = useRef(false);
@@ -36,12 +38,16 @@ export function useTrainingBlur({
         const result = await appendEvent("session.blur", { durationMs: Math.round(durationMs) });
         if (result.abandoned) {
           onAbandoned();
+        } else {
+          setPaused(false);
         }
+      } catch {
+        onRecoveryFailed();
       } finally {
         reportingRef.current = false;
       }
     },
-    [appendEvent, onAbandoned, sessionId],
+    [appendEvent, onAbandoned, onRecoveryFailed, sessionId, setPaused],
   );
 
   useEffect(() => {
@@ -56,12 +62,14 @@ export function useTrainingBlur({
 
       const startedAt = blurStartRef.current;
       blurStartRef.current = null;
-      setPaused(false);
 
       if (startedAt !== null) {
         const durationMs = performance.now() - startedAt;
         void reportBlur(durationMs);
+        return;
       }
+
+      setPaused(false);
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
