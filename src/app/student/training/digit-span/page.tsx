@@ -118,7 +118,14 @@ export default function DigitSpanTrainingPage() {
     if (displayRemainingRef.current > 0 && displayTimerRef.current === null) {
       scheduleDisplayEnd(displayRemainingRef.current);
     }
-  }, [clearDisplayTimer, lifecycle.paused, phase, scheduleDisplayEnd]);
+  }, [
+    clearDisplayTimer,
+    isInteractionAllowed,
+    lifecycle.paused,
+    openResponsePhase,
+    phase,
+    scheduleDisplayEnd,
+  ]);
 
   useEffect(() => () => clearDisplayTimer(), [clearDisplayTimer]);
 
