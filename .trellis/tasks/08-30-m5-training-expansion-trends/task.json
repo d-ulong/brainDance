@@ -24,6 +24,8 @@
   "notes": "",
   "meta": {
     "planning_base_sha": "fd87ae680ad79072456bcbdbfe659af0638a01b8",
-    "protocol_scope": "fixed-standard-sessions"
+    "protocol_scope": "fixed-standard-sessions",
+    "active_stage": "P2",
+    "p1_signed_sha": "6f39d5f5eb68fead9a395e4cbc18682357f984aa"
   }
 }
