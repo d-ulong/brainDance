@@ -28,7 +28,7 @@ pnpm format
 
 P1 禁止：导出、删除/tombstone、UI、容量/恢复脚本、供应商 SDK、依赖升级、merge/rebase/reset/push/deploy。
 
-## P2：授权导出、账户级删除与 tombstone
+## P2：授权导出、账户级删除与 tombstone（已签署 GO：`761df5365e3f31fdb83d507c1cc1250751ed2cd0`）
 
 - [ ] 建立逐 Route/service/表的冻结与清除矩阵，先写缺口失败测试。
 - [ ] 新增 export jobs、deletion requests/tombstones、状态与幂等约束；实现私有 artifact seam 和测试 adapter。
