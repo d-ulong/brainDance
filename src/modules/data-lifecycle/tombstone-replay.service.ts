@@ -1,17 +1,20 @@
 import type { Database } from "@/db";
 import { deletionTombstones } from "@/db/schema";
 import { DELETION_TARGET_TYPE } from "@/modules/data-lifecycle/constants";
+import { revokeReadyExportJobsForStudentInTx } from "@/modules/data-lifecycle/freeze-guard.service";
 import {
-  countActivePrivateGrantsForStudent,
   countActiveRelationshipsForStudent,
-  replayRelationshipAndGrantRevocationForStudent,
+  replayRelationshipRevocationForStudent,
 } from "@/modules/family-access/account-deletion.service";
 import { replayStudentIdentityTombstone } from "@/modules/identity/account-deletion.service";
+import { resetProjectionsAfterStudentDeletion } from "@/modules/projection/account-deletion.service";
 import {
+  countActivePrivateGrantsForStudent,
   replayPrivateGrantRevocationForStudent,
   replayReflectionBodiesTombstoneForStudent,
   replayReflectionBodyTombstoneById,
 } from "@/modules/reflection-privacy/account-deletion.service";
+import { cancelPendingScheduleItemsForStudent } from "@/modules/schedule/account-deletion.service";
 import {
   countNonEmptyTrainingPayloadsForStudent,
   replayTrainingPayloadTombstoneForStudent,
@@ -43,11 +46,26 @@ export async function applyTombstonesBeforeProjectionRebuild(db: Database): Prom
 
         count += await replayTrainingPayloadTombstoneForStudent(tx, tombstone.studentId);
 
-        const relationshipReplay = await replayRelationshipAndGrantRevocationForStudent(tx, {
+        const relationshipReplay = await replayRelationshipRevocationForStudent(tx, {
           studentId: tombstone.studentId,
           purgedAt: tombstone.purgedAt,
         });
-        count += relationshipReplay.relationshipsEnded + relationshipReplay.grantsRevoked;
+        count += relationshipReplay.relationshipsEnded;
+
+        count += await replayPrivateGrantRevocationForStudent(tx, {
+          studentId: tombstone.studentId,
+          purgedAt: tombstone.purgedAt,
+        });
+
+        count += await cancelPendingScheduleItemsForStudent(tx, tombstone.studentId);
+
+        await resetProjectionsAfterStudentDeletion(tx, {
+          studentId: tombstone.studentId,
+          now: tombstone.purgedAt,
+        });
+
+        const revokedJobs = await revokeReadyExportJobsForStudentInTx(tx, tombstone.studentId);
+        count += revokedJobs.revokedCount;
 
         return count;
       });

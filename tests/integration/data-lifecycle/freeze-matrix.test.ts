@@ -3,20 +3,27 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { DELETION_TARGET_TYPE } from "@/modules/data-lifecycle/constants";
+import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
+import { endRelationship } from "@/modules/family-access/end-relationship.service";
+import { login, validateSession } from "@/modules/identity/login.service";
 import { listCatalogItems } from "@/modules/redemption/catalog.service";
 import { listRedemptions } from "@/modules/redemption/redemption.service";
-import { queryPointsBalance } from "@/modules/settlement/ledger.service";
+import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
+import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { queryScheduleItems } from "@/modules/schedule/schedule-query.service";
 import { getDailyReflection } from "@/modules/reflection-privacy/get-daily-reflection.service";
 import { upsertDailyReflection } from "@/modules/reflection-privacy/upsert-daily-reflection.service";
-import { startTrainingSession } from "@/modules/training/session.service";
-import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
-import { login } from "@/modules/identity/login.service";
 import {
   enablePointRule,
   SCHEDULE_SYSTEM_COMPLETE_V1,
 } from "@/modules/settlement/point-rule.service";
-import { createFormalPlan } from "@/modules/schedule/plan.service";
+import { queryPointsBalance, queryPointsLedger } from "@/modules/settlement/ledger.service";
+import {
+  getTrainingSessionForStudent,
+  getTrainingSummaryForParent,
+  startTrainingSession,
+  submitTrainingSession,
+} from "@/modules/training/session.service";
 import { queryTrainingTrends } from "@/modules/training/trends.service";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import {
@@ -25,6 +32,12 @@ import {
   seedStudentUser,
 } from "../../helpers/family-access";
 import { createTestArtifactStore } from "../../helpers/data-lifecycle";
+import {
+  bootstrapParentStudentRelationship,
+  DEFAULT_PLAN_BODY,
+  resetScheduleTables,
+} from "../../helpers/schedule";
+import { completeReactionSession, ensureM5TrainingDefinitions } from "../../helpers/training";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
 config({ path: ".env.local" });
@@ -47,6 +60,7 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
 
   beforeEach(async () => {
     await resetIdentityTables(db);
+    await resetScheduleTables(db);
   });
 
   async function freezeStudent(studentId: string) {
@@ -158,6 +172,133 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
       expect(String(error)).not.toContain(studentB.username);
       expect(expectFrozen(error)).toBe(true);
     }
+  });
+
+  it("C04: freeze blocks validateSession for existing session", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_validate_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const loginResult = await login(db, {
+      identifier: student.username,
+      password: student.password,
+      idempotencyKey: "login-before-validate-freeze",
+    });
+
+    await freezeStudent(student.studentId);
+
+    const session = await validateSession(db, loginResult.sessionId);
+    expect(session).toBeNull();
+  });
+
+  it("C04: freeze blocks relationship end command", async () => {
+    const email = `matrix_rel_${crypto.randomUUID().slice(0, 8)}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, email);
+    const student = await seedStudentUser(db, {
+      username: `matrix_rel_child_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+    const accepted = await acceptParentForStudent(db, { parentId, studentId: student.studentId });
+    await freezeStudent(student.studentId);
+
+    await expect(
+      endRelationship(db, {
+        actorId: parentId,
+        relationshipId: accepted.relationshipId,
+        idempotencyKey: "end-after-freeze",
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("C04: freeze blocks M3 ledger ledger read", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_ledger_entries_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+    await freezeStudent(student.studentId);
+
+    await expect(queryPointsLedger(db, student.studentId, 10)).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("C04: freeze blocks M5 training session read", async () => {
+    const { studentId } = await bootstrapParentStudentRelationship(db);
+    const training = await completeReactionSession(db, studentId, {
+      startIdempotencyKey: "matrix-read-start",
+      submitIdempotencyKey: "matrix-read-submit",
+    });
+    await freezeStudent(studentId);
+
+    await expect(
+      getTrainingSessionForStudent(db, studentId, training.submitted.sessionId),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("C04: freeze blocks M5 training submit write", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_submit_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    await ensureM5TrainingDefinitions(db);
+
+    const started = await startTrainingSession(db, {
+      studentId: student.studentId,
+      trainingKey: "reaction",
+      idempotencyKey: "matrix-submit-start",
+    });
+
+    await freezeStudent(student.studentId);
+
+    await expect(
+      submitTrainingSession(db, {
+        studentId: student.studentId,
+        sessionId: started.sessionId,
+        idempotencyKey: "matrix-submit-after-freeze",
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("C04: freeze blocks M2 schedule complete write", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    await createFormalPlan(db, {
+      ownerId: parentId,
+      studentId,
+      idempotencyKey: "matrix-complete-plan",
+      body: DEFAULT_PLAN_BODY,
+    });
+
+    const items = await queryScheduleItems(db, {
+      studentId,
+      from: "2026-01-01",
+      to: "2026-12-31",
+    });
+    const pending = items.find((item) => item.status === "pending");
+    expect(pending).toBeDefined();
+
+    await freezeStudent(studentId);
+
+    await expect(
+      completeScheduleItem(db, {
+        actorId: studentId,
+        scheduleItemId: pending!.id,
+        idempotencyKey: "matrix-complete-after-freeze",
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("C04: freeze blocks parent training summary aggregate read", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    await completeReactionSession(db, studentId, {
+      startIdempotencyKey: "matrix-summary-start",
+      submitIdempotencyKey: "matrix-summary-submit",
+    });
+    await freezeStudent(studentId);
+
+    await expect(
+      getTrainingSummaryForParent(db, parentId, studentId, "reaction"),
+    ).rejects.toSatisfy(expectFrozen);
   });
 
   it("F04: frozen student cannot re-login", async () => {

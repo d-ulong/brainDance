@@ -17,7 +17,7 @@ import {
   revokeStudentSessions,
 } from "@/modules/data-lifecycle/freeze-guard.service";
 import type { PrivateArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
-import { revokeAllAuthorizationsForStudentDeletion } from "@/modules/family-access/account-deletion.service";
+import { revokeAllRelationshipsForStudentDeletion } from "@/modules/family-access/account-deletion.service";
 import {
   minimizeStudentIdentityForDeletion,
   purgeStudentSessionsInTx,
@@ -27,6 +27,7 @@ import { resetProjectionsAfterStudentDeletion } from "@/modules/projection/accou
 import {
   purgeAllReflectionBodiesForStudent,
   purgeReflectionBodyById,
+  revokeAllPrivateGrantsForStudent,
   revokePrivateGrantsForReflection,
 } from "@/modules/reflection-privacy/account-deletion.service";
 import { cancelPendingScheduleItemsForStudent } from "@/modules/schedule/account-deletion.service";
@@ -649,7 +650,8 @@ export async function processDeletionWorker(
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE))) {
       if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
         await cancelPendingScheduleItemsForStudent(tx, studentId);
-        await revokeAllAuthorizationsForStudentDeletion(tx, { studentId, now });
+        await revokeAllRelationshipsForStudentDeletion(tx, { studentId, now });
+        await revokeAllPrivateGrantsForStudent(tx, { studentId, now });
       }
       await markStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE, now);
     }

@@ -476,7 +476,16 @@ export async function processExportJob(
 ): Promise<ProcessExportJobResult> {
   const now = input.now ?? new Date();
 
-  const prepared = await db.transaction(async (tx) => {
+  type PreparedWork = {
+    jobId: string;
+    status: string;
+    downloadTokenPlaintext?: string;
+    idempotentReplay: boolean;
+    artifactKey?: string;
+    artifactBuffer?: Buffer;
+  };
+
+  const prepared = await db.transaction(async (tx): Promise<PreparedWork> => {
     await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
     const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);
@@ -489,8 +498,16 @@ export async function processExportJob(
       return {
         jobId: job.id,
         status: job.status,
-        idempotentReplay: true as const,
+        idempotentReplay: true,
       };
+    }
+
+    if (
+      job.status === EXPORT_JOB_STATUS.FAILED ||
+      job.status === EXPORT_JOB_STATUS.REVOKED ||
+      job.status === EXPORT_JOB_STATUS.EXPIRED
+    ) {
+      throw new DataLifecycleError("STATE_CONFLICT", "Export job is not processable");
     }
 
     if (job.status !== EXPORT_JOB_STATUS.PENDING && job.status !== EXPORT_JOB_STATUS.PROCESSING) {
@@ -504,44 +521,23 @@ export async function processExportJob(
       await import("@/modules/data-lifecycle/export-scope.service");
     await validateExportScopeStillAuthorized(tx, scope, job.requesterId);
 
-    await tx
-      .update(exportJobs)
-      .set({ status: EXPORT_JOB_STATUS.PROCESSING, updatedAt: now })
-      .where(eq(exportJobs.id, job.id));
+    if (job.status === EXPORT_JOB_STATUS.PENDING) {
+      await tx
+        .update(exportJobs)
+        .set({ status: EXPORT_JOB_STATUS.PROCESSING, updatedAt: now })
+        .where(eq(exportJobs.id, job.id));
+    }
 
     const content = await buildExportArtifactContent(tx, scope, job.requesterId);
     const artifactKey = exportArtifactKey(job.id);
     const artifactBuffer = Buffer.from(JSON.stringify(content), "utf8");
     const downloadTokenPlaintext = generateDownloadTokenPlaintext();
-    const downloadTokenHash = hashDownloadToken(downloadTokenPlaintext);
-    const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
-
-    await tx
-      .update(exportJobs)
-      .set({
-        status: EXPORT_JOB_STATUS.READY,
-        artifactKey,
-        downloadTokenHash,
-        expiresAt,
-        readyAt: now,
-        updatedAt: now,
-      })
-      .where(eq(exportJobs.id, job.id));
-
-    await appendAuditEvent(tx, {
-      actorId: job.requesterId,
-      action: "export.ready",
-      resourceType: "export_job",
-      resourceId: job.id,
-      idempotencyKey: `audit:export.ready:${job.id}`,
-      metadata: { studentId: job.studentId },
-    });
 
     return {
       jobId: job.id,
-      status: EXPORT_JOB_STATUS.READY,
+      status: EXPORT_JOB_STATUS.PROCESSING,
       downloadTokenPlaintext,
-      idempotentReplay: false as const,
+      idempotentReplay: false,
       artifactKey,
       artifactBuffer,
     };
@@ -562,12 +558,68 @@ export async function processExportJob(
     throw error;
   }
 
-  return {
-    jobId: prepared.jobId,
-    status: prepared.status,
-    downloadTokenPlaintext: prepared.downloadTokenPlaintext,
-    idempotentReplay: false,
-  };
+  try {
+    const finalized = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
+
+      const [job] = await tx
+        .select()
+        .from(exportJobs)
+        .where(eq(exportJobs.id, input.jobId))
+        .limit(1);
+
+      if (!job) {
+        throw new DataLifecycleError("NOT_FOUND", "Export job not found");
+      }
+
+      if (job.status === EXPORT_JOB_STATUS.READY && job.downloadTokenHash) {
+        return { idempotentReplay: true as const, status: job.status };
+      }
+
+      if (job.status !== EXPORT_JOB_STATUS.PROCESSING) {
+        throw new DataLifecycleError("STATE_CONFLICT", "Export job finalize state conflict");
+      }
+
+      const downloadTokenHash = hashDownloadToken(prepared.downloadTokenPlaintext!);
+      const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
+
+      await tx
+        .update(exportJobs)
+        .set({
+          status: EXPORT_JOB_STATUS.READY,
+          artifactKey: prepared.artifactKey!,
+          downloadTokenHash,
+          expiresAt,
+          readyAt: now,
+          updatedAt: now,
+        })
+        .where(eq(exportJobs.id, job.id));
+
+      await appendAuditEvent(tx, {
+        actorId: job.requesterId,
+        action: "export.ready",
+        resourceType: "export_job",
+        resourceId: job.id,
+        idempotencyKey: `audit:export.ready:${job.id}`,
+        metadata: { studentId: job.studentId },
+      });
+
+      return { idempotentReplay: false as const, status: EXPORT_JOB_STATUS.READY };
+    });
+
+    return {
+      jobId: prepared.jobId,
+      status: finalized.status,
+      downloadTokenPlaintext: finalized.idempotentReplay
+        ? undefined
+        : prepared.downloadTokenPlaintext,
+      idempotentReplay: finalized.idempotentReplay,
+    };
+  } catch (error) {
+    await input.artifactStore.purge(prepared.artifactKey!);
+    await markExportJobFailed(db, prepared.jobId, input.artifactStore);
+    throw error;
+  }
 }
 
 export type DeliverExportDownloadInput = {

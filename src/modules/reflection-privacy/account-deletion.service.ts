@@ -134,6 +134,19 @@ export async function revokeAllPrivateGrantsForStudent(
   return revoked;
 }
 
+export async function countActivePrivateGrantsForStudent(
+  tx: Database,
+  studentId: string,
+): Promise<number> {
+  const rows = await tx
+    .select({ id: privateAccessGrants.id })
+    .from(privateAccessGrants)
+    .innerJoin(dailyReflections, eq(privateAccessGrants.resourceId, dailyReflections.id))
+    .where(and(eq(dailyReflections.studentId, studentId), isNull(privateAccessGrants.revokedAt)));
+
+  return rows.length;
+}
+
 export async function replayPrivateGrantRevocationForStudent(
   tx: Database,
   input: { studentId: string; purgedAt: Date },

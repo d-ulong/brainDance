@@ -13,6 +13,9 @@ export function createTestArtifactStore() {
 export function createFaultInjectedArtifactStore(options?: {
   failPut?: boolean;
   failOpenOnce?: boolean;
+  failPurge?: boolean;
+  failRevoke?: boolean;
+  putDelayMs?: number;
 }) {
   const base = createMemoryArtifactStore();
 
@@ -22,6 +25,9 @@ export function createFaultInjectedArtifactStore(options?: {
       if (options?.failPut) {
         throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact put failure");
       }
+      if (options?.putDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.putDelayMs));
+      }
       return base.put(key, content);
     },
     async openOnce(key: string) {
@@ -29,6 +35,18 @@ export function createFaultInjectedArtifactStore(options?: {
         throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact open failure");
       }
       return base.openOnce(key);
+    },
+    async purge(key: string) {
+      if (options?.failPurge) {
+        throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact purge failure");
+      }
+      return base.purge(key);
+    },
+    async revoke(key: string) {
+      if (options?.failRevoke) {
+        throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact revoke failure");
+      }
+      return base.revoke(key);
     },
   };
 }
