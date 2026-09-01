@@ -8,6 +8,7 @@ import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { assertFormalScheduleItem } from "@/modules/settlement/error-count-settlement.service";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type SubmitErrorCountInput = {
   actorId: string;
@@ -83,6 +84,8 @@ export async function submitErrorCount(
       if (item.studentId !== input.actorId) {
         throw new FactsError("FORBIDDEN", "Only the student can submit error_count facts");
       }
+
+      await assertStudentAccountNotFrozen(tx, item.studentId, "write");
 
       const [existing] = await tx
         .select()

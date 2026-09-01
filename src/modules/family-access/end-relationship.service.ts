@@ -8,6 +8,7 @@ import { FamilyAccessError } from "@/modules/family-access/errors";
 import { reconcileMembershipAfterRelationshipEnd } from "@/modules/family-access/membership-projection.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { revokePrivateGrantsOnRelationshipEnd } from "@/modules/reflection-privacy/grant-private-access.service";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type EndRelationshipInput = {
   actorId: string;
@@ -112,6 +113,8 @@ export async function endRelationship(
         "Only linked parent or student can end the relationship",
       );
     }
+
+    await assertStudentAccountNotFrozen(tx, relationship.studentId, "write");
 
     await lockUsersInOrder(tx, [relationship.parentId, relationship.studentId]);
 

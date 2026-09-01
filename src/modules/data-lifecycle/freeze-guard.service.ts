@@ -104,11 +104,10 @@ export async function incrementStudentAuthorizationEpoch(
     .where(eq(users.id, studentId));
 }
 
-export async function revokeReadyExportJobsForStudent(
+export async function revokeReadyExportJobsForStudentInTx(
   db: Database,
   studentId: string,
-  artifactStore?: PrivateArtifactStore,
-): Promise<number> {
+): Promise<{ revokedCount: number; artifactKeys: string[] }> {
   const jobs = await db
     .select()
     .from(exportJobs)
@@ -120,6 +119,7 @@ export async function revokeReadyExportJobsForStudent(
     );
 
   const now = new Date();
+  const artifactKeys: string[] = [];
   let revoked = 0;
 
   for (const job of jobs) {
@@ -128,13 +128,38 @@ export async function revokeReadyExportJobsForStudent(
       .set({ status: "revoked", updatedAt: now })
       .where(eq(exportJobs.id, job.id));
 
-    if (job.artifactKey && artifactStore) {
-      await artifactStore.revoke(job.artifactKey);
+    if (job.artifactKey) {
+      artifactKeys.push(job.artifactKey);
+      const stagingKey = `${job.artifactKey}.staging`;
+      artifactKeys.push(stagingKey);
     }
     revoked += 1;
   }
 
-  return revoked;
+  return { revokedCount: revoked, artifactKeys };
+}
+
+export async function purgeExportArtifactKeys(
+  artifactStore: PrivateArtifactStore | undefined,
+  artifactKeys: string[],
+): Promise<void> {
+  if (!artifactStore) {
+    return;
+  }
+
+  for (const key of artifactKeys) {
+    await artifactStore.purge(key);
+  }
+}
+
+export async function revokeReadyExportJobsForStudent(
+  db: Database,
+  studentId: string,
+  artifactStore?: PrivateArtifactStore,
+): Promise<number> {
+  const { revokedCount, artifactKeys } = await revokeReadyExportJobsForStudentInTx(db, studentId);
+  await purgeExportArtifactKeys(artifactStore, artifactKeys);
+  return revokedCount;
 }
 
 export async function assertExportJobAccessible(

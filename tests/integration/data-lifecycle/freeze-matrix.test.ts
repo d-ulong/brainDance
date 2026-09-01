@@ -3,13 +3,21 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { DELETION_TARGET_TYPE } from "@/modules/data-lifecycle/constants";
-import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
 import { listCatalogItems } from "@/modules/redemption/catalog.service";
 import { listRedemptions } from "@/modules/redemption/redemption.service";
 import { queryPointsBalance } from "@/modules/settlement/ledger.service";
 import { queryScheduleItems } from "@/modules/schedule/schedule-query.service";
 import { getDailyReflection } from "@/modules/reflection-privacy/get-daily-reflection.service";
+import { upsertDailyReflection } from "@/modules/reflection-privacy/upsert-daily-reflection.service";
 import { startTrainingSession } from "@/modules/training/session.service";
+import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
+import { login } from "@/modules/identity/login.service";
+import {
+  enablePointRule,
+  SCHEDULE_SYSTEM_COMPLETE_V1,
+} from "@/modules/settlement/point-rule.service";
+import { createFormalPlan } from "@/modules/schedule/plan.service";
+import { queryTrainingTrends } from "@/modules/training/trends.service";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import {
   acceptParentForStudent,
@@ -150,5 +158,128 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
       expect(String(error)).not.toContain(studentB.username);
       expect(expectFrozen(error)).toBe(true);
     }
+  });
+
+  it("F04: frozen student cannot re-login", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_login_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    await freezeStudent(student.studentId);
+
+    await expect(
+      login(db, {
+        identifier: student.username,
+        password: student.password,
+        idempotencyKey: "login-after-freeze",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("F04: freeze blocks training trends read", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_trends_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+    await freezeStudent(student.studentId);
+
+    await expect(
+      queryTrainingTrends(db, {
+        studentId: student.studentId,
+        trainingKey: "reaction",
+        window: "all",
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("F04: freeze blocks parent schedule write", async () => {
+    const email = `matrix_plan_${crypto.randomUUID().slice(0, 8)}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, email);
+    const student = await seedStudentUser(db, {
+      username: `matrix_plan_child_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+    await acceptParentForStudent(db, { parentId, studentId: student.studentId });
+    await freezeStudent(student.studentId);
+
+    await expect(
+      createFormalPlan(db, {
+        ownerId: parentId,
+        studentId: student.studentId,
+        idempotencyKey: "plan-after-freeze",
+        body: {
+          title: "Frozen plan",
+          localTime: "09:00",
+          startDate: toFamilyDate(),
+        },
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("F04: freeze blocks parent settlement write", async () => {
+    const email = `matrix_points_${crypto.randomUUID().slice(0, 8)}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, email);
+    const student = await seedStudentUser(db, {
+      username: `matrix_points_child_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+    await acceptParentForStudent(db, { parentId, studentId: student.studentId });
+    await freezeStudent(student.studentId);
+
+    await expect(
+      enablePointRule(db, {
+        parentId,
+        studentId: student.studentId,
+        idempotencyKey: "points-after-freeze",
+        body: { templateId: SCHEDULE_SYSTEM_COMPLETE_V1 },
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+  });
+
+  it("F04: cancel restores previously frozen write access", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_cancel_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const created = await createDeletionRequest(db, {
+      targetType: DELETION_TARGET_TYPE.STUDENT_ACCOUNT,
+      targetId: student.studentId,
+      requestedBy: student.studentId,
+      requesterRole: "student",
+      idempotencyKey: "cancel-restore-freeze",
+      artifactStore,
+    });
+
+    await expect(
+      upsertDailyReflection(db, {
+        studentId: student.studentId,
+        familyDate: toFamilyDate(),
+        visibility: "normal",
+        body: "blocked before cancel",
+        idempotencyKey: "blocked-before-cancel",
+      }),
+    ).rejects.toSatisfy(expectFrozen);
+
+    const { cancelDeletionRequest } =
+      await import("@/modules/data-lifecycle/deletion-request.service");
+
+    await cancelDeletionRequest(db, {
+      requestId: created.requestId,
+      actorId: student.studentId,
+      idempotencyKey: "cancel-restore",
+    });
+
+    await expect(
+      upsertDailyReflection(db, {
+        studentId: student.studentId,
+        familyDate: toFamilyDate(),
+        visibility: "normal",
+        body: "allowed after cancel",
+        idempotencyKey: "allowed-after-cancel",
+      }),
+    ).resolves.toBeDefined();
   });
 });

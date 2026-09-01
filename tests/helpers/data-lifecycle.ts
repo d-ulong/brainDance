@@ -1,14 +1,36 @@
-import { eq } from "drizzle-orm";
-
 import { upsertDailyReflection } from "@/modules/reflection-privacy/upsert-daily-reflection.service";
 import { grantPrivateAccess } from "@/modules/reflection-privacy/grant-private-access.service";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { createMemoryArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
+import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 
 import type { TestDb } from "./db";
 
 export function createTestArtifactStore() {
   return createMemoryArtifactStore();
+}
+
+export function createFaultInjectedArtifactStore(options?: {
+  failPut?: boolean;
+  failOpenOnce?: boolean;
+}) {
+  const base = createMemoryArtifactStore();
+
+  return {
+    ...base,
+    async put(key: string, content: Buffer) {
+      if (options?.failPut) {
+        throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact put failure");
+      }
+      return base.put(key, content);
+    },
+    async openOnce(key: string) {
+      if (options?.failOpenOnce) {
+        throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact open failure");
+      }
+      return base.openOnce(key);
+    },
+  };
 }
 
 export async function seedPrivateReflection(

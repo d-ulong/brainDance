@@ -1,17 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import {
-  auditEvents,
-  dailyReflections,
-  deletionExecutionSteps,
-  deletionRequests,
-  deletionTombstones,
-  privateAccessGrants,
-  sessions,
-  trainingProfileProjection,
-  users,
-} from "@/db/schema";
+import { deletionExecutionSteps, deletionRequests, deletionTombstones } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   DELETION_REVOCABLE_DAYS,
@@ -22,17 +12,35 @@ import {
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import {
   incrementStudentAuthorizationEpoch,
-  revokeReadyExportJobsForStudent,
+  purgeExportArtifactKeys,
+  revokeReadyExportJobsForStudentInTx,
   revokeStudentSessions,
 } from "@/modules/data-lifecycle/freeze-guard.service";
 import type { PrivateArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
+import { revokeAllAuthorizationsForStudentDeletion } from "@/modules/family-access/account-deletion.service";
+import {
+  minimizeStudentIdentityForDeletion,
+  purgeStudentSessionsInTx,
+} from "@/modules/identity/account-deletion.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
-import { rebuildProjectionForStudent } from "@/modules/projection/rebuild-projection.service";
+import { resetProjectionsAfterStudentDeletion } from "@/modules/projection/account-deletion.service";
+import {
+  purgeAllReflectionBodiesForStudent,
+  purgeReflectionBodyById,
+  revokePrivateGrantsForReflection,
+} from "@/modules/reflection-privacy/account-deletion.service";
+import { cancelPendingScheduleItemsForStudent } from "@/modules/schedule/account-deletion.service";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
-import { PRIVATE_RESOURCE_TYPES } from "@/modules/reflection-privacy/constants";
-import { rebuildTrainingProfileProjectionForStudent } from "@/modules/training/trends.service";
+import { purgeTrainingPayloadsForStudent } from "@/modules/training/account-deletion.service";
+import { dailyReflections, users } from "@/db/schema";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+export { applyTombstonesBeforeProjectionRebuild } from "@/modules/data-lifecycle/tombstone-replay.service";
+
+export type DeletionRequestActor = {
+  actorId: string;
+  actorRole: "student" | "parent" | "admin";
+};
 
 export type CreateDeletionRequestInput = {
   targetType: (typeof DELETION_TARGET_TYPE)[keyof typeof DELETION_TARGET_TYPE];
@@ -63,6 +71,21 @@ export type DeletionRequestDto = {
   requestedAt: Date;
   executedAt: Date | null;
 };
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function assertDeletionRequestActorCanAccess(
+  request: DeletionRequestDto,
+  actor: DeletionRequestActor,
+): void {
+  if (actor.actorRole === "admin") {
+    return;
+  }
+
+  if (request.requestedBy !== actor.actorId && request.studentId !== actor.actorId) {
+    throw new DataLifecycleError("NOT_FOUND", "Deletion request not found");
+  }
+}
 
 function toDeletionDto(row: typeof deletionRequests.$inferSelect): DeletionRequestDto {
   return {
@@ -111,42 +134,10 @@ async function resolveStudentIdForTarget(
   return reflection.studentId;
 }
 
-async function findDeletionCreateReplay(
-  db: Database,
-  requestedBy: string,
-  idempotencyKey: string,
-): Promise<string | null> {
-  const auditKey = `audit:deletion.create:${requestedBy}:${idempotencyKey}`;
-  const [existing] = await db
-    .select({ resourceId: auditEvents.resourceId })
-    .from(auditEvents)
-    .where(eq(auditEvents.idempotencyKey, auditKey))
-    .limit(1);
-
-  return existing?.resourceId ?? null;
-}
-
 export async function createDeletionRequest(
   db: Database,
   input: CreateDeletionRequestInput,
 ): Promise<CreateDeletionRequestResult> {
-  const replayId = await findDeletionCreateReplay(db, input.requestedBy, input.idempotencyKey);
-  if (replayId) {
-    const [existing] = await db
-      .select()
-      .from(deletionRequests)
-      .where(eq(deletionRequests.id, replayId))
-      .limit(1);
-    if (existing) {
-      return {
-        requestId: existing.id,
-        status: existing.status,
-        revocableUntil: existing.revocableUntil,
-        idempotentReplay: true,
-      };
-    }
-  }
-
   const studentId = await resolveStudentIdForTarget(db, input.targetType, input.targetId);
 
   if (input.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
@@ -174,87 +165,152 @@ export async function createDeletionRequest(
     targetId: input.targetId,
   });
 
-  return db.transaction(async (tx) => {
-    const replayInTx = await findDeletionCreateReplay(tx, input.requestedBy, input.idempotencyKey);
-    if (replayInTx) {
-      const [existing] = await tx
-        .select()
-        .from(deletionRequests)
-        .where(eq(deletionRequests.id, replayInTx))
-        .limit(1);
-      if (existing) {
-        return {
-          requestId: existing.id,
-          status: existing.status,
-          revocableUntil: existing.revocableUntil,
-          idempotentReplay: true,
-        };
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`deletion.create:${input.requestedBy}:${input.idempotencyKey}`}))`,
+    );
+
+    const [existingInTx] = await tx
+      .select()
+      .from(deletionRequests)
+      .where(
+        and(
+          eq(deletionRequests.requestedBy, input.requestedBy),
+          eq(deletionRequests.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+
+    if (existingInTx) {
+      if (existingInTx.createIdempotencyPayloadHash !== payloadHash) {
+        throw new DataLifecycleError(
+          "IDEMPOTENCY_CONFLICT",
+          "Deletion request idempotency conflict",
+        );
       }
+      return {
+        requestId: existingInTx.id,
+        status: existingInTx.status,
+        revocableUntil: existingInTx.revocableUntil,
+        idempotentReplay: true,
+        artifactKeys: [] as string[],
+      };
     }
 
     const now = new Date();
     const revocableUntil = new Date(now.getTime() + DELETION_REVOCABLE_DAYS * MS_PER_DAY);
 
-    const [request] = await tx
-      .insert(deletionRequests)
-      .values({
-        targetType: input.targetType,
-        targetId: input.targetId,
-        studentId,
-        requestedBy: input.requestedBy,
+    let inserted: Array<{ id: string }> = [];
+
+    try {
+      inserted = await tx
+        .insert(deletionRequests)
+        .values({
+          targetType: input.targetType,
+          targetId: input.targetId,
+          studentId,
+          requestedBy: input.requestedBy,
+          status: DELETION_STATUS.FROZEN,
+          revocableUntil,
+          createIdempotencyKey: input.idempotencyKey,
+          createIdempotencyPayloadHash: payloadHash,
+          requestedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing({
+          target: [deletionRequests.requestedBy, deletionRequests.createIdempotencyKey],
+        })
+        .returning({ id: deletionRequests.id });
+    } catch (error) {
+      if (!isPostgresUniqueViolation(error)) {
+        throw error;
+      }
+    }
+
+    const request = inserted[0];
+
+    if (request) {
+      let artifactKeys: string[] = [];
+
+      if (input.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
+        await revokeStudentSessions(tx, studentId);
+        await incrementStudentAuthorizationEpoch(tx, studentId);
+        const revoked = await revokeReadyExportJobsForStudentInTx(tx, studentId);
+        artifactKeys = revoked.artifactKeys;
+      }
+
+      await appendAuditEvent(tx, {
+        actorId: input.requestedBy,
+        action: "deletion.request",
+        resourceType: "deletion_request",
+        resourceId: request.id,
+        requestId: input.requestId,
+        idempotencyKey: `audit:deletion.create:${input.requestedBy}:${input.idempotencyKey}`,
+        metadata: {
+          targetType: input.targetType,
+          studentId,
+        },
+      });
+
+      await appendOutboxEvent(tx, {
+        aggregateType: "deletion_request",
+        aggregateId: request.id,
+        eventType: "deletion.frozen",
+        dedupeKey: `outbox:deletion.create:${input.requestedBy}:${input.idempotencyKey}`,
+        payload: {
+          requestId: request.id,
+          targetType: input.targetType,
+          targetId: input.targetId,
+          studentId,
+        },
+      });
+
+      return {
+        requestId: request.id,
         status: DELETION_STATUS.FROZEN,
         revocableUntil,
-        createIdempotencyKey: input.idempotencyKey,
-        createIdempotencyPayloadHash: payloadHash,
-        requestedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning({ id: deletionRequests.id });
+        idempotentReplay: false,
+        artifactKeys,
+      };
+    }
 
-    if (!request) {
+    const [replay] = await tx
+      .select()
+      .from(deletionRequests)
+      .where(
+        and(
+          eq(deletionRequests.requestedBy, input.requestedBy),
+          eq(deletionRequests.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+
+    if (!replay) {
       throw new DataLifecycleError("STATE_CONFLICT", "Failed to create deletion request");
     }
 
-    if (input.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
-      await revokeStudentSessions(tx, studentId);
-      await incrementStudentAuthorizationEpoch(tx, studentId);
-      await revokeReadyExportJobsForStudent(tx, studentId, input.artifactStore);
+    if (replay.createIdempotencyPayloadHash !== payloadHash) {
+      throw new DataLifecycleError("IDEMPOTENCY_CONFLICT", "Deletion request idempotency conflict");
     }
 
-    await appendAuditEvent(tx, {
-      actorId: input.requestedBy,
-      action: "deletion.request",
-      resourceType: "deletion_request",
-      resourceId: request.id,
-      requestId: input.requestId,
-      idempotencyKey: `audit:deletion.create:${input.requestedBy}:${input.idempotencyKey}`,
-      metadata: {
-        targetType: input.targetType,
-        studentId,
-      },
-    });
-
-    await appendOutboxEvent(tx, {
-      aggregateType: "deletion_request",
-      aggregateId: request.id,
-      eventType: "deletion.frozen",
-      dedupeKey: `outbox:deletion.create:${input.requestedBy}:${input.idempotencyKey}`,
-      payload: {
-        requestId: request.id,
-        targetType: input.targetType,
-        targetId: input.targetId,
-        studentId,
-      },
-    });
-
     return {
-      requestId: request.id,
-      status: DELETION_STATUS.FROZEN,
-      revocableUntil,
-      idempotentReplay: false,
+      requestId: replay.id,
+      status: replay.status,
+      revocableUntil: replay.revocableUntil,
+      idempotentReplay: true,
+      artifactKeys: [] as string[],
     };
   });
+
+  await purgeExportArtifactKeys(input.artifactStore, result.artifactKeys);
+
+  return {
+    requestId: result.requestId,
+    status: result.status,
+    revocableUntil: result.revocableUntil,
+    idempotentReplay: result.idempotentReplay,
+  };
 }
 
 export type CancelDeletionRequestInput = {
@@ -483,6 +539,20 @@ export async function getDeletionRequest(
   return row ? toDeletionDto(row) : null;
 }
 
+export async function getDeletionRequestForActor(
+  db: Database,
+  requestId: string,
+  actor: DeletionRequestActor,
+): Promise<DeletionRequestDto> {
+  const request = await getDeletionRequest(db, requestId);
+  if (!request) {
+    throw new DataLifecycleError("NOT_FOUND", "Deletion request not found");
+  }
+
+  assertDeletionRequestActorCanAccess(request, actor);
+  return request;
+}
+
 async function isStepCompleted(
   tx: Database,
   deletionRequestId: string,
@@ -535,8 +605,9 @@ export async function processDeletionWorker(
   input: ProcessDeletionWorkerInput,
 ): Promise<{ requestId: string; status: string; executed: boolean }> {
   const now = input.now ?? new Date();
+  const artifactKeysToPurge: string[] = [];
 
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT id FROM deletion_requests WHERE id = ${input.requestId}::uuid FOR UPDATE`,
     );
@@ -568,102 +639,51 @@ export async function processDeletionWorker(
 
     const studentId = request.studentId;
 
-    // Step 1: revoke sessions/artifacts
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.REVOKE_SESSIONS_ARTIFACTS))) {
       await revokeStudentSessions(tx, studentId);
-      await revokeReadyExportJobsForStudent(tx, studentId, input.artifactStore);
+      const revoked = await revokeReadyExportJobsForStudentInTx(tx, studentId);
+      artifactKeysToPurge.push(...revoked.artifactKeys);
       await markStepCompleted(tx, request.id, DELETION_STEP.REVOKE_SESSIONS_ARTIFACTS, now);
     }
 
-    // Step 2: stop future schedule (deactivate pending schedule items for student account deletion)
-    if (
-      request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT &&
-      !(await isStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE))
-    ) {
-      await tx.execute(sql`
-        UPDATE schedule_items
-        SET status = 'cancelled'
-        WHERE student_id = ${studentId}::uuid AND status = 'pending'
-      `);
-      await markStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE, now);
-    } else if (
-      request.targetType === DELETION_TARGET_TYPE.DAILY_REFLECTION &&
-      !(await isStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE))
-    ) {
+    if (!(await isStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE))) {
+      if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
+        await cancelPendingScheduleItemsForStudent(tx, studentId);
+        await revokeAllAuthorizationsForStudentDeletion(tx, { studentId, now });
+      }
       await markStepCompleted(tx, request.id, DELETION_STEP.STOP_FUTURE_SCHEDULE, now);
     }
 
-    // Step 3: purge bodies
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.PURGE_BODIES))) {
       if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
-        await tx
-          .update(dailyReflections)
-          .set({ body: "", deletedAt: now, bodyPurgedAt: now, updatedAt: now })
-          .where(eq(dailyReflections.studentId, studentId));
-
-        await tx.execute(sql`
-          UPDATE training_events
-          SET payload = '{}'::jsonb
-          FROM training_sessions
-          WHERE training_events.session_id = training_sessions.id
-            AND training_sessions.student_id = ${studentId}::uuid
-        `);
+        await purgeAllReflectionBodiesForStudent(tx, { studentId, now });
+        await purgeTrainingPayloadsForStudent(tx, studentId);
       } else {
-        await tx
-          .update(dailyReflections)
-          .set({ body: "", deletedAt: now, bodyPurgedAt: now, updatedAt: now })
-          .where(eq(dailyReflections.id, request.targetId));
-
-        await tx
-          .update(privateAccessGrants)
-          .set({ revokedAt: now })
-          .where(
-            and(
-              eq(privateAccessGrants.resourceId, request.targetId),
-              eq(privateAccessGrants.resourceType, PRIVATE_RESOURCE_TYPES.DAILY_REFLECTION),
-              isNull(privateAccessGrants.revokedAt),
-            ),
-          );
+        await purgeReflectionBodyById(tx, { reflectionId: request.targetId, now });
+        await revokePrivateGrantsForReflection(tx, { reflectionId: request.targetId, now });
       }
       await markStepCompleted(tx, request.id, DELETION_STEP.PURGE_BODIES, now);
     }
 
-    // Step 4: minimize identity (student account only)
-    if (
-      request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT &&
-      !(await isStepCompleted(tx, request.id, DELETION_STEP.MINIMIZE_IDENTITY))
-    ) {
-      await tx
-        .update(users)
-        .set({
-          displayName: "Deleted User",
-          email: null,
-          phone: null,
-          username: sql`'deleted_' || ${request.id}::text`,
-          status: "disabled",
-          updatedAt: now,
-        })
-        .where(eq(users.id, studentId));
-
-      await tx.delete(sessions).where(eq(sessions.userId, studentId));
-      await markStepCompleted(tx, request.id, DELETION_STEP.MINIMIZE_IDENTITY, now);
-    } else if (!(await isStepCompleted(tx, request.id, DELETION_STEP.MINIMIZE_IDENTITY))) {
+    if (!(await isStepCompleted(tx, request.id, DELETION_STEP.MINIMIZE_IDENTITY))) {
+      if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
+        await minimizeStudentIdentityForDeletion(tx, {
+          studentId,
+          deletionRequestId: request.id,
+          now,
+        });
+        await purgeStudentSessionsInTx(tx, studentId);
+      }
       await markStepCompleted(tx, request.id, DELETION_STEP.MINIMIZE_IDENTITY, now);
     }
 
-    // Step 5: cleanup projections
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.CLEANUP_PROJECTIONS))) {
       if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
-        await tx
-          .delete(trainingProfileProjection)
-          .where(eq(trainingProfileProjection.studentId, studentId));
-        await rebuildProjectionForStudent(tx, studentId, now);
-        await rebuildTrainingProfileProjectionForStudent(tx, studentId);
+        await resetProjectionsAfterStudentDeletion(tx, { studentId, now });
       }
       await markStepCompleted(tx, request.id, DELETION_STEP.CLEANUP_PROJECTIONS, now);
     }
 
-    // Step 6: write tombstone
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.WRITE_TOMBSTONE))) {
       await tx
         .insert(deletionTombstones)
@@ -683,7 +703,6 @@ export async function processDeletionWorker(
       await markStepCompleted(tx, request.id, DELETION_STEP.WRITE_TOMBSTONE, now);
     }
 
-    // Step 7: mark executed
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.MARK_EXECUTED))) {
       await tx
         .update(deletionRequests)
@@ -704,77 +723,10 @@ export async function processDeletionWorker(
 
     return { requestId: request.id, status: DELETION_STATUS.EXECUTED, executed: true };
   });
-}
 
-export async function applyTombstonesBeforeProjectionRebuild(db: Database): Promise<number> {
-  const tombstones = await db.select().from(deletionTombstones);
-  let applied = 0;
+  await purgeExportArtifactKeys(input.artifactStore, artifactKeysToPurge);
 
-  for (const tombstone of tombstones) {
-    if (tombstone.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
-      const [user] = await db
-        .select({ displayName: users.displayName })
-        .from(users)
-        .where(eq(users.id, tombstone.targetId))
-        .limit(1);
-
-      if (user && user.displayName !== "Deleted User") {
-        await db
-          .update(users)
-          .set({
-            displayName: "Deleted User",
-            email: null,
-            phone: null,
-            status: "disabled",
-            updatedAt: new Date(),
-          })
-          .where(eq(users.id, tombstone.targetId));
-        applied += 1;
-      }
-
-      const reflections = await db
-        .select({
-          id: dailyReflections.id,
-          body: dailyReflections.body,
-          deletedAt: dailyReflections.deletedAt,
-        })
-        .from(dailyReflections)
-        .where(eq(dailyReflections.studentId, tombstone.studentId));
-
-      for (const reflection of reflections) {
-        if (!reflection.deletedAt || reflection.body.length > 0) {
-          await db
-            .update(dailyReflections)
-            .set({
-              body: "",
-              deletedAt: tombstone.purgedAt,
-              bodyPurgedAt: tombstone.purgedAt,
-              updatedAt: new Date(),
-            })
-            .where(eq(dailyReflections.id, reflection.id));
-          applied += 1;
-        }
-      }
-    }
-
-    if (tombstone.targetType === DELETION_TARGET_TYPE.DAILY_REFLECTION) {
-      const [reflection] = await db
-        .select({ body: dailyReflections.body, deletedAt: dailyReflections.deletedAt })
-        .from(dailyReflections)
-        .where(eq(dailyReflections.id, tombstone.targetId))
-        .limit(1);
-
-      if (reflection && (!reflection.deletedAt || reflection.body.length > 0)) {
-        await db
-          .update(dailyReflections)
-          .set({ body: "", deletedAt: tombstone.purgedAt, bodyPurgedAt: tombstone.purgedAt })
-          .where(eq(dailyReflections.id, tombstone.targetId));
-        applied += 1;
-      }
-    }
-  }
-
-  return applied;
+  return result;
 }
 
 export async function findTombstoneForTarget(

@@ -6,7 +6,7 @@ import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession } from "@/lib/auth-request";
 import {
   cancelDeletionRequest,
-  getDeletionRequest,
+  getDeletionRequestForActor,
 } from "@/modules/data-lifecycle/deletion-request.service";
 
 type RouteContext = {
@@ -19,24 +19,10 @@ export async function GET(_request: Request, context: RouteContext) {
     const { requestId: rawRequestId } = await context.params;
     const requestId = m2UuidParamSchema.parse(rawRequestId);
 
-    const request = await getDeletionRequest(db, requestId);
-    if (!request) {
-      return NextResponse.json(
-        { error: { code: "NOT_FOUND", message: "Deletion request not found" } },
-        { status: 404 },
-      );
-    }
-
-    if (
-      request.requestedBy !== dbUser.id &&
-      request.studentId !== dbUser.id &&
-      dbUser.role !== "admin"
-    ) {
-      return NextResponse.json(
-        { error: { code: "NOT_FOUND", message: "Deletion request not found" } },
-        { status: 404 },
-      );
-    }
+    const request = await getDeletionRequestForActor(db, requestId, {
+      actorId: dbUser.id,
+      actorRole: dbUser.role as "student" | "parent" | "admin",
+    });
 
     return NextResponse.json({ request });
   } catch (error) {

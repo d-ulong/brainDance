@@ -7,6 +7,7 @@ import { normalizeAccountKey, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
 import { LOGIN_LOCK_DURATION_MS, MAX_LOGIN_FAILURES } from "@/modules/identity/constants";
 import { IdentityError } from "@/modules/identity/errors";
+import { isStudentAccountFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type LoginInput = {
   identifier: string;
@@ -133,6 +134,10 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     throw new IdentityError("FORBIDDEN", "Account is disabled");
   }
 
+  if (user.role === "student" && (await isStudentAccountFrozen(db, user.id))) {
+    throw new IdentityError("FORBIDDEN", "Account is not available");
+  }
+
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
     throw new IdentityError("ACCOUNT_LOCKED", "Account is temporarily locked");
   }
@@ -247,6 +252,11 @@ export async function validateSession(db: Database, sessionId: string) {
   }
 
   if (result.session.authorizationEpoch !== result.user.authorizationEpoch) {
+    await lucia.invalidateSession(sessionId);
+    return null;
+  }
+
+  if (result.user.role === "student" && (await isStudentAccountFrozen(db, result.user.id))) {
     await lucia.invalidateSession(sessionId);
     return null;
   }

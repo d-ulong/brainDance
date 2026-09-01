@@ -10,6 +10,7 @@ import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency
 import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.service";
 import { ScheduleError } from "@/modules/schedule/errors";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type SkipScheduleInput = {
   actorId: string;
@@ -127,6 +128,7 @@ export async function skipScheduleItem(
   }
 
   await assertSkipAuthorization(db, input.actorId, preflightItem);
+  await assertStudentAccountNotFrozen(db, preflightItem.studentId, "write");
 
   let expiredStudentId: string | null = null;
 

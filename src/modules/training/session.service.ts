@@ -617,6 +617,8 @@ export async function submitTrainingSession(
   db: Database,
   input: SubmitTrainingSessionInput,
 ): Promise<SubmitTrainingSessionResult> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+
   const existingBySubmitKey = await findSubmitSessionByIdempotency(
     db,
     input.studentId,
@@ -864,6 +866,7 @@ export async function getTrainingSummaryForParent(
   trainingKey: string = REACTION_TRAINING_KEY,
 ): Promise<ParentTrainingSummary> {
   await requireActiveRelationship(db, parentId, studentId);
+  await assertStudentAccountNotFrozen(db, studentId, "read");
 
   const [latestSession] = await db
     .select()

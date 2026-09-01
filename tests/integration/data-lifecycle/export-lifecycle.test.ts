@@ -113,6 +113,7 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       jobId: created.jobId,
       tokenPlaintext: processed.downloadTokenPlaintext!,
       artifactStore,
+      actor: { actorId: parentId, actorRole: "parent" },
     });
 
     const artifact = JSON.parse(delivered.content.toString("utf8"));
@@ -156,6 +157,7 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       jobId: created.jobId,
       tokenPlaintext: processed.downloadTokenPlaintext!,
       artifactStore,
+      actor: { actorId: parentId, actorRole: "parent" },
     });
 
     const artifact = JSON.parse(delivered.content.toString("utf8"));
@@ -217,12 +219,14 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       jobId: created.jobId,
       tokenPlaintext: token,
       artifactStore,
+      actor: { actorId: student.studentId, actorRole: "student" },
     });
 
     const second = deliverExportDownload(db, {
       jobId: created.jobId,
       tokenPlaintext: token,
       artifactStore,
+      actor: { actorId: student.studentId, actorRole: "student" },
     });
 
     const results = await Promise.allSettled([first, second]);
@@ -286,6 +290,7 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
         jobId: created.jobId,
         tokenPlaintext: processed.downloadTokenPlaintext!,
         artifactStore,
+        actor: { actorId: student.studentId, actorRole: "student" },
       }),
     ).rejects.toBeInstanceOf(DataLifecycleError);
   });

@@ -28,6 +28,7 @@ import {
   type TrendWindow,
 } from "@/modules/training/trend-window";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type TrainingTrendMetric = {
   metricKey: string;
@@ -199,6 +200,8 @@ export async function queryTrainingTrends(
     referenceFamilyDate?: string;
   },
 ): Promise<TrainingTrendsResponse> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "read");
+
   const referenceFamilyDate = input.referenceFamilyDate ?? toFamilyDate();
   const windowStartFamilyDate = resolveTrendWindowStart(input.window, referenceFamilyDate);
   const allEffectiveSessions = await loadEffectiveSessions(db, input.studentId, input.trainingKey);

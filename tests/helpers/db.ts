@@ -72,3 +72,17 @@ export async function closeTestDb(): Promise<void> {
     sharedClient = undefined;
   }
 }
+
+export function createIndependentTestDb(): {
+  db: TestDb;
+  close: () => Promise<void>;
+} {
+  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const db = drizzle(client, { schema });
+  return {
+    db,
+    close: async () => {
+      await client.end({ timeout: 5 });
+    },
+  };
+}

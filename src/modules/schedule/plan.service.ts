@@ -21,6 +21,7 @@ import { nextFamilyDate } from "@/modules/time-policy/next-family-date";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { users } from "@/db/schema";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type CreateFormalPlanBody = {
   title: string;
@@ -247,6 +248,8 @@ export async function createFormalPlan(
     }
     throw error;
   }
+
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const bodyHash = hashIdempotencyPayload(input.body);
 

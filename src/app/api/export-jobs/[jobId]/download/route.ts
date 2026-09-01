@@ -4,7 +4,10 @@ import { m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { deliverExportDownloadBodySchema } from "@/app/api/_lib/m6-lifecycle-schemas";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession } from "@/lib/auth-request";
-import { deliverExportDownload, getExportJob } from "@/modules/data-lifecycle/export-job.service";
+import {
+  getExportJobStatusForActor,
+  deliverExportDownload,
+} from "@/modules/data-lifecycle/export-job.service";
 import { createMemoryArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
 
 type RouteContext = {
@@ -19,13 +22,10 @@ export async function GET(_request: Request, context: RouteContext) {
     const { jobId: rawJobId } = await context.params;
     const jobId = m2UuidParamSchema.parse(rawJobId);
 
-    const job = await getExportJob(db, jobId);
-    if (!job || job.requesterId !== dbUser.id) {
-      return NextResponse.json(
-        { error: { code: "NOT_FOUND", message: "Export job not found" } },
-        { status: 404 },
-      );
-    }
+    const job = await getExportJobStatusForActor(db, jobId, {
+      actorId: dbUser.id,
+      actorRole: dbUser.role as "student" | "parent" | "admin",
+    });
 
     return NextResponse.json({
       id: job.id,
@@ -47,18 +47,14 @@ export async function POST(request: Request, context: RouteContext) {
     const jobId = m2UuidParamSchema.parse(rawJobId);
     const body = deliverExportDownloadBodySchema.parse(await request.json());
 
-    const job = await getExportJob(db, jobId);
-    if (!job || job.requesterId !== dbUser.id) {
-      return NextResponse.json(
-        { error: { code: "NOT_FOUND", message: "Export job not found" } },
-        { status: 404 },
-      );
-    }
-
     const result = await deliverExportDownload(db, {
       jobId,
       tokenPlaintext: body.token,
       artifactStore,
+      actor: {
+        actorId: dbUser.id,
+        actorRole: dbUser.role as "student" | "parent" | "admin",
+      },
     });
 
     return new NextResponse(new Uint8Array(result.content), {

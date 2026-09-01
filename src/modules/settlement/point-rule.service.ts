@@ -9,6 +9,7 @@ import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { SettlementError } from "@/modules/settlement/errors";
+import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export const SCHEDULE_SYSTEM_COMPLETE_V1 = "schedule_system_complete_v1" as const;
 export const SCHEDULE_ERROR_COUNT_V1 = "schedule_error_count_v1" as const;
@@ -159,6 +160,8 @@ export async function enablePointRule(
     }
     throw error;
   }
+
+  await assertStudentAccountNotFrozen(db, input.studentId, "write");
 
   const bodyHash = hashIdempotencyPayload(input.body);
 

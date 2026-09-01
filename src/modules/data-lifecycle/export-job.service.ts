@@ -2,13 +2,15 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import {
-  auditEvents,
   dailyReflections,
   exportJobs,
   pointBalanceProjection,
   pointLedgerEntries,
   pointRedemptions,
   privateAccessGrants,
+  scheduleItems,
+  trainingMetrics,
+  trainingSessions,
   users,
 } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
@@ -23,6 +25,7 @@ import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-g
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { generateDownloadTokenPlaintext, hashDownloadToken } from "@/lib/crypto";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { PRIVATE_RESOURCE_TYPES } from "@/modules/reflection-privacy/constants";
 
 export type CreateExportJobInput = {
@@ -50,6 +53,53 @@ export type ExportJobDto = {
   createdAt: Date;
 };
 
+export type ExportJobActor = {
+  actorId: string;
+  actorRole: "student" | "parent" | "admin";
+};
+
+function assertExportJobActorCanAccess(
+  job: typeof exportJobs.$inferSelect,
+  actor: ExportJobActor,
+): void {
+  if (actor.actorRole === "admin") {
+    return;
+  }
+
+  if (job.requesterId !== actor.actorId) {
+    throw new DataLifecycleError("NOT_FOUND", "Export job not found");
+  }
+}
+
+function exportArtifactKey(jobId: string): string {
+  return `export/${jobId}`;
+}
+
+function exportArtifactStagingKey(jobId: string): string {
+  return `${exportArtifactKey(jobId)}.staging`;
+}
+
+async function markExportJobFailed(
+  db: Database,
+  jobId: string,
+  artifactStore: import("@/modules/data-lifecycle/private-artifact-store").PrivateArtifactStore,
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(exportJobs)
+    .set({
+      status: EXPORT_JOB_STATUS.FAILED,
+      artifactKey: null,
+      downloadTokenHash: null,
+      expiresAt: null,
+      updatedAt: now,
+    })
+    .where(eq(exportJobs.id, jobId));
+
+  await artifactStore.purge(exportArtifactKey(jobId));
+  await artifactStore.purge(exportArtifactStagingKey(jobId));
+}
+
 function toExportJobDto(row: typeof exportJobs.$inferSelect): ExportJobDto {
   return {
     id: row.id,
@@ -63,30 +113,10 @@ function toExportJobDto(row: typeof exportJobs.$inferSelect): ExportJobDto {
   };
 }
 
-async function findCreateReplay(
-  db: Database,
-  requesterId: string,
-  idempotencyKey: string,
-): Promise<string | null> {
-  const auditKey = `audit:export.create:${requesterId}:${idempotencyKey}`;
-  const [existing] = await db
-    .select({ resourceId: auditEvents.resourceId })
-    .from(auditEvents)
-    .where(eq(auditEvents.idempotencyKey, auditKey))
-    .limit(1);
-
-  return existing?.resourceId ?? null;
-}
-
 export async function createExportJob(
   db: Database,
   input: CreateExportJobInput,
 ): Promise<CreateExportJobResult> {
-  const replayId = await findCreateReplay(db, input.requesterId, input.idempotencyKey);
-  if (replayId) {
-    return { jobId: replayId, status: EXPORT_JOB_STATUS.PENDING, idempotentReplay: true };
-  }
-
   const scope = await buildExportScopeSnapshot(db, {
     requesterId: input.requesterId,
     requesterRole: input.requesterRole,
@@ -99,58 +129,111 @@ export async function createExportJob(
   });
 
   return db.transaction(async (tx) => {
-    const replayInTx = await findCreateReplay(tx, input.requesterId, input.idempotencyKey);
-    if (replayInTx) {
-      return { jobId: replayInTx, status: EXPORT_JOB_STATUS.PENDING, idempotentReplay: true };
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${`export.create:${input.requesterId}:${input.idempotencyKey}`}))`,
+    );
+
+    const [existingInTx] = await tx
+      .select()
+      .from(exportJobs)
+      .where(
+        and(
+          eq(exportJobs.requesterId, input.requesterId),
+          eq(exportJobs.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+
+    if (existingInTx) {
+      if (existingInTx.createIdempotencyPayloadHash !== payloadHash) {
+        throw new DataLifecycleError("IDEMPOTENCY_CONFLICT", "Export job idempotency conflict");
+      }
+      return {
+        jobId: existingInTx.id,
+        status: existingInTx.status,
+        idempotentReplay: true,
+      };
     }
 
     const now = new Date();
 
-    const [job] = await tx
-      .insert(exportJobs)
-      .values({
-        requesterId: input.requesterId,
-        studentId: input.studentId,
-        scopeSnapshot: scope as unknown as Record<string, unknown>,
-        status: EXPORT_JOB_STATUS.PENDING,
-        createIdempotencyKey: input.idempotencyKey,
-        createIdempotencyPayloadHash: payloadHash,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning({ id: exportJobs.id });
+    let inserted: Array<{ id: string }> = [];
 
-    if (!job) {
+    try {
+      inserted = await tx
+        .insert(exportJobs)
+        .values({
+          requesterId: input.requesterId,
+          studentId: input.studentId,
+          scopeSnapshot: scope as unknown as Record<string, unknown>,
+          status: EXPORT_JOB_STATUS.PENDING,
+          createIdempotencyKey: input.idempotencyKey,
+          createIdempotencyPayloadHash: payloadHash,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing({
+          target: [exportJobs.requesterId, exportJobs.createIdempotencyKey],
+        })
+        .returning({ id: exportJobs.id });
+    } catch (error) {
+      if (!isPostgresUniqueViolation(error)) {
+        throw error;
+      }
+    }
+
+    const job = inserted[0];
+
+    if (job) {
+      await appendAuditEvent(tx, {
+        actorId: input.requesterId,
+        action: "export.create",
+        resourceType: "export_job",
+        resourceId: job.id,
+        requestId: input.requestId,
+        idempotencyKey: `audit:export.create:${input.requesterId}:${input.idempotencyKey}`,
+        metadata: {
+          studentId: input.studentId,
+          requesterRole: input.requesterRole,
+          schemaVersion: scope.schemaVersion,
+        },
+      });
+
+      await appendOutboxEvent(tx, {
+        aggregateType: "export_job",
+        aggregateId: job.id,
+        eventType: "export.requested",
+        dedupeKey: `outbox:export.create:${input.requesterId}:${input.idempotencyKey}`,
+        payload: {
+          jobId: job.id,
+          studentId: input.studentId,
+          requesterId: input.requesterId,
+        },
+      });
+
+      return { jobId: job.id, status: EXPORT_JOB_STATUS.PENDING, idempotentReplay: false };
+    }
+
+    const [replay] = await tx
+      .select()
+      .from(exportJobs)
+      .where(
+        and(
+          eq(exportJobs.requesterId, input.requesterId),
+          eq(exportJobs.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+
+    if (!replay) {
       throw new DataLifecycleError("STATE_CONFLICT", "Failed to create export job");
     }
 
-    await appendAuditEvent(tx, {
-      actorId: input.requesterId,
-      action: "export.create",
-      resourceType: "export_job",
-      resourceId: job.id,
-      requestId: input.requestId,
-      idempotencyKey: `audit:export.create:${input.requesterId}:${input.idempotencyKey}`,
-      metadata: {
-        studentId: input.studentId,
-        requesterRole: input.requesterRole,
-        schemaVersion: scope.schemaVersion,
-      },
-    });
+    if (replay.createIdempotencyPayloadHash !== payloadHash) {
+      throw new DataLifecycleError("IDEMPOTENCY_CONFLICT", "Export job idempotency conflict");
+    }
 
-    await appendOutboxEvent(tx, {
-      aggregateType: "export_job",
-      aggregateId: job.id,
-      eventType: "export.requested",
-      dedupeKey: `outbox:export.create:${input.requesterId}:${input.idempotencyKey}`,
-      payload: {
-        jobId: job.id,
-        studentId: input.studentId,
-        requesterId: input.requesterId,
-      },
-    });
-
-    return { jobId: job.id, status: EXPORT_JOB_STATUS.PENDING, idempotentReplay: false };
+    return { jobId: replay.id, status: replay.status, idempotentReplay: true };
   });
 }
 
@@ -173,6 +256,20 @@ export async function getExportJob(
 ): Promise<typeof exportJobs.$inferSelect | null> {
   const [row] = await db.select().from(exportJobs).where(eq(exportJobs.id, jobId)).limit(1);
   return row ?? null;
+}
+
+export async function getExportJobStatusForActor(
+  db: Database,
+  jobId: string,
+  actor: ExportJobActor,
+): Promise<ExportJobDto> {
+  const job = await getExportJob(db, jobId);
+  if (!job) {
+    throw new DataLifecycleError("NOT_FOUND", "Export job not found");
+  }
+
+  assertExportJobActorCanAccess(job, actor);
+  return toExportJobDto(job);
 }
 
 export type ProcessExportJobInput = {
@@ -305,6 +402,57 @@ async function buildExportArtifactContent(
     (artifact.sections as Record<string, unknown>).reflections = includedReflections;
   }
 
+  if (scope.includedSections.includes("schedule")) {
+    const items = await db
+      .select({
+        id: scheduleItems.id,
+        familyDate: scheduleItems.familyDate,
+        status: scheduleItems.status,
+        scheduledAt: scheduleItems.scheduledAt,
+        planId: scheduleItems.planId,
+        occurrenceKey: scheduleItems.occurrenceKey,
+      })
+      .from(scheduleItems)
+      .where(eq(scheduleItems.studentId, scope.studentId));
+
+    (artifact.sections as Record<string, unknown>).schedule = items;
+  }
+
+  if (scope.includedSections.includes("training_summary")) {
+    const sessions = await db
+      .select({
+        id: trainingSessions.id,
+        trainingKey: trainingSessions.trainingKey,
+        status: trainingSessions.status,
+        sessionKind: trainingSessions.sessionKind,
+        familyDate: trainingSessions.familyDate,
+        startedAt: trainingSessions.startedAt,
+        finishedAt: trainingSessions.finishedAt,
+      })
+      .from(trainingSessions)
+      .where(eq(trainingSessions.studentId, scope.studentId));
+
+    const sessionSummaries = [];
+
+    for (const session of sessions) {
+      const metrics = await db
+        .select({
+          metricKey: trainingMetrics.metricKey,
+          value: trainingMetrics.value,
+          unit: trainingMetrics.unit,
+        })
+        .from(trainingMetrics)
+        .where(eq(trainingMetrics.sessionId, session.id));
+
+      sessionSummaries.push({
+        ...session,
+        metrics,
+      });
+    }
+
+    (artifact.sections as Record<string, unknown>).training_summary = sessionSummaries;
+  }
+
   if (scope.includedSections.includes("redemptions")) {
     const redemptions = await db
       .select({
@@ -328,7 +476,7 @@ export async function processExportJob(
 ): Promise<ProcessExportJobResult> {
   const now = input.now ?? new Date();
 
-  return db.transaction(async (tx) => {
+  const prepared = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
     const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);
@@ -338,7 +486,11 @@ export async function processExportJob(
     }
 
     if (job.status === EXPORT_JOB_STATUS.READY && job.downloadTokenHash) {
-      return { jobId: job.id, status: job.status, idempotentReplay: true };
+      return {
+        jobId: job.id,
+        status: job.status,
+        idempotentReplay: true as const,
+      };
     }
 
     if (job.status !== EXPORT_JOB_STATUS.PENDING && job.status !== EXPORT_JOB_STATUS.PROCESSING) {
@@ -358,11 +510,8 @@ export async function processExportJob(
       .where(eq(exportJobs.id, job.id));
 
     const content = await buildExportArtifactContent(tx, scope, job.requesterId);
-    const artifactKey = `export/${job.id}`;
+    const artifactKey = exportArtifactKey(job.id);
     const artifactBuffer = Buffer.from(JSON.stringify(content), "utf8");
-
-    await input.artifactStore.put(artifactKey, artifactBuffer);
-
     const downloadTokenPlaintext = generateDownloadTokenPlaintext();
     const downloadTokenHash = hashDownloadToken(downloadTokenPlaintext);
     const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
@@ -392,15 +541,40 @@ export async function processExportJob(
       jobId: job.id,
       status: EXPORT_JOB_STATUS.READY,
       downloadTokenPlaintext,
-      idempotentReplay: false,
+      idempotentReplay: false as const,
+      artifactKey,
+      artifactBuffer,
     };
   });
+
+  if (prepared.idempotentReplay) {
+    return {
+      jobId: prepared.jobId,
+      status: prepared.status,
+      idempotentReplay: true,
+    };
+  }
+
+  try {
+    await input.artifactStore.put(prepared.artifactKey!, prepared.artifactBuffer!);
+  } catch (error) {
+    await markExportJobFailed(db, prepared.jobId, input.artifactStore);
+    throw error;
+  }
+
+  return {
+    jobId: prepared.jobId,
+    status: prepared.status,
+    downloadTokenPlaintext: prepared.downloadTokenPlaintext,
+    idempotentReplay: false,
+  };
 }
 
 export type DeliverExportDownloadInput = {
   jobId: string;
   tokenPlaintext: string;
   artifactStore: import("@/modules/data-lifecycle/private-artifact-store").PrivateArtifactStore;
+  actor: ExportJobActor;
   now?: Date;
 };
 
@@ -425,6 +599,8 @@ export async function deliverExportDownload(
     if (!job) {
       throw new DataLifecycleError("NOT_FOUND", "Export job not found");
     }
+
+    assertExportJobActorCanAccess(job, input.actor);
 
     if (job.downloadTokenHash !== tokenHash) {
       throw new DataLifecycleError("TOKEN_INVALID", "Download token is invalid");
@@ -456,7 +632,7 @@ export async function deliverExportDownload(
       .where(eq(exportJobs.id, job.id));
 
     await appendAuditEvent(tx, {
-      actorId: job.requesterId,
+      actorId: input.actor.actorId,
       action: "export.download",
       resourceType: "export_job",
       resourceId: job.id,
