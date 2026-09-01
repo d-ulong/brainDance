@@ -8,13 +8,11 @@ import {
   getExportJobStatusForActor,
   deliverExportDownload,
 } from "@/modules/data-lifecycle/export-job.service";
-import { createMemoryArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
+import { exportRouteArtifactStore } from "@/modules/data-lifecycle/route-artifact-stores";
 
 type RouteContext = {
   params: Promise<{ jobId: string }>;
 };
-
-const artifactStore = createMemoryArtifactStore();
 
 export async function GET(_request: Request, context: RouteContext) {
   try {
@@ -50,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
     const result = await deliverExportDownload(db, {
       jobId,
       tokenPlaintext: body.token,
-      artifactStore,
+      artifactStore: exportRouteArtifactStore,
       actor: {
         actorId: dbUser.id,
         actorRole: dbUser.role as "student" | "parent" | "admin",
@@ -68,5 +66,3 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json(body, { status });
   }
 }
-
-export { artifactStore as exportRouteArtifactStore };

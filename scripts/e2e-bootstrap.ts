@@ -18,6 +18,7 @@ import { seedM5TrainingDefinitions } from "../src/modules/training/definition.se
 import { seedAdminUser } from "../src/modules/identity/seed-admin";
 import { migrateTestDb } from "../tests/helpers/db";
 import { bootstrapVerifiedParentWithInvite } from "../tests/helpers/family-access";
+import { bootstrapCatalogItem, seedStudentBalance } from "../tests/helpers/redemption";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -90,6 +91,15 @@ async function main() {
     idempotencyKey: `e2e-accept-${runId}`,
   });
 
+  await seedStudentBalance(db, created.studentId, 100);
+  const { item: catalogItem } = await bootstrapCatalogItem(db, {
+    parentId,
+    studentId: created.studentId,
+    title: "E2E 测试奖励",
+    cost: 10,
+    idempotencyKey: `e2e-catalog-${runId}`,
+  });
+
   writeFileSync(
     FIXTURE_PATH,
     JSON.stringify(
@@ -102,6 +112,7 @@ async function main() {
         studentUsername,
         studentPassword,
         studentId: created.studentId,
+        catalogItemId: catalogItem.id,
       },
       null,
       2,

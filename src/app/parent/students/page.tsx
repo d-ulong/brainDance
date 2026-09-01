@@ -82,6 +82,20 @@ export default function ParentStudentsPage() {
                 >
                   训练汇总
                 </Link>
+                <Link
+                  href={`/parent/students/${student.studentId}/redemption`}
+                  data-testid={`student-redemption-${student.studentId}`}
+                  className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"
+                >
+                  兑换目录
+                </Link>
+                <Link
+                  href={`/parent/students/${student.studentId}/export`}
+                  data-testid={`student-export-${student.studentId}`}
+                  className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"
+                >
+                  数据导出
+                </Link>
               </div>
             </li>
           ))}

@@ -14,6 +14,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "rebuild-projection": "tsx scripts/rebuild-projection.ts",
+    "capacity:synthetic": "tsx scripts/capacity-synthetic.mts",
+    "recovery:drill": "tsx scripts/recovery-drill.mts",
     "db:seed": "tsx scripts/seed-m1.ts",
     "db:studio": "drizzle-kit studio",
     "format": "prettier --check .",

@@ -5,9 +5,7 @@ import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession } from "@/lib/auth-request";
 import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
-import { createMemoryArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
-
-const artifactStore = createMemoryArtifactStore();
+import { deletionRouteArtifactStore } from "@/modules/data-lifecycle/route-artifact-stores";
 
 export async function POST(request: Request) {
   const idempotency = requireIdempotencyKey(request);
@@ -40,7 +38,7 @@ export async function POST(request: Request) {
       requesterRole,
       idempotencyKey: idempotency.key,
       requestId: request.headers.get("x-request-id") ?? undefined,
-      artifactStore,
+      artifactStore: deletionRouteArtifactStore,
     });
 
     return NextResponse.json(result);
@@ -49,5 +47,3 @@ export async function POST(request: Request) {
     return NextResponse.json(body, { status });
   }
 }
-
-export { artifactStore as deletionRouteArtifactStore };

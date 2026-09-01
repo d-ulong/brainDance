@@ -83,8 +83,11 @@ export default function HomePage() {
       <PointsTodayCard studentId={session.userId} />
       <nav className="flex flex-col gap-3">
         <NavLink href="/student/schedule">今日日程</NavLink>
+        <NavLink href="/student/redemption">积分兑换</NavLink>
+        <NavLink href="/student/export">数据导出</NavLink>
         <NavLink href="/student/link">关联家长</NavLink>
         <NavLink href="/student/training">训练中心</NavLink>
+        <NavLink href="/student/account-deletion">账户删除</NavLink>
       </nav>
     </PageShell>
   );
