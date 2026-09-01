@@ -3,11 +3,13 @@ import { expect, test } from "@playwright/test";
 import {
   assertNoHorizontalScroll,
   createExportViaUi,
+  createParentExportViaUi,
   createThrowawayStudentViaApi,
   expireExportJobTokenFixture,
   loadFixtureWithCatalog,
   loginThrowawayStudentViaUi,
   loginViaApi,
+  reauthDeletionViaUi,
   waitForExportReady,
 } from "./m6-lifecycle-helpers";
 import { fillField, loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
@@ -92,6 +94,15 @@ test.describe("M6 lifecycle flow", () => {
       "pending-redemption-",
       "",
     );
+
+    // Second page shares the parent session and holds a stale pending view.
+    const stalePage = await page.context().newPage();
+    await stalePage.goto(`/parent/students/${fixture.studentId}/redemption`);
+    await expect(stalePage.getByTestId(`pending-redemption-${redemptionId}`)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Page A rejects the redemption first.
     await page.getByTestId(`reject-redemption-${redemptionId}`).click();
     await fillField(page, `reject-reason-${redemptionId}`, "不合规申请");
     await page.getByTestId(`confirm-reject-${redemptionId}`).click();
@@ -99,18 +110,20 @@ test.describe("M6 lifecycle flow", () => {
       timeout: 15_000,
     });
 
-    await page.goto(`/parent/students/${fixture.studentId}/redemption`);
-    const rejectAgain = page.getByTestId(`reject-redemption-${redemptionId}`);
-    if (await rejectAgain.isVisible()) {
-      await rejectAgain.click();
-      await fillField(page, `reject-reason-${redemptionId}`, "再次拒绝");
-      await page.getByTestId(`confirm-reject-${redemptionId}`).click();
-      await expect(page.getByTestId("parent-redemption-error")).toBeVisible({ timeout: 15_000 });
-    }
+    // Stale page still shows the pending state; its reject is a terminal-state
+    // conflict that the UI must surface explicitly (F03).
+    await stalePage.getByTestId(`reject-redemption-${redemptionId}`).click();
+    await fillField(stalePage, `reject-reason-${redemptionId}`, "再次拒绝");
+    await stalePage.getByTestId(`confirm-reject-${redemptionId}`).click();
+    await expect(stalePage.getByTestId("parent-redemption-error")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await stalePage.close();
     await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 export create/poll/download via UI; process route blocked", async ({
+  test("AC-M6-09 student export create/poll/download via UI; process route blocked", async ({
     page,
     request,
   }) => {
@@ -168,6 +181,54 @@ test.describe("M6 lifecycle flow", () => {
     await assertNoHorizontalScroll(page);
   });
 
+  test("AC-M6-09 parent export create/poll/download via UI", async ({ page }) => {
+    const fixture = loadE2eFixture();
+
+    await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
+    await page.goto(`/parent/students/${fixture.studentId}/export`);
+    await expect(page.getByTestId("parent-create-export-button")).toBeVisible({
+      timeout: 15_000,
+    });
+    await assertNoHorizontalScroll(page);
+
+    const jobId = await createParentExportViaUi(page);
+    await expect(page.getByTestId("parent-export-action-message")).toContainText("导出", {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId(`parent-export-job-${jobId}`)).toBeVisible({
+      timeout: 15_000,
+    });
+    await waitForExportReady(page, jobId, 90_000, { prefix: "parent-" });
+    await assertNoHorizontalScroll(page);
+
+    const downloadPromise = page.waitForEvent("download", { timeout: 30_000 }).catch(() => null);
+    await page.getByTestId(`parent-download-export-${jobId}`).click();
+    await expect(page.getByTestId("parent-export-action-message")).toContainText("下载", {
+      timeout: 30_000,
+    });
+    await downloadPromise;
+    await assertNoHorizontalScroll(page);
+  });
+
+  test("AC-M6-09 parent export does not leak unrelated student data", async ({ page }) => {
+    const fixture = loadE2eFixture();
+    const suffix = Date.now().toString(36);
+
+    await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
+    const unrelatedStudentId = crypto.randomUUID();
+    await page.goto(`/parent/students/${unrelatedStudentId}/export`);
+    await expect(page.getByTestId("parent-export-jobs-empty")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId(`parent-export-job-${unrelatedStudentId}`)).toHaveCount(0);
+    await expect(page.getByText(suffix)).not.toBeVisible();
+    await assertNoHorizontalScroll(page);
+
+    // Creating an export for an unrelated student fails with explicit feedback.
+    await page.getByTestId("parent-create-export-button").click();
+    await expect(page.getByTestId("parent-export-error")).toBeVisible({ timeout: 15_000 });
+  });
+
   test("AC-M6-09 unauthorized parent does not leak student redemption access", async ({ page }) => {
     const fixture = loadE2eFixture();
     const suffix = Date.now().toString(36);
@@ -199,10 +260,8 @@ test.describe("M6 lifecycle flow", () => {
     });
     await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
 
-    // Create path revokes sessions; re-login then cancel via UI.
-    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
-    await page.goto("/student/account-deletion");
-    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+    // Create path revokes sessions; re-authenticate via narrow deletion capability.
+    await reauthDeletionViaUi(page, throwaway.username, throwawayPassword);
     await page.getByTestId("cancel-deletion-button").click();
     await expect(page.getByTestId("deletion-action-message")).toContainText("撤销", {
       timeout: 15_000,
@@ -226,9 +285,7 @@ test.describe("M6 lifecycle flow", () => {
     await page.getByTestId("submit-deletion-request-button").click();
     await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
 
-    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
-    await page.goto("/student/account-deletion");
-    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+    await reauthDeletionViaUi(page, throwaway.username, throwawayPassword);
     await page.getByTestId("open-confirm-deletion-button").click();
     await expect(page.getByTestId("deletion-danger-text")).toBeVisible();
     await page.getByTestId("deletion-execute-ack").check();
@@ -239,7 +296,10 @@ test.describe("M6 lifecycle flow", () => {
     await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 frozen throwaway blocks student export UI", async ({ page, request }) => {
+  test("AC-M6-09 frozen throwaway cannot access ordinary student export UI", async ({
+    page,
+    request,
+  }) => {
     const fixture = loadE2eFixture();
     await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
     const throwaway = await createThrowawayStudentViaApi(request);
@@ -252,10 +312,19 @@ test.describe("M6 lifecycle flow", () => {
     await page.getByTestId("submit-deletion-request-button").click();
     await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
 
-    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
+    // No generic session exists after freeze: ordinary pages redirect to login.
     await page.goto("/student/export");
-    await page.getByTestId("create-export-button").click();
-    await expect(page.getByTestId("export-error")).toBeVisible({ timeout: 15_000 });
+    await page.waitForURL((url) => url.pathname.includes("/login"), { timeout: 20_000 });
+    await expect(page.getByTestId("create-export-button")).not.toBeVisible();
+
+    // Normal login is also fail-closed while frozen.
+    await page.goto("/login");
+    await fillField(page, "login-identifier", throwaway.username);
+    await fillField(page, "login-password", throwawayPassword);
+    await page.getByRole("textbox", { name: "密码" }).press("Enter");
+    await expect(page.getByText("Account is frozen for deletion")).toBeVisible({
+      timeout: 15_000,
+    });
     await assertNoHorizontalScroll(page);
   });
 });

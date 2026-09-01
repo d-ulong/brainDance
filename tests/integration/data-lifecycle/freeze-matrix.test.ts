@@ -1,11 +1,14 @@
 import { config } from "dotenv";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { users } from "@/db/schema";
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { DELETION_TARGET_TYPE } from "@/modules/data-lifecycle/constants";
 import { createDeletionRequest } from "@/modules/data-lifecycle/deletion-request.service";
 import { endRelationship } from "@/modules/family-access/end-relationship.service";
 import { login, validateSession } from "@/modules/identity/login.service";
+import { createLucia } from "@/lib/lucia";
 import { listCatalogItems } from "@/modules/redemption/catalog.service";
 import { listRedemptions } from "@/modules/redemption/redemption.service";
 import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
@@ -302,7 +305,7 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
     ).rejects.toSatisfy(expectFrozen);
   });
 
-  it("F04: frozen student may re-login for deletion management; ordinary writes stay blocked", async () => {
+  it("F02: frozen student cannot re-login or validate a generic session", async () => {
     const student = await seedStudentUser(db, {
       username: `matrix_login_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -310,24 +313,70 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
 
     await freezeStudent(student.studentId);
 
-    const reLogin = await login(db, {
+    // Normal login is fail-closed for frozen students (no generic session).
+    await expect(
+      login(db, {
+        identifier: student.username,
+        password: student.password,
+        idempotencyKey: "login-after-freeze",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // Even a session crafted AFTER the freeze (with the current authorization
+    // epoch) fails validation while frozen.
+    const [user] = await db.select().from(users).where(eq(users.id, student.studentId)).limit(1);
+    const lucia = createLucia(db);
+    const crafted = await lucia.createSession(student.studentId, {
+      authorizationEpoch: user!.authorizationEpoch,
+    });
+    const session = await validateSession(db, crafted.id);
+    expect(session).toBeNull();
+  });
+
+  it("F02: narrow deletion capability allows cancel but grants no ordinary access", async () => {
+    const student = await seedStudentUser(db, {
+      username: `matrix_cap_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const created = await createDeletionRequest(db, {
+      targetType: DELETION_TARGET_TYPE.STUDENT_ACCOUNT,
+      targetId: student.studentId,
+      requestedBy: student.studentId,
+      requesterRole: "student",
+      idempotencyKey: "capability-freeze",
+      artifactStore,
+    });
+
+    const { issueDeletionCapability } =
+      await import("@/modules/data-lifecycle/deletion-capability.service");
+    const issued = await issueDeletionCapability(db, {
       identifier: student.username,
       password: student.password,
-      idempotencyKey: "login-after-freeze",
+      requestId: created.requestId,
     });
-    expect(reLogin.sessionId).toBeTruthy();
-    const session = await validateSession(db, reLogin.sessionId);
-    expect(session?.user.id).toBe(student.studentId);
+    expect(issued.capabilityToken).toBeTruthy();
 
+    // The capability cancels the request (account becomes accessible again).
+    const { cancelDeletionRequest } =
+      await import("@/modules/data-lifecycle/deletion-request.service");
+    const cancelled = await cancelDeletionRequest(db, {
+      requestId: created.requestId,
+      capabilityToken: issued.capabilityToken,
+      idempotencyKey: "capability-cancel",
+    });
+    expect(cancelled.status).toBe("cancelled");
+
+    // After cancel, the account is no longer frozen and ordinary writes work again.
     await expect(
       upsertDailyReflection(db, {
         studentId: student.studentId,
         familyDate: toFamilyDate(),
         visibility: "normal",
-        body: "blocked while frozen after re-login",
-        idempotencyKey: "write-after-frozen-relogin",
+        body: "allowed after capability cancel",
+        idempotencyKey: "allowed-after-capability-cancel",
       }),
-    ).rejects.toSatisfy(expectFrozen);
+    ).resolves.toBeDefined();
   });
 
   it("F04: freeze blocks training trends read", async () => {

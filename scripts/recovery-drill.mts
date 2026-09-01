@@ -67,7 +67,6 @@ async function main() {
   const artifactRoot = path.join(tempDir, "artifacts");
   await mkdir(artifactRoot, { recursive: true });
   const artifactStore = createFilesystemArtifactStore(artifactRoot);
-
   const isolated = await openIsolatedM2Database({
     dbName: `bd_synth_recovery_${Date.now().toString(36)}`,
   });
@@ -78,6 +77,8 @@ async function main() {
   const backupDbName = `${isolated.dbName}_bak`;
   let backupMs = 0;
   let restoreMs = 0;
+  let rtoStarted = 0;
+  let canaryStarted = 0;
 
   try {
     const familyDate = toFamilyDate();
@@ -231,6 +232,9 @@ async function main() {
 
     await client.end({ timeout: 5 });
 
+    // RTO starts at the recovery/restore start point (F05): fixture preparation and
+    // backup creation are intentionally excluded.
+    rtoStarted = performance.now();
     const restoreStarted = performance.now();
     const adminForRestore = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
     try {
@@ -279,6 +283,9 @@ async function main() {
     await rebuildProjection(db);
     const rebuildMs = performance.now() - rebuildStarted;
     steps.push({ step: "rebuild_projection", ok: true, detail: `ms=${rebuildMs.toFixed(1)}` });
+
+    // Canary phase starts once the projection is rebuilt (included in RTO).
+    canaryStarted = performance.now();
 
     let bodyBlocked = false;
     try {
@@ -391,6 +398,8 @@ async function main() {
     });
 
     const totalMs = performance.now() - drillStarted;
+    const canaryMs = canaryStarted ? performance.now() - canaryStarted : 0;
+    const totalRtoMs = rtoStarted ? performance.now() - rtoStarted : 0;
     const failed = steps.filter((s) => !s.ok);
     const report = {
       databaseName: isolated.dbName,
@@ -409,13 +418,19 @@ async function main() {
           "Age of the intentional post-backup write lost after restore, relative to the recovery-point watermark",
       },
       rto: {
-        backupMs,
+        rtoStartedAt: rtoStarted
+          ? new Date(rtoStarted + performance.timeOrigin).toISOString()
+          : null,
+        meaning:
+          "Elapsed from the restore start point through restore, tombstone/revocation replay, projection rebuild and canary; fixture preparation and backup creation are excluded (F05)",
         restoreMs,
         replayMs,
         rebuildMs,
-        totalRtoMs: totalMs,
+        canaryMs,
+        totalRtoMs,
         unit: "ms",
       },
+      totalDrillMs: totalMs,
       steps,
       passed: failed.length === 0,
     };

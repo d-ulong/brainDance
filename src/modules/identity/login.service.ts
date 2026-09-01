@@ -39,7 +39,7 @@ export type LogoutInput = {
   requestId?: string;
 };
 
-async function findUserByIdentifier(db: Database, identifier: string) {
+export async function findUserByIdentifier(db: Database, identifier: string) {
   const normalized = normalizeAccountKey(identifier);
   const [byEmail] = await db.select().from(users).where(eq(users.email, normalized)).limit(1);
   if (byEmail) return byEmail;
@@ -133,9 +133,6 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     throw new IdentityError("FORBIDDEN", "Account is disabled");
   }
 
-  // Frozen students may re-authenticate so they can cancel or confirm deletion.
-  // Ordinary business reads/writes remain fail-closed via freeze guards.
-
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
     throw new IdentityError("ACCOUNT_LOCKED", "Account is temporarily locked");
   }
@@ -177,6 +174,18 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     }
 
     throw new IdentityError("INVALID_CREDENTIALS", "Invalid credentials");
+  }
+
+  // Frozen students must not obtain a generic session (P2 freeze contract).
+  // They re-authenticate through the narrow deletion-management capability flow.
+  // Verified only after the password matches to avoid account-state enumeration.
+  if (user.role === "student") {
+    const { findActiveStudentAccountFreeze } =
+      await import("@/modules/data-lifecycle/freeze-guard.service");
+    const freeze = await findActiveStudentAccountFreeze(db, user.id);
+    if (freeze) {
+      throw new IdentityError("FORBIDDEN", "Account is frozen for deletion");
+    }
   }
 
   if (user.status === "locked") {
@@ -254,9 +263,18 @@ export async function validateSession(db: Database, sessionId: string) {
     return null;
   }
 
-  // Account freeze revokes sessions and bumps authorizationEpoch at request time.
-  // Surviving sessions are not killed here so deletion cancel/confirm Routes remain usable
-  // after an intentional re-login; module freeze guards still block ordinary access.
+  // Fail-closed for frozen students (P2 freeze contract): no generic session may
+  // validate while an account deletion freeze is active. Deletion cancel/confirm
+  // use the narrow deletion-management capability instead of a session.
+  if (result.user.role === "student") {
+    const { findActiveStudentAccountFreeze } =
+      await import("@/modules/data-lifecycle/freeze-guard.service");
+    const freeze = await findActiveStudentAccountFreeze(db, result.user.id);
+    if (freeze) {
+      await lucia.invalidateSession(sessionId);
+      return null;
+    }
+  }
 
   return result;
 }

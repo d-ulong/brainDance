@@ -68,14 +68,23 @@ export function loadFixtureWithCatalog() {
   return fixture;
 }
 
-/** Click create-export and return the jobId from the create API response. */
+/** Click the student create-export button and return the jobId from the API response. */
 export async function createExportViaUi(page: Page): Promise<string> {
+  return createExportViaButton(page, "create-export-button");
+}
+
+/** Click the parent create-export button and return the jobId from the API response. */
+export async function createParentExportViaUi(page: Page): Promise<string> {
+  return createExportViaButton(page, "parent-create-export-button");
+}
+
+async function createExportViaButton(page: Page, buttonTestId: string): Promise<string> {
   const createResponsePromise = page.waitForResponse((res) => {
     if (res.request().method() !== "POST") return false;
     const url = res.url();
     return url.includes("/api/export-jobs") && !url.includes("/download");
   });
-  await page.getByTestId("create-export-button").click();
+  await page.getByTestId(buttonTestId).click();
   const createResponse = await createResponsePromise;
   expect(createResponse.ok(), await createResponse.text()).toBeTruthy();
   const body = (await createResponse.json()) as { jobId: string };
@@ -83,13 +92,19 @@ export async function createExportViaUi(page: Page): Promise<string> {
   return body.jobId;
 }
 
-export async function waitForExportReady(page: Page, jobId: string, timeoutMs = 60_000) {
-  const status = page.getByTestId(`export-status-${jobId}`);
+export async function waitForExportReady(
+  page: Page,
+  jobId: string,
+  timeoutMs = 60_000,
+  options?: { prefix?: string },
+) {
+  const prefix = options?.prefix ?? "";
+  const status = page.getByTestId(`${prefix}export-status-${jobId}`);
   await expect(status).toBeVisible({ timeout: 15_000 });
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const download = page.getByTestId(`download-export-${jobId}`);
+    const download = page.getByTestId(`${prefix}download-export-${jobId}`);
     if (await download.isVisible().catch(() => false)) {
       return;
     }
@@ -97,14 +112,16 @@ export async function waitForExportReady(page: Page, jobId: string, timeoutMs = 
     if (text.includes("失败") || text.includes("已撤销") || text.includes("已过期")) {
       throw new Error(`Export job ${jobId} ended in terminal state: ${text}`);
     }
-    const refresh = page.getByTestId(`refresh-export-${jobId}`);
+    const refresh = page.getByTestId(`${prefix}refresh-export-${jobId}`);
     if (await refresh.isVisible().catch(() => false)) {
       await refresh.click();
     }
     await page.waitForTimeout(1_500);
   }
 
-  await expect(page.getByTestId(`download-export-${jobId}`)).toBeVisible({ timeout: 1_000 });
+  await expect(page.getByTestId(`${prefix}download-export-${jobId}`)).toBeVisible({
+    timeout: 1_000,
+  });
 }
 
 export async function loginThrowawayStudentViaUi(
@@ -126,4 +143,18 @@ export async function loginThrowawayStudentViaUi(
       timeout: 20_000,
     });
   }
+}
+
+/**
+ * Frozen students cannot obtain a generic session (F02). They re-authenticate
+ * through the narrow deletion-management capability panel on the account-deletion
+ * page, which then reveals cancel/confirm actions.
+ */
+export async function reauthDeletionViaUi(page: Page, identifier: string, password: string) {
+  await page.goto("/student/account-deletion");
+  await expect(page.getByTestId("deletion-reauth-panel")).toBeVisible({ timeout: 15_000 });
+  await fillField(page, "deletion-reauth-identifier", identifier);
+  await fillField(page, "deletion-reauth-password", password);
+  await page.getByTestId("submit-deletion-reauth-button").click();
+  await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 20_000 });
 }

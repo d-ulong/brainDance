@@ -9,6 +9,7 @@ import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import {
   createExportJob,
   deliverExportDownload,
+  issueExportDownloadToken,
   processExportJob,
 } from "@/modules/data-lifecycle/export-job.service";
 import {
@@ -28,13 +29,7 @@ import {
   seedPrivateReflection,
   seedSharedReflection,
 } from "../../helpers/data-lifecycle";
-import {
-  closeTestDb,
-  getTestDb,
-  migrateTestDb,
-  resetIdentityTables,
-  type TestDb,
-} from "../../helpers/db";
+import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -102,16 +97,19 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       idempotencyKey: "export-parent-1",
     });
 
-    const processed = await processExportJob(db, {
+    await processExportJob(db, {
       jobId: created.jobId,
       artifactStore,
     });
 
-    expect(processed.downloadTokenPlaintext).toBeTruthy();
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: parentId, actorRole: "parent" },
+    });
 
     const delivered = await deliverExportDownload(db, {
       jobId: created.jobId,
-      tokenPlaintext: processed.downloadTokenPlaintext!,
+      tokenPlaintext: issued.token,
       artifactStore,
       actor: { actorId: parentId, actorRole: "parent" },
     });
@@ -152,10 +150,14 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       idempotencyKey: "revoke-grant-1",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: parentId, actorRole: "parent" },
+    });
     const delivered = await deliverExportDownload(db, {
       jobId: created.jobId,
-      tokenPlaintext: processed.downloadTokenPlaintext!,
+      tokenPlaintext: issued.token,
       artifactStore,
       actor: { actorId: parentId, actorRole: "parent" },
     });
@@ -178,12 +180,17 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       idempotencyKey: "export-token-hash",
     });
 
-    const processed = await processExportJob(db, {
+    await processExportJob(db, {
       jobId: created.jobId,
       artifactStore,
     });
 
-    const token = processed.downloadTokenPlaintext!;
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: student.studentId, actorRole: "student" },
+    });
+
+    const token = issued.token;
     const [job] = await db
       .select()
       .from(exportJobs)
@@ -192,11 +199,16 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
 
     expect(job!.downloadTokenHash).toBe(hashDownloadToken(token));
     expect(job!.downloadTokenHash).not.toBe(token);
+    // The plaintext token is never persisted on the job row.
+    expect(JSON.stringify(job)).not.toContain(token);
 
     const audits = await db.select().from(auditEvents);
     for (const audit of audits) {
       expect(JSON.stringify(audit)).not.toContain(token);
     }
+
+    // No token plaintext is stored under any artifact-store key (F01 no-plaintext).
+    expect(artifactStore.has(`export/${created.jobId}.download-token`)).toBe(false);
   });
 
   it("AC-M6-04: concurrent download consumes token once", async () => {
@@ -212,8 +224,12 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       idempotencyKey: "export-concurrent-dl",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
-    const token = processed.downloadTokenPlaintext!;
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: student.studentId, actorRole: "student" },
+    });
+    const token = issued.token;
 
     const first = deliverExportDownload(db, {
       jobId: created.jobId,
@@ -274,7 +290,11 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
       idempotencyKey: "export-before-freeze",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: student.studentId, actorRole: "student" },
+    });
 
     await createDeletionRequest(db, {
       targetType: DELETION_TARGET_TYPE.STUDENT_ACCOUNT,
@@ -288,7 +308,7 @@ describe.skipIf(!hasDb)("M6 P2 export lifecycle", () => {
     await expect(
       deliverExportDownload(db, {
         jobId: created.jobId,
-        tokenPlaintext: processed.downloadTokenPlaintext!,
+        tokenPlaintext: issued.token,
         artifactStore,
         actor: { actorId: student.studentId, actorRole: "student" },
       }),

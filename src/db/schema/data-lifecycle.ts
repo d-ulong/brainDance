@@ -134,3 +134,24 @@ export const deletionExecutionSteps = pgTable(
     ),
   ],
 );
+
+export const deletionCapabilities = pgTable(
+  "deletion_capabilities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    deletionRequestId: uuid("deletion_request_id")
+      .notNull()
+      .references(() => deletionRequests.id),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => users.id),
+    tokenHash: text("token_hash").notNull(),
+    scope: text("scope").notNull().default("deletion.manage"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("deletion_capabilities_scope_check", sql`${table.scope} IN ('deletion.manage')`),
+    unique("deletion_capabilities_token_hash_unique").on(table.tokenHash),
+  ],
+);

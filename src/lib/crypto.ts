@@ -34,6 +34,16 @@ export function hashDownloadToken(plaintext: string): string {
   return createHmac("sha256", getSecretPepper()).update(`download:${plaintext}`).digest("hex");
 }
 
+export function generateDeletionCapabilityToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashDeletionCapabilityToken(plaintext: string): string {
+  return createHmac("sha256", getSecretPepper())
+    .update(`deletion-capability:${plaintext}`)
+    .digest("hex");
+}
+
 export function generateOtpPlaintext(): string {
   return randomInt(100_000, 1_000_000).toString();
 }

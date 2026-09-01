@@ -9,7 +9,7 @@ import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 
 export type PrivateArtifactStore = {
   put(key: string, content: Buffer): Promise<void>;
-  /** Non-consuming read for authorized delivery envelopes (e.g. download tokens). */
+  /** Non-consuming read for authorized delivery envelopes. */
   read(key: string): Promise<Buffer | null>;
   openOnce(key: string): Promise<Buffer | null>;
   revoke(key: string): Promise<void>;

@@ -3,7 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  Alert,
+  Field,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  TextInput,
+} from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   cancelDeletionRequest,
@@ -11,6 +18,7 @@ import {
   createDeletionRequest,
   deletionStatusLabel,
   fetchDeletionRequest,
+  issueDeletionCapability,
   type DeletionRequestDto,
 } from "@/lib/client/m6-api";
 
@@ -42,6 +50,10 @@ export default function StudentAccountDeletionPage() {
   const [showRequestConfirm, setShowRequestConfirm] = useState(false);
   const [showExecuteConfirm, setShowExecuteConfirm] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [reauthMode, setReauthMode] = useState(false);
+  const [reauthIdentifier, setReauthIdentifier] = useState("");
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [issuingCapability, setIssuingCapability] = useState(false);
 
   const loadRequest = useCallback(async (requestId: string) => {
     const result = await fetchDeletionRequest(requestId);
@@ -51,27 +63,36 @@ export default function StudentAccountDeletionPage() {
 
   useEffect(() => {
     void (async () => {
-      const session = await fetchSession();
-      if (!session || session.role !== "student") {
-        router.replace("/login");
-        return;
-      }
-      if (session.mustChangePassword) {
-        router.replace("/student/change-password");
+      const currentSession = await fetchSession();
+      if (currentSession && currentSession.role === "student") {
+        if (currentSession.mustChangePassword) {
+          router.replace("/student/change-password");
+          return;
+        }
+        setStudentId(currentSession.userId);
+        const storedRequestId = readStoredDeletionRequestId();
+        if (storedRequestId) {
+          try {
+            await loadRequest(storedRequestId);
+          } catch {
+            // Stale or unauthorized stored id; allow creating a new request.
+            clearStoredDeletionRequestId();
+          }
+        }
+        setLoading(false);
         return;
       }
 
-      setStudentId(session.userId);
+      // Frozen students have their sessions revoked. They re-authenticate through
+      // the narrow deletion-management capability (F02) — no generic session.
       const storedRequestId = readStoredDeletionRequestId();
       if (storedRequestId) {
-        try {
-          await loadRequest(storedRequestId);
-        } catch {
-          // Stale or unauthorized stored id; allow creating a new request.
-          clearStoredDeletionRequestId();
-        }
+        setReauthMode(true);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      router.replace("/login");
     })();
   }, [loadRequest, router]);
 
@@ -105,7 +126,7 @@ export default function StudentAccountDeletionPage() {
       setActionMessage(
         result.idempotentReplay
           ? "删除请求已存在（幂等回放）"
-          : "账户删除请求已提交，账户已冻结。若后续操作提示会话失效，请重新登录后继续撤销或确认。",
+          : "账户删除请求已提交，账户已冻结。返回本页可通过删除管理认证继续撤销或确认。",
       );
       setShowRequestConfirm(false);
       try {
@@ -117,6 +138,35 @@ export default function StudentAccountDeletionPage() {
       setError(err instanceof ApiError ? err.message : "提交删除请求失败");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onIssueCapability() {
+    const storedRequestId = readStoredDeletionRequestId();
+    if (!storedRequestId) {
+      setError("未找到删除请求，请重新发起");
+      return;
+    }
+    if (!reauthIdentifier || !reauthPassword) {
+      setError("请输入登录账号与密码");
+      return;
+    }
+
+    setIssuingCapability(true);
+    setActionMessage(null);
+    setError(null);
+    try {
+      await issueDeletionCapability(storedRequestId, {
+        identifier: reauthIdentifier,
+        password: reauthPassword,
+      });
+      await loadRequest(storedRequestId);
+      setActionMessage("删除管理认证通过，请在 20 分钟内完成撤销或确认");
+      setReauthMode(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "删除管理认证失败");
+    } finally {
+      setIssuingCapability(false);
     }
   }
 
@@ -173,6 +223,62 @@ export default function StudentAccountDeletionPage() {
     return (
       <PageShell title="账户删除">
         <LoadingState />
+      </PageShell>
+    );
+  }
+
+  if (reauthMode) {
+    return (
+      <PageShell title="账户删除" subtitle="账户已冻结，仅可管理删除请求" backHref="/" showLogout>
+        <Alert tone="info" data-testid="deletion-warning">
+          你的账户已进入删除冻结期，普通登录被禁用。可通过删除管理认证撤销删除或确认最终执行。
+        </Alert>
+
+        {actionMessage ? (
+          <Alert tone="success" data-testid="deletion-action-message">
+            {actionMessage}
+          </Alert>
+        ) : null}
+        {error ? (
+          <Alert tone="error" data-testid="deletion-error">
+            {error}
+          </Alert>
+        ) : null}
+
+        <section
+          className="rounded-xl border border-neutral-300 bg-white p-4"
+          data-testid="deletion-reauth-panel"
+        >
+          <h2 className="text-sm font-semibold">删除管理认证</h2>
+          <div className="mt-3 flex flex-col gap-4">
+            <Field label="账号">
+              <TextInput
+                data-testid="deletion-reauth-identifier"
+                autoComplete="username"
+                value={reauthIdentifier}
+                onChange={(e) => setReauthIdentifier(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="密码">
+              <TextInput
+                data-testid="deletion-reauth-password"
+                type="password"
+                autoComplete="current-password"
+                value={reauthPassword}
+                onChange={(e) => setReauthPassword(e.target.value)}
+                required
+              />
+            </Field>
+            <PrimaryButton
+              disabled={issuingCapability}
+              onClick={() => void onIssueCapability()}
+              data-testid="submit-deletion-reauth-button"
+            >
+              {issuingCapability ? "认证中…" : "认证并管理删除请求"}
+            </PrimaryButton>
+          </div>
+        </section>
       </PageShell>
     );
   }

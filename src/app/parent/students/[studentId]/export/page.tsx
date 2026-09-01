@@ -11,6 +11,7 @@ import {
   exportStatusLabel,
   fetchExportJobStatus,
   fetchExportJobs,
+  issueExportDownloadToken,
   readStoredExportToken,
   storeExportToken,
   type ExportJobDto,
@@ -54,14 +55,6 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
     }
   }, [studentId]);
 
-  const syncTokenFromStatus = useCallback(async (jobId: string) => {
-    const status = await fetchExportJobStatus(jobId);
-    if (status.downloadTokenPlaintext) {
-      storeExportToken(jobId, status.downloadTokenPlaintext);
-    }
-    return status;
-  }, []);
-
   const startPolling = useCallback(
     (jobId: string) => {
       clearPollTimer();
@@ -69,7 +62,7 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
       pollTimerRef.current = setInterval(() => {
         void (async () => {
           try {
-            const status = await syncTokenFromStatus(jobId);
+            const status = await fetchExportJobStatus(jobId);
             await loadJobs();
             if (status.status === "ready") {
               setActionMessage("导出文件已就绪，可下载（令牌 24 小时内有效，仅可下载一次）");
@@ -88,7 +81,7 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
         })();
       }, 1500);
     },
-    [clearPollTimer, loadJobs, syncTokenFromStatus],
+    [clearPollTimer, loadJobs],
   );
 
   useEffect(() => {
@@ -156,15 +149,13 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
     let token = readStoredExportToken(jobId);
     if (!token) {
       try {
-        const status = await syncTokenFromStatus(jobId);
-        token = status.downloadTokenPlaintext ?? null;
-      } catch {
-        // fall through
+        const issued = await issueExportDownloadToken(jobId);
+        storeExportToken(jobId, issued.token);
+        token = issued.token;
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "获取下载令牌失败");
+        return;
       }
-    }
-    if (!token) {
-      setError("下载令牌不可用，请等待导出完成或重新创建导出任务");
-      return;
     }
 
     setDownloadingId(jobId);

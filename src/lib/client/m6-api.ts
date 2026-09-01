@@ -44,7 +44,6 @@ export type ExportJobStatusDto = {
   readyAt: string | null;
   expiresAt: string | null;
   consumedAt: string | null;
-  downloadTokenPlaintext?: string;
 };
 
 export type DeletionRequestDto = {
@@ -198,6 +197,16 @@ export async function fetchExportJobStatus(jobId: string) {
   return apiFetch<ExportJobStatusDto>(`/api/export-jobs/${jobId}/download`);
 }
 
+export async function issueExportDownloadToken(jobId: string): Promise<{
+  token: string;
+  expiresAt: string;
+}> {
+  return apiWriteWithIdempotency<{ token: string; expiresAt: string }>(
+    `/api/export-jobs/${jobId}/token`,
+    { method: "POST", idempotencyKeyPrefix: "issue-export-token" },
+  );
+}
+
 export async function downloadExportArtifact(jobId: string, token: string): Promise<ArrayBuffer> {
   const response = await fetch(`/api/export-jobs/${jobId}/download`, {
     method: "POST",
@@ -256,6 +265,16 @@ export async function confirmDeletionRequest(requestId: string) {
     method: "POST",
     idempotencyKeyPrefix: "confirm-deletion",
   });
+}
+
+export async function issueDeletionCapability(
+  requestId: string,
+  body: { identifier: string; password: string },
+): Promise<{ expiresAt: string }> {
+  return apiWriteWithIdempotency<{ expiresAt: string }>(
+    `/api/deletion-requests/${requestId}/capability`,
+    { method: "POST", idempotencyKeyPrefix: "issue-deletion-capability", body },
+  );
 }
 
 export function exportTokenStorageKey(jobId: string): string {

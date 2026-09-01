@@ -8,6 +8,7 @@ import { configureM6OutboxArtifactStore } from "@/modules/data-lifecycle/m6-outb
 import {
   createExportJob,
   getExportJobStatusForActor,
+  issueExportDownloadToken,
 } from "@/modules/data-lifecycle/export-job.service";
 import { createMemoryArtifactStore } from "@/modules/data-lifecycle/private-artifact-store";
 import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
@@ -56,7 +57,7 @@ describe.skipIf(!hasDb)("m6 export worker boundary", () => {
     expect(existsSync(routePath)).toBe(false);
   });
 
-  it("C01: worker processes export.requested and status can reveal download token", async () => {
+  it("C01: worker processes export.requested and status never reveals a token", async () => {
     const { studentId } = await bootstrapParentStudentRelationship(db);
     const created = await createExportJob(db, {
       requesterId: studentId,
@@ -72,14 +73,13 @@ describe.skipIf(!hasDb)("m6 export worker boundary", () => {
         workerId: `c01-worker-${Date.now()}-${i}`,
       });
 
-      const status = await getExportJobStatusForActor(
-        db,
-        created.jobId,
-        { actorId: studentId, actorRole: "student" },
-        { artifactStore },
-      );
+      const status = await getExportJobStatusForActor(db, created.jobId, {
+        actorId: studentId,
+        actorRole: "student",
+      });
       if (status.status === "ready") {
-        expect(status.downloadTokenPlaintext).toBeTruthy();
+        // The status payload must not contain any token plaintext (F01).
+        expect(status).not.toHaveProperty("downloadTokenPlaintext");
         ready = true;
         break;
       }
@@ -90,5 +90,13 @@ describe.skipIf(!hasDb)("m6 export worker boundary", () => {
     }
 
     expect(ready).toBe(true);
+
+    // The token is obtained only through the authorization-gated issuance command.
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: studentId, actorRole: "student" },
+    });
+    expect(issued.token).toBeTruthy();
+    expect(issued.expiresAt.getTime()).toBeGreaterThan(Date.now());
   });
 });

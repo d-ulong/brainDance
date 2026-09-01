@@ -27,6 +27,7 @@ import {
   createExportJob,
   deliverExportDownload,
   getExportJobStatusForActor,
+  issueExportDownloadToken,
   processExportJob,
 } from "@/modules/data-lifecycle/export-job.service";
 import {
@@ -165,12 +166,16 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c02-export-dl",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: student.studentId, actorRole: "student" },
+    });
 
     await expect(
       deliverExportDownload(db, {
         jobId: created.jobId,
-        tokenPlaintext: processed.downloadTokenPlaintext!,
+        tokenPlaintext: issued.token,
         artifactStore,
         actor: { actorId: other.studentId, actorRole: "student" },
       }),
@@ -314,10 +319,14 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c03-export-content",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: studentId, actorRole: "student" },
+    });
     const delivered = await deliverExportDownload(db, {
       jobId: created.jobId,
-      tokenPlaintext: processed.downloadTokenPlaintext!,
+      tokenPlaintext: issued.token,
       artifactStore,
       actor: { actorId: studentId, actorRole: "student" },
     });
@@ -382,10 +391,14 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c03-parent-export",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: parentId, actorRole: "parent" },
+    });
     const delivered = await deliverExportDownload(db, {
       jobId: created.jobId,
-      tokenPlaintext: processed.downloadTokenPlaintext!,
+      tokenPlaintext: issued.token,
       artifactStore,
       actor: { actorId: parentId, actorRole: "parent" },
     });
@@ -584,7 +597,7 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
     expect(mid!.downloadTokenHash).toBeNull();
 
     const result = await processingPromise;
-    expect(result.downloadTokenPlaintext).toBeTruthy();
+    expect(result.status).toBe("ready");
 
     const [final] = await db
       .select()
@@ -592,10 +605,11 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       .where(eq(exportJobs.id, created.jobId))
       .limit(1);
     expect(final!.status).toBe("ready");
-    expect(final!.downloadTokenHash).toBeTruthy();
+    // Worker only prepares the artifact; the token is issued on demand (F01).
+    expect(final!.downloadTokenHash).toBeNull();
   });
 
-  it("C06: concurrent export worker claims produce one ready artifact and token", async () => {
+  it("C06: concurrent export worker claims produce one ready artifact", async () => {
     const student = await seedStudentUser(db, {
       username: `c06_worker_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -633,7 +647,8 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
         .limit(1);
 
       expect(job!.status).toBe("ready");
-      expect(job!.downloadTokenHash).toBeTruthy();
+      // No plaintext token is written during processing; hash appears only on issuance.
+      expect(job!.downloadTokenHash).toBeNull();
       expect(store.has(`export/${created.jobId}`)).toBe(true);
     } finally {
       await connA.close();
@@ -709,8 +724,12 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c06-concurrent-dl",
     });
 
-    const processed = await processExportJob(db, { jobId: created.jobId, artifactStore });
-    const token = processed.downloadTokenPlaintext!;
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const issued = await issueExportDownloadToken(db, {
+      jobId: created.jobId,
+      actor: { actorId: student.studentId, actorRole: "student" },
+    });
+    const token = issued.token;
 
     const results = await Promise.allSettled([
       deliverExportDownload(db, {

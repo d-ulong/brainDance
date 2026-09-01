@@ -316,7 +316,8 @@ export async function createDeletionRequest(
 
 export type CancelDeletionRequestInput = {
   requestId: string;
-  actorId: string;
+  actorId?: string;
+  capabilityToken?: string;
   idempotencyKey: string;
   requestIdHeader?: string;
 };
@@ -340,7 +341,22 @@ export async function cancelDeletionRequest(
       throw new DataLifecycleError("NOT_FOUND", "Deletion request not found");
     }
 
-    if (request.requestedBy !== input.actorId && request.studentId !== input.actorId) {
+    let effectiveActorId = input.actorId;
+    if (input.capabilityToken) {
+      const { findValidDeletionCapability } =
+        await import("@/modules/data-lifecycle/deletion-capability.service");
+      const capability = await findValidDeletionCapability(tx, request.id, input.capabilityToken);
+      if (!capability) {
+        throw new DataLifecycleError("FORBIDDEN", "Invalid deletion capability");
+      }
+      effectiveActorId = capability.studentId;
+    }
+
+    if (!effectiveActorId) {
+      throw new DataLifecycleError("FORBIDDEN", "Not authorized to cancel deletion request");
+    }
+
+    if (request.requestedBy !== effectiveActorId && request.studentId !== effectiveActorId) {
       throw new DataLifecycleError("FORBIDDEN", "Not authorized to cancel deletion request");
     }
 
@@ -364,7 +380,7 @@ export async function cancelDeletionRequest(
       .where(eq(deletionRequests.id, request.id));
 
     await appendAuditEvent(tx, {
-      actorId: input.actorId,
+      actorId: effectiveActorId,
       action: "deletion.cancel",
       resourceType: "deletion_request",
       resourceId: request.id,
@@ -379,7 +395,8 @@ export async function cancelDeletionRequest(
 
 export type ConfirmDeletionRequestInput = {
   requestId: string;
-  studentId: string;
+  studentId?: string;
+  capabilityToken?: string;
   idempotencyKey: string;
   requestIdHeader?: string;
 };
@@ -403,7 +420,22 @@ export async function confirmDeletionRequest(
       throw new DataLifecycleError("NOT_FOUND", "Deletion request not found");
     }
 
-    if (request.studentId !== input.studentId) {
+    let effectiveStudentId = input.studentId;
+    if (input.capabilityToken) {
+      const { findValidDeletionCapability } =
+        await import("@/modules/data-lifecycle/deletion-capability.service");
+      const capability = await findValidDeletionCapability(tx, request.id, input.capabilityToken);
+      if (!capability) {
+        throw new DataLifecycleError("FORBIDDEN", "Invalid deletion capability");
+      }
+      effectiveStudentId = capability.studentId;
+    }
+
+    if (!effectiveStudentId) {
+      throw new DataLifecycleError("FORBIDDEN", "Student confirmation required from account owner");
+    }
+
+    if (request.studentId !== effectiveStudentId) {
       throw new DataLifecycleError("FORBIDDEN", "Student confirmation required from account owner");
     }
 
@@ -430,7 +462,7 @@ export async function confirmDeletionRequest(
       .where(eq(deletionRequests.id, request.id));
 
     await appendAuditEvent(tx, {
-      actorId: input.studentId,
+      actorId: effectiveStudentId,
       action: "deletion.confirm",
       resourceType: "deletion_request",
       resourceId: request.id,

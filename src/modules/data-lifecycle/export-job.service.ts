@@ -51,7 +51,6 @@ export type ExportJobDto = {
   expiresAt: Date | null;
   consumedAt: Date | null;
   createdAt: Date;
-  downloadTokenPlaintext?: string;
 };
 
 export type ExportJobActor = {
@@ -80,16 +79,8 @@ function exportArtifactStagingKey(jobId: string): string {
   return `${exportArtifactKey(jobId)}.staging`;
 }
 
-export function exportDownloadTokenDeliveryKey(jobId: string): string {
-  return `export/${jobId}.download-token`;
-}
-
 export function exportArtifactRelatedKeys(jobId: string, artifactKey?: string | null): string[] {
-  const keys = [
-    exportArtifactKey(jobId),
-    exportArtifactStagingKey(jobId),
-    exportDownloadTokenDeliveryKey(jobId),
-  ];
+  const keys = [exportArtifactKey(jobId), exportArtifactStagingKey(jobId)];
   if (artifactKey && !keys.includes(artifactKey)) {
     keys.push(artifactKey);
     keys.push(`${artifactKey}.staging`);
@@ -281,9 +272,6 @@ export async function getExportJobStatusForActor(
   db: Database,
   jobId: string,
   actor: ExportJobActor,
-  options?: {
-    artifactStore?: import("@/modules/data-lifecycle/private-artifact-store").PrivateArtifactStore;
-  },
 ): Promise<ExportJobDto> {
   const job = await getExportJob(db, jobId);
   if (!job) {
@@ -291,21 +279,7 @@ export async function getExportJobStatusForActor(
   }
 
   assertExportJobActorCanAccess(job, actor);
-  const dto = toExportJobDto(job);
-
-  if (
-    options?.artifactStore &&
-    job.status === EXPORT_JOB_STATUS.READY &&
-    !job.consumedAt &&
-    !(job.expiresAt && job.expiresAt.getTime() <= Date.now())
-  ) {
-    const tokenBuffer = await options.artifactStore.read(exportDownloadTokenDeliveryKey(job.id));
-    if (tokenBuffer) {
-      dto.downloadTokenPlaintext = tokenBuffer.toString("utf8");
-    }
-  }
-
-  return dto;
+  return toExportJobDto(job);
 }
 
 export type ProcessExportJobInput = {
@@ -317,7 +291,6 @@ export type ProcessExportJobInput = {
 export type ProcessExportJobResult = {
   jobId: string;
   status: string;
-  downloadTokenPlaintext?: string;
   idempotentReplay: boolean;
 };
 
@@ -515,7 +488,6 @@ export async function processExportJob(
   type PreparedWork = {
     jobId: string;
     status: string;
-    downloadTokenPlaintext?: string;
     idempotentReplay: boolean;
     artifactKey?: string;
     artifactBuffer?: Buffer;
@@ -530,7 +502,7 @@ export async function processExportJob(
       throw new DataLifecycleError("NOT_FOUND", "Export job not found");
     }
 
-    if (job.status === EXPORT_JOB_STATUS.READY && job.downloadTokenHash) {
+    if (job.status === EXPORT_JOB_STATUS.READY) {
       return {
         jobId: job.id,
         status: job.status,
@@ -567,12 +539,10 @@ export async function processExportJob(
     const content = await buildExportArtifactContent(tx, scope, job.requesterId);
     const artifactKey = exportArtifactKey(job.id);
     const artifactBuffer = Buffer.from(JSON.stringify(content), "utf8");
-    const downloadTokenPlaintext = generateDownloadTokenPlaintext();
 
     return {
       jobId: job.id,
       status: EXPORT_JOB_STATUS.PROCESSING,
-      downloadTokenPlaintext,
       idempotentReplay: false,
       artifactKey,
       artifactBuffer,
@@ -608,7 +578,7 @@ export async function processExportJob(
         throw new DataLifecycleError("NOT_FOUND", "Export job not found");
       }
 
-      if (job.status === EXPORT_JOB_STATUS.READY && job.downloadTokenHash) {
+      if (job.status === EXPORT_JOB_STATUS.READY) {
         return { idempotentReplay: true as const, status: job.status };
       }
 
@@ -616,16 +586,13 @@ export async function processExportJob(
         throw new DataLifecycleError("STATE_CONFLICT", "Export job finalize state conflict");
       }
 
-      const downloadTokenHash = hashDownloadToken(prepared.downloadTokenPlaintext!);
-      const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
-
       await tx
         .update(exportJobs)
         .set({
           status: EXPORT_JOB_STATUS.READY,
           artifactKey: prepared.artifactKey!,
-          downloadTokenHash,
-          expiresAt,
+          downloadTokenHash: null,
+          expiresAt: null,
           readyAt: now,
           updatedAt: now,
         })
@@ -643,27 +610,82 @@ export async function processExportJob(
       return { idempotentReplay: false as const, status: EXPORT_JOB_STATUS.READY };
     });
 
-    if (!finalized.idempotentReplay && prepared.downloadTokenPlaintext) {
-      await input.artifactStore.put(
-        exportDownloadTokenDeliveryKey(prepared.jobId),
-        Buffer.from(prepared.downloadTokenPlaintext, "utf8"),
-      );
-    }
-
     return {
       jobId: prepared.jobId,
       status: finalized.status,
-      downloadTokenPlaintext: finalized.idempotentReplay
-        ? undefined
-        : prepared.downloadTokenPlaintext,
       idempotentReplay: finalized.idempotentReplay,
     };
   } catch (error) {
     await input.artifactStore.purge(prepared.artifactKey!);
-    await input.artifactStore.purge(exportDownloadTokenDeliveryKey(prepared.jobId));
     await markExportJobFailed(db, prepared.jobId, input.artifactStore);
     throw error;
   }
+}
+
+export type IssueExportDownloadTokenInput = {
+  jobId: string;
+  actor: ExportJobActor;
+  now?: Date;
+};
+
+export type IssueExportDownloadTokenResult = {
+  token: string;
+  expiresAt: Date;
+};
+
+/**
+ * Authorization-gated download-token issuance.
+ *
+ * The plaintext token is generated and returned to the caller exactly once and is
+ * never persisted: only the HMAC hash is stored on the job row, and each issuance
+ * rotates the stored hash so a lost/failed response can be safely retried. The
+ * job must be READY with the artifact present; freeze/revocation/consumption and
+ * 24h expiry are enforced here and again at download time (second authorization).
+ */
+export async function issueExportDownloadToken(
+  db: Database,
+  input: IssueExportDownloadTokenInput,
+): Promise<IssueExportDownloadTokenResult> {
+  const now = input.now ?? new Date();
+  const token = generateDownloadTokenPlaintext();
+  const tokenHash = hashDownloadToken(token);
+  const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
+
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
+
+    const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);
+
+    if (!job) {
+      throw new DataLifecycleError("NOT_FOUND", "Export job not found");
+    }
+
+    assertExportJobActorCanAccess(job, input.actor);
+
+    const { assertExportJobAccessible } =
+      await import("@/modules/data-lifecycle/freeze-guard.service");
+    await assertExportJobAccessible(tx, job);
+
+    if (job.status !== EXPORT_JOB_STATUS.READY) {
+      throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Export artifact is not ready");
+    }
+
+    await tx
+      .update(exportJobs)
+      .set({ downloadTokenHash: tokenHash, expiresAt, updatedAt: now })
+      .where(eq(exportJobs.id, job.id));
+
+    await appendAuditEvent(tx, {
+      actorId: input.actor.actorId,
+      action: "export.token_issued",
+      resourceType: "export_job",
+      resourceId: job.id,
+      idempotencyKey: `audit:export.token_issued:${job.id}:${crypto.randomUUID()}`,
+      metadata: { studentId: job.studentId },
+    });
+  });
+
+  return { token, expiresAt };
 }
 
 export type DeliverExportDownloadInput = {
@@ -735,8 +757,6 @@ export async function deliverExportDownload(
       idempotencyKey: `audit:export.download:${job.id}`,
       metadata: { studentId: job.studentId },
     });
-
-    await input.artifactStore.purge(exportDownloadTokenDeliveryKey(job.id));
 
     return { content, consumedAt: now, idempotentReplay: false };
   });

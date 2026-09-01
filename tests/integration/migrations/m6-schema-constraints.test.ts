@@ -103,11 +103,11 @@ describe.skipIf(!hasDb)("m6 schema constraints", () => {
     await closeIsolatedM2Database(isolated);
   });
 
-  it("journal head includes 0026_m6_data_lifecycle", () => {
+  it("journal head includes 0027_m6_deletion_capabilities", () => {
     const journal = JSON.parse(
       readFileSync(path.join(process.cwd(), "src/db/migrations/meta/_journal.json"), "utf8"),
     ) as { entries: Array<{ tag: string }> };
-    expect(journal.entries.at(-1)?.tag).toBe("0026_m6_data_lifecycle");
+    expect(journal.entries.at(-1)?.tag).toBe("0027_m6_deletion_capabilities");
   });
 
   it("rejects non-positive catalog cost", async () => {
