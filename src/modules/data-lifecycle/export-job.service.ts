@@ -51,6 +51,7 @@ export type ExportJobDto = {
   expiresAt: Date | null;
   consumedAt: Date | null;
   createdAt: Date;
+  downloadTokenPlaintext?: string;
 };
 
 export type ExportJobActor = {
@@ -71,12 +72,29 @@ function assertExportJobActorCanAccess(
   }
 }
 
-function exportArtifactKey(jobId: string): string {
+export function exportArtifactKey(jobId: string): string {
   return `export/${jobId}`;
 }
 
 function exportArtifactStagingKey(jobId: string): string {
   return `${exportArtifactKey(jobId)}.staging`;
+}
+
+export function exportDownloadTokenDeliveryKey(jobId: string): string {
+  return `export/${jobId}.download-token`;
+}
+
+export function exportArtifactRelatedKeys(jobId: string, artifactKey?: string | null): string[] {
+  const keys = [
+    exportArtifactKey(jobId),
+    exportArtifactStagingKey(jobId),
+    exportDownloadTokenDeliveryKey(jobId),
+  ];
+  if (artifactKey && !keys.includes(artifactKey)) {
+    keys.push(artifactKey);
+    keys.push(`${artifactKey}.staging`);
+  }
+  return keys;
 }
 
 async function markExportJobFailed(
@@ -96,8 +114,9 @@ async function markExportJobFailed(
     })
     .where(eq(exportJobs.id, jobId));
 
-  await artifactStore.purge(exportArtifactKey(jobId));
-  await artifactStore.purge(exportArtifactStagingKey(jobId));
+  for (const key of exportArtifactRelatedKeys(jobId)) {
+    await artifactStore.purge(key);
+  }
 }
 
 function toExportJobDto(row: typeof exportJobs.$inferSelect): ExportJobDto {
@@ -262,6 +281,9 @@ export async function getExportJobStatusForActor(
   db: Database,
   jobId: string,
   actor: ExportJobActor,
+  options?: {
+    artifactStore?: import("@/modules/data-lifecycle/private-artifact-store").PrivateArtifactStore;
+  },
 ): Promise<ExportJobDto> {
   const job = await getExportJob(db, jobId);
   if (!job) {
@@ -269,7 +291,21 @@ export async function getExportJobStatusForActor(
   }
 
   assertExportJobActorCanAccess(job, actor);
-  return toExportJobDto(job);
+  const dto = toExportJobDto(job);
+
+  if (
+    options?.artifactStore &&
+    job.status === EXPORT_JOB_STATUS.READY &&
+    !job.consumedAt &&
+    !(job.expiresAt && job.expiresAt.getTime() <= Date.now())
+  ) {
+    const tokenBuffer = await options.artifactStore.read(exportDownloadTokenDeliveryKey(job.id));
+    if (tokenBuffer) {
+      dto.downloadTokenPlaintext = tokenBuffer.toString("utf8");
+    }
+  }
+
+  return dto;
 }
 
 export type ProcessExportJobInput = {
@@ -607,6 +643,13 @@ export async function processExportJob(
       return { idempotentReplay: false as const, status: EXPORT_JOB_STATUS.READY };
     });
 
+    if (!finalized.idempotentReplay && prepared.downloadTokenPlaintext) {
+      await input.artifactStore.put(
+        exportDownloadTokenDeliveryKey(prepared.jobId),
+        Buffer.from(prepared.downloadTokenPlaintext, "utf8"),
+      );
+    }
+
     return {
       jobId: prepared.jobId,
       status: finalized.status,
@@ -617,6 +660,7 @@ export async function processExportJob(
     };
   } catch (error) {
     await input.artifactStore.purge(prepared.artifactKey!);
+    await input.artifactStore.purge(exportDownloadTokenDeliveryKey(prepared.jobId));
     await markExportJobFailed(db, prepared.jobId, input.artifactStore);
     throw error;
   }
@@ -691,6 +735,8 @@ export async function deliverExportDownload(
       idempotencyKey: `audit:export.download:${job.id}`,
       metadata: { studentId: job.studentId },
     });
+
+    await input.artifactStore.purge(exportDownloadTokenDeliveryKey(job.id));
 
     return { content, consumedAt: now, idempotentReplay: false };
   });

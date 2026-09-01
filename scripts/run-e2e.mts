@@ -14,13 +14,16 @@ const sessionSecret =
   process.env.SESSION_SECRET ?? "test-session-secret-at-least-32-characters-long";
 const nextBin = path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next");
 const playwrightCli = path.join(process.cwd(), "node_modules", "@playwright", "test", "cli.js");
+const artifactRoot =
+  process.env.BRAIN_DANCE_ARTIFACT_ROOT ?? path.join(process.cwd(), ".braindance-artifacts", "e2e");
 
 const { NODE_ENV: _nodeEnv, ...processEnv } = process.env;
-const serverEnv = {
+const sharedEnv = {
   ...processEnv,
   SESSION_SECRET: sessionSecret,
   SESSION_COOKIE_SECURE: "false",
   EXPOSE_DEV_OTP: "true",
+  BRAIN_DANCE_ARTIFACT_ROOT: artifactRoot,
 } satisfies Record<string, string | undefined>;
 
 async function waitForServer(url: string, timeoutMs = 180_000): Promise<void> {
@@ -47,13 +50,34 @@ function startServer(): ChildProcess {
 
   const child = spawn(process.execPath, [nextBin, "start", "-p", port], {
     stdio: "inherit",
-    env: serverEnv as NodeJS.ProcessEnv,
+    env: sharedEnv as NodeJS.ProcessEnv,
     detached: process.platform !== "win32",
     windowsHide: true,
   });
 
   if (!child.pid) {
     throw new Error("Failed to start E2E server process");
+  }
+
+  return child;
+}
+
+function startLifecycleWorker(): ChildProcess {
+  const workerScript = path.join(process.cwd(), "scripts", "lifecycle-worker.mts");
+  const tsxCli = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+  const child = spawn(process.execPath, [tsxCli, workerScript], {
+    stdio: "inherit",
+    env: {
+      ...(sharedEnv as NodeJS.ProcessEnv),
+      LIFECYCLE_WORKER_ID: "e2e-lifecycle-worker",
+      LIFECYCLE_WORKER_IDLE_MS: "250",
+    },
+    detached: process.platform !== "win32",
+    windowsHide: true,
+  });
+
+  if (!child.pid) {
+    throw new Error("Failed to start lifecycle worker process");
   }
 
   return child;
@@ -68,6 +92,7 @@ function runPlaywright(): Promise<number> {
         E2E_SUPERVISED: "true",
         PLAYWRIGHT_PORT: port,
         PLAYWRIGHT_BASE_URL: baseURL,
+        BRAIN_DANCE_ARTIFACT_ROOT: artifactRoot,
       },
     });
 
@@ -97,21 +122,25 @@ function runPlaywright(): Promise<number> {
 
 async function main(): Promise<number> {
   let server: ChildProcess | undefined;
+  let worker: ChildProcess | undefined;
   let exitCode = 1;
 
   try {
     execSync("pnpm build", {
       stdio: "inherit",
-      env: { ...process.env, NODE_ENV: "production" },
+      env: { ...process.env, NODE_ENV: "production", BRAIN_DANCE_ARTIFACT_ROOT: artifactRoot },
     });
 
     server = startServer();
+    worker = startLifecycleWorker();
     await waitForServer(baseURL);
+    void logPortStatus;
     exitCode = await runPlaywright();
   } finally {
+    killProcessTree(worker?.pid);
     killProcessTree(server?.pid);
 
-    if (server?.pid) {
+    if (server?.pid || worker?.pid) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
 

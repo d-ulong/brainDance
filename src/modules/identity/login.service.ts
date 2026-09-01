@@ -7,7 +7,6 @@ import { normalizeAccountKey, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
 import { LOGIN_LOCK_DURATION_MS, MAX_LOGIN_FAILURES } from "@/modules/identity/constants";
 import { IdentityError } from "@/modules/identity/errors";
-import { isStudentAccountFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
 export type LoginInput = {
   identifier: string;
@@ -134,9 +133,8 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     throw new IdentityError("FORBIDDEN", "Account is disabled");
   }
 
-  if (user.role === "student" && (await isStudentAccountFrozen(db, user.id))) {
-    throw new IdentityError("FORBIDDEN", "Account is not available");
-  }
+  // Frozen students may re-authenticate so they can cancel or confirm deletion.
+  // Ordinary business reads/writes remain fail-closed via freeze guards.
 
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
     throw new IdentityError("ACCOUNT_LOCKED", "Account is temporarily locked");
@@ -256,10 +254,9 @@ export async function validateSession(db: Database, sessionId: string) {
     return null;
   }
 
-  if (result.user.role === "student" && (await isStudentAccountFrozen(db, result.user.id))) {
-    await lucia.invalidateSession(sessionId);
-    return null;
-  }
+  // Account freeze revokes sessions and bumps authorizationEpoch at request time.
+  // Surviving sessions are not killed here so deletion cancel/confirm Routes remain usable
+  // after an intentional re-login; module freeze guards still block ordinary access.
 
   return result;
 }

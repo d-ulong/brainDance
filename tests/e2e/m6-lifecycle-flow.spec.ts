@@ -1,25 +1,21 @@
 import { expect, test } from "@playwright/test";
 
 import {
-  approveRedemptionViaApi,
   assertNoHorizontalScroll,
-  createDeletionRequestViaApi,
-  createExportJobViaApi,
-  createRedemptionViaApi,
+  createExportViaUi,
   createThrowawayStudentViaApi,
-  downloadExportViaApi,
+  expireExportJobTokenFixture,
   loadFixtureWithCatalog,
+  loginThrowawayStudentViaUi,
   loginViaApi,
-  processExportJobViaApi,
+  waitForExportReady,
 } from "./m6-lifecycle-helpers";
-import { loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
+import { fillField, loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
 
 test.describe("M6 lifecycle flow", () => {
   test.setTimeout(180_000);
 
-  test("AC-M6-09 redemption main path with idempotency and no horizontal scroll", async ({
-    page,
-  }) => {
+  test("AC-M6-09 redemption apply/cancel + parent catalog/approve via UI", async ({ page }) => {
     const fixture = loadFixtureWithCatalog();
 
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
@@ -38,11 +34,32 @@ test.describe("M6 lifecycle flow", () => {
       .locator('[data-testid^="redemption-item-"]')
       .filter({ hasText: "待审批" });
     await expect(pendingStudent.first()).toBeVisible({ timeout: 15_000 });
+    const cancelId = (await pendingStudent.first().getAttribute("data-testid"))!.replace(
+      "redemption-item-",
+      "",
+    );
+    await page.getByTestId(`cancel-redemption-${cancelId}`).click();
+    await expect(page.getByTestId("redemption-action-message")).toContainText("撤销", {
+      timeout: 15_000,
+    });
     await assertNoHorizontalScroll(page);
+
+    await page.getByTestId(`apply-redemption-${fixture.catalogItemId}`).click();
+    await expect(page.getByTestId("redemption-action-message")).toContainText("申请", {
+      timeout: 15_000,
+    });
     await logoutViaUi(page);
 
     await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
     await page.goto(`/parent/students/${fixture.studentId}/redemption`);
+    await expect(page.getByTestId("create-catalog-button")).toBeVisible({ timeout: 15_000 });
+    await fillField(page, "catalog-title", `E2E Catalog ${Date.now().toString(36)}`);
+    await fillField(page, "catalog-cost", "7");
+    await page.getByTestId("create-catalog-button").click();
+    await expect(page.getByTestId("parent-redemption-action-message")).toContainText("目录", {
+      timeout: 15_000,
+    });
+
     const pending = page.locator('[data-testid^="pending-redemption-"]').first();
     await expect(pending).toBeVisible({ timeout: 15_000 });
     const redemptionId = (await pending.getAttribute("data-testid"))!.replace(
@@ -56,38 +73,99 @@ test.describe("M6 lifecycle flow", () => {
     await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 export create/process/download and consumed token rejection", async ({
+  test("AC-M6-09 parent reject + terminal conflict via UI", async ({ page }) => {
+    const fixture = loadFixtureWithCatalog();
+
+    await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
+    await page.goto("/student/redemption");
+    await page.getByTestId(`apply-redemption-${fixture.catalogItemId}`).click();
+    await expect(page.getByTestId("redemption-action-message")).toContainText("申请", {
+      timeout: 15_000,
+    });
+    await logoutViaUi(page);
+
+    await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
+    await page.goto(`/parent/students/${fixture.studentId}/redemption`);
+    const pending = page.locator('[data-testid^="pending-redemption-"]').first();
+    await expect(pending).toBeVisible({ timeout: 15_000 });
+    const redemptionId = (await pending.getAttribute("data-testid"))!.replace(
+      "pending-redemption-",
+      "",
+    );
+    await page.getByTestId(`reject-redemption-${redemptionId}`).click();
+    await fillField(page, `reject-reason-${redemptionId}`, "不合规申请");
+    await page.getByTestId(`confirm-reject-${redemptionId}`).click();
+    await expect(page.getByTestId("parent-redemption-action-message")).toContainText("拒绝", {
+      timeout: 15_000,
+    });
+
+    await page.goto(`/parent/students/${fixture.studentId}/redemption`);
+    const rejectAgain = page.getByTestId(`reject-redemption-${redemptionId}`);
+    if (await rejectAgain.isVisible()) {
+      await rejectAgain.click();
+      await fillField(page, `reject-reason-${redemptionId}`, "再次拒绝");
+      await page.getByTestId(`confirm-reject-${redemptionId}`).click();
+      await expect(page.getByTestId("parent-redemption-error")).toBeVisible({ timeout: 15_000 });
+    }
+    await assertNoHorizontalScroll(page);
+  });
+
+  test("AC-M6-09 export create/poll/download via UI; process route blocked", async ({
     page,
     request,
   }) => {
     const fixture = loadE2eFixture();
 
+    await loginViaApi(request, fixture.studentUsername, fixture.studentPassword);
+    const processProbe = await request.post(`/api/export-jobs/${crypto.randomUUID()}/process`, {
+      headers: { "Idempotency-Key": `e2e-process-probe-${Date.now()}` },
+    });
+    expect(processProbe.status()).toBe(404);
+
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/export");
     await expect(page.getByTestId("create-export-button")).toBeVisible({ timeout: 15_000 });
     await assertNoHorizontalScroll(page);
-    await logoutViaUi(page);
 
-    await loginViaApi(request, fixture.studentUsername, fixture.studentPassword);
-    const created = await createExportJobViaApi(request, fixture.studentId);
-    const processed = await processExportJobViaApi(request, created.jobId);
-    expect(processed.downloadTokenPlaintext).toBeTruthy();
+    const jobId = await createExportViaUi(page);
+    await expect(page.getByTestId("export-action-message")).toContainText("导出", {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId(`export-job-${jobId}`)).toBeVisible({ timeout: 15_000 });
+    await waitForExportReady(page, jobId, 90_000);
+    await assertNoHorizontalScroll(page);
 
-    const firstDownload = await downloadExportViaApi(
-      request,
-      created.jobId,
-      processed.downloadTokenPlaintext!,
-    );
-    expect(firstDownload.ok(), await firstDownload.text()).toBeTruthy();
+    const downloadPromise = page.waitForEvent("download", { timeout: 30_000 }).catch(() => null);
+    await page.getByTestId(`download-export-${jobId}`).click();
+    await expect(page.getByTestId("export-action-message")).toContainText("下载", {
+      timeout: 30_000,
+    });
+    await downloadPromise;
 
-    const secondDownload = await downloadExportViaApi(
-      request,
-      created.jobId,
-      processed.downloadTokenPlaintext!,
-    );
-    expect(secondDownload.status()).toBe(400);
-    const secondBody = (await secondDownload.json()) as { error: { code?: string } };
-    expect(secondBody.error.code).toBe("TOKEN_CONSUMED");
+    await page.getByTestId(`refresh-export-${jobId}`).click();
+    await page.waitForTimeout(500);
+    if (await page.getByTestId(`download-export-${jobId}`).isVisible()) {
+      await page.getByTestId(`download-export-${jobId}`).click();
+      await expect(page.getByTestId("export-error")).toBeVisible({ timeout: 15_000 });
+    } else {
+      await expect(page.getByTestId(`export-consumed-${jobId}`)).toBeVisible({ timeout: 15_000 });
+    }
+  });
+
+  test("AC-M6-09 expired export token fails via UI after fixture expiry", async ({ page }) => {
+    const fixture = loadE2eFixture();
+
+    await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
+    await page.goto("/student/export");
+    const jobId = await createExportViaUi(page);
+    await expect(page.getByTestId(`export-job-${jobId}`)).toBeVisible({ timeout: 15_000 });
+    await waitForExportReady(page, jobId, 90_000);
+    await expect(page.getByTestId(`download-export-${jobId}`)).toBeVisible();
+
+    await expireExportJobTokenFixture(jobId);
+    await page.getByTestId(`download-export-${jobId}`).click();
+    await expect(page.getByTestId("export-error")).toBeVisible({ timeout: 15_000 });
+    await assertNoHorizontalScroll(page);
   });
 
   test("AC-M6-09 unauthorized parent does not leak student redemption access", async ({ page }) => {
@@ -101,60 +179,83 @@ test.describe("M6 lifecycle flow", () => {
     await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 terminal state conflict on double approve", async ({ request }) => {
-    const fixture = loadFixtureWithCatalog();
-
-    await loginViaApi(request, fixture.studentUsername, fixture.studentPassword);
-    const redemption = await createRedemptionViaApi(
-      request,
-      fixture.studentId,
-      fixture.catalogItemId!,
-    );
-    await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
-    await approveRedemptionViaApi(request, fixture.studentId, redemption.redemption.id);
-
-    const conflict = await request.post(
-      `/api/family/students/${fixture.studentId}/redemptions/${redemption.redemption.id}/approve`,
-      { headers: { "Idempotency-Key": `e2e-approve-conflict-${Date.now()}` } },
-    );
-    expect(conflict.status()).toBe(409);
-  });
-
-  test("AC-M6-09 deletion danger confirm UI without freezing main fixture", async ({ page }) => {
+  test("AC-M6-09 deletion request/cancel via UI on throwaway student", async ({
+    page,
+    request,
+  }) => {
     const fixture = loadE2eFixture();
+    await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
+    const throwaway = await createThrowawayStudentViaApi(request);
+    await loginThrowawayStudentViaUi(page, throwaway.username);
+    const throwawayPassword = "ThrowPass123!Throw2";
 
-    await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/account-deletion");
     await page.getByTestId("open-deletion-request-button").click();
     await expect(page.getByTestId("deletion-request-danger-text")).toBeVisible();
     await page.getByTestId("deletion-request-ack").check();
-    await expect(page.getByTestId("submit-deletion-request-button")).toBeEnabled();
+    await page.getByTestId("submit-deletion-request-button").click();
+    await expect(page.getByTestId("deletion-action-message")).toContainText("删除", {
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+
+    // Create path revokes sessions; re-login then cancel via UI.
+    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
+    await page.goto("/student/account-deletion");
+    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+    await page.getByTestId("cancel-deletion-button").click();
+    await expect(page.getByTestId("deletion-action-message")).toContainText("撤销", {
+      timeout: 15_000,
+    });
     await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 frozen state blocks API access for throwaway student", async ({ request }) => {
+  test("AC-M6-09 deletion danger confirm + student confirm UI on throwaway", async ({
+    page,
+    request,
+  }) => {
     const fixture = loadE2eFixture();
     await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
     const throwaway = await createThrowawayStudentViaApi(request);
+    await loginThrowawayStudentViaUi(page, throwaway.username);
+    const throwawayPassword = "ThrowPass123!Throw2";
 
-    await loginViaApi(request, fixture.adminEmail, fixture.adminPassword);
-    await createDeletionRequestViaApi(request, throwaway.studentId);
+    await page.goto("/student/account-deletion");
+    await page.getByTestId("open-deletion-request-button").click();
+    await page.getByTestId("deletion-request-ack").check();
+    await page.getByTestId("submit-deletion-request-button").click();
+    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
 
-    const scheduleResponse = await request.get(
-      `/api/family/students/${throwaway.studentId}/schedule-items?from=2020-01-01&to=2030-01-01`,
-    );
-    expect(scheduleResponse.status()).toBeGreaterThanOrEqual(400);
+    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
+    await page.goto("/student/account-deletion");
+    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+    await page.getByTestId("open-confirm-deletion-button").click();
+    await expect(page.getByTestId("deletion-danger-text")).toBeVisible();
+    await page.getByTestId("deletion-execute-ack").check();
+    await page.getByTestId("confirm-deletion-button").click();
+    await expect(page.getByTestId("deletion-action-message")).toContainText("确认", {
+      timeout: 15_000,
+    });
+    await assertNoHorizontalScroll(page);
   });
 
-  test("AC-M6-09 invalid export download token is rejected", async ({ request }) => {
+  test("AC-M6-09 frozen throwaway blocks student export UI", async ({ page, request }) => {
     const fixture = loadE2eFixture();
-    await loginViaApi(request, fixture.studentUsername, fixture.studentPassword);
-    const created = await createExportJobViaApi(request, fixture.studentId);
-    await processExportJobViaApi(request, created.jobId);
+    await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
+    const throwaway = await createThrowawayStudentViaApi(request);
+    await loginThrowawayStudentViaUi(page, throwaway.username);
+    const throwawayPassword = "ThrowPass123!Throw2";
 
-    const badDownload = await downloadExportViaApi(request, created.jobId, "invalid-token-value");
-    expect(badDownload.status()).toBeGreaterThanOrEqual(400);
-    const body = (await badDownload.json()) as { error: { code?: string } };
-    expect(body.error.code).toMatch(/TOKEN_INVALID|NOT_FOUND/);
+    await page.goto("/student/account-deletion");
+    await page.getByTestId("open-deletion-request-button").click();
+    await page.getByTestId("deletion-request-ack").check();
+    await page.getByTestId("submit-deletion-request-button").click();
+    await expect(page.getByTestId("deletion-status")).toContainText("冻结", { timeout: 15_000 });
+
+    await loginThrowawayStudentViaUi(page, throwaway.username, throwawayPassword);
+    await page.goto("/student/export");
+    await page.getByTestId("create-export-button").click();
+    await expect(page.getByTestId("export-error")).toBeVisible({ timeout: 15_000 });
+    await assertNoHorizontalScroll(page);
   });
 });

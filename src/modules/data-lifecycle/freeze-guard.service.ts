@@ -133,6 +133,7 @@ export async function revokeReadyExportJobsForStudentInTx(
       const stagingKey = `${job.artifactKey}.staging`;
       artifactKeys.push(stagingKey);
     }
+    artifactKeys.push(`export/${job.id}.download-token`);
     revoked += 1;
   }
 

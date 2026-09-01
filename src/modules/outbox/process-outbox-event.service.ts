@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Database } from "@/db";
 import { outboxEvents, workerAttempts } from "@/db/schema";
+import { getM6EventHandler } from "@/modules/data-lifecycle/m6-outbox-handlers";
 import { OutboxError } from "@/modules/outbox/errors";
 import { getM3EventHandler } from "@/modules/outbox/m3-event-handlers";
 import {
@@ -307,10 +308,12 @@ export async function processNextOutboxEvent(
 ): Promise<ProcessOutboxEventResult> {
   const claimed = await claimNextOutboxEvent(db, input);
   if (claimed) {
-    const m3Handler = getM3EventHandler(claimed.eventType, claimed.eventVersion);
-    if (m3Handler) {
+    const handler =
+      getM3EventHandler(claimed.eventType, claimed.eventVersion) ??
+      getM6EventHandler(claimed.eventType, claimed.eventVersion);
+    if (handler) {
       try {
-        await m3Handler(db, claimed);
+        await handler(db, claimed);
         await completeOutboxEvent(db, {
           eventId: claimed.eventId,
           leaseToken: claimed.leaseToken,

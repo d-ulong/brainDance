@@ -44,6 +44,7 @@ export type ExportJobStatusDto = {
   readyAt: string | null;
   expiresAt: string | null;
   consumedAt: string | null;
+  downloadTokenPlaintext?: string;
 };
 
 export type DeletionRequestDto = {
@@ -191,18 +192,6 @@ export async function createExportJob(studentId: string) {
     "/api/export-jobs",
     { method: "POST", idempotencyKeyPrefix: "create-export", body: { studentId } },
   );
-}
-
-export async function processExportJob(jobId: string) {
-  return apiWriteWithIdempotency<{
-    jobId: string;
-    status: string;
-    downloadTokenPlaintext?: string;
-    idempotentReplay: boolean;
-  }>(`/api/export-jobs/${jobId}/process`, {
-    method: "POST",
-    idempotencyKeyPrefix: "process-export",
-  });
 }
 
 export async function fetchExportJobStatus(jobId: string) {

@@ -55,6 +55,9 @@ export default defineConfig({
               process.env.SESSION_SECRET ?? "test-session-secret-at-least-32-characters-long",
             SESSION_COOKIE_SECURE: "false",
             EXPOSE_DEV_OTP: "true",
+            BRAIN_DANCE_ARTIFACT_ROOT:
+              process.env.BRAIN_DANCE_ARTIFACT_ROOT ??
+              path.join(process.cwd(), ".braindance-artifacts", "e2e"),
           },
         },
       }),

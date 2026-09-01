@@ -6,6 +6,9 @@ import { defineConfig } from "vitest/config";
 loadEnv({ path: ".env.local", override: true });
 loadEnv({ override: true });
 
+const artifactRoot = path.resolve(process.cwd(), ".braindance-artifacts", "vitest");
+process.env.BRAIN_DANCE_ARTIFACT_ROOT ??= artifactRoot;
+
 export default defineConfig({
   test: {
     environment: "node",
@@ -23,6 +26,9 @@ export default defineConfig({
       forks: {
         singleFork: true,
       },
+    },
+    env: {
+      BRAIN_DANCE_ARTIFACT_ROOT: process.env.BRAIN_DANCE_ARTIFACT_ROOT ?? artifactRoot,
     },
   },
   resolve: {

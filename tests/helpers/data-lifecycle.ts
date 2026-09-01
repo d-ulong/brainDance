@@ -30,6 +30,9 @@ export function createFaultInjectedArtifactStore(options?: {
       }
       return base.put(key, content);
     },
+    async read(key: string) {
+      return base.read(key);
+    },
     async openOnce(key: string) {
       if (options?.failOpenOnce) {
         throw new DataLifecycleError("ARTIFACT_UNAVAILABLE", "Injected artifact open failure");

@@ -16,6 +16,7 @@
     "rebuild-projection": "tsx scripts/rebuild-projection.ts",
     "capacity:synthetic": "tsx scripts/capacity-synthetic.mts",
     "recovery:drill": "tsx scripts/recovery-drill.mts",
+    "worker:lifecycle": "tsx scripts/lifecycle-worker.mts",
     "db:seed": "tsx scripts/seed-m1.ts",
     "db:studio": "drizzle-kit studio",
     "format": "prettier --check .",

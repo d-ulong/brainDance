@@ -19,10 +19,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
-# Logs and local editor state
-*.log
-.DS_Store
-Thumbs.db
+# Local private artifact store (never commit contents)
+.braindance-artifacts/
 
 # User-local Codex and shared-agent runtime integration
 .agents/

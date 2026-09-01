@@ -174,7 +174,7 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
     }
   });
 
-  it("C04: freeze blocks validateSession for existing session", async () => {
+  it("C04: freeze revokes existing session (validateSession null)", async () => {
     const student = await seedStudentUser(db, {
       username: `matrix_validate_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -188,6 +188,7 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
 
     await freezeStudent(student.studentId);
 
+    // createDeletionRequest deletes sessions + bumps epoch; pre-freeze cookie is dead.
     const session = await validateSession(db, loginResult.sessionId);
     expect(session).toBeNull();
   });
@@ -301,7 +302,7 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
     ).rejects.toSatisfy(expectFrozen);
   });
 
-  it("F04: frozen student cannot re-login", async () => {
+  it("F04: frozen student may re-login for deletion management; ordinary writes stay blocked", async () => {
     const student = await seedStudentUser(db, {
       username: `matrix_login_${crypto.randomUUID().slice(0, 8)}`,
       password: "StudentPass123!Student",
@@ -309,13 +310,24 @@ describe.skipIf(!hasDb)("M6 P2 freeze matrix", () => {
 
     await freezeStudent(student.studentId);
 
+    const reLogin = await login(db, {
+      identifier: student.username,
+      password: student.password,
+      idempotencyKey: "login-after-freeze",
+    });
+    expect(reLogin.sessionId).toBeTruthy();
+    const session = await validateSession(db, reLogin.sessionId);
+    expect(session?.user.id).toBe(student.studentId);
+
     await expect(
-      login(db, {
-        identifier: student.username,
-        password: student.password,
-        idempotencyKey: "login-after-freeze",
+      upsertDailyReflection(db, {
+        studentId: student.studentId,
+        familyDate: toFamilyDate(),
+        visibility: "normal",
+        body: "blocked while frozen after re-login",
+        idempotencyKey: "write-after-frozen-relogin",
       }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toSatisfy(expectFrozen);
   });
 
   it("F04: freeze blocks training trends read", async () => {

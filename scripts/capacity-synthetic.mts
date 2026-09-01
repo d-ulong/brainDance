@@ -11,13 +11,22 @@
 import { config } from "dotenv";
 import { sql } from "drizzle-orm";
 import { performance } from "node:perf_hooks";
+import path from "node:path";
+import os from "node:os";
+import { mkdir } from "node:fs/promises";
 
 import { users } from "../src/db/schema/identity";
 import {
   createExportJob,
   processExportJob,
 } from "../src/modules/data-lifecycle/export-job.service";
-import { createMemoryArtifactStore } from "../src/modules/data-lifecycle/private-artifact-store";
+import { DELETION_TARGET_TYPE } from "../src/modules/data-lifecycle/constants";
+import {
+  confirmDeletionRequest,
+  createDeletionRequest,
+  processDeletionWorker,
+} from "../src/modules/data-lifecycle/deletion-request.service";
+import { createFilesystemArtifactStore } from "../src/modules/data-lifecycle/private-artifact-store";
 import { bootstrapCatalogItem, seedStudentBalance } from "../tests/helpers/redemption";
 import { bootstrapParentStudentRelationship } from "../tests/helpers/schedule";
 import {
@@ -25,28 +34,15 @@ import {
   openIsolatedM2Database,
   type IsolatedM2Database,
 } from "../tests/integration/migrations/m2-isolated-database";
+import {
+  parseCapacityTier,
+  type CapacityMetricValue,
+  unavailableMetric,
+} from "./lib/capacity-metrics";
 import { requireSyntheticEnvironment } from "./lib/synthetic-env-guard";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
-
-const VALID_TIERS = [100, 1000, 10000] as const;
-type Tier = (typeof VALID_TIERS)[number];
-
-function parseTier(): Tier {
-  const args = process.argv.slice(2);
-  const tierIndex = args.indexOf("--tier");
-  if (tierIndex === -1 || !args[tierIndex + 1]) {
-    console.error("Usage: pnpm capacity:synthetic -- --tier 100|1000|10000");
-    process.exit(1);
-  }
-  const tier = Number(args[tierIndex + 1]);
-  if (!VALID_TIERS.includes(tier as Tier)) {
-    console.error(`Invalid tier: ${tier}. Must be one of ${VALID_TIERS.join(", ")}`);
-    process.exit(1);
-  }
-  return tier as Tier;
-}
 
 async function countConnections(db: IsolatedM2Database["db"]): Promise<number> {
   const rows = await db.execute(sql`
@@ -57,7 +53,71 @@ async function countConnections(db: IsolatedM2Database["db"]): Promise<number> {
   return Number((rows[0] as { count: number }).count);
 }
 
-async function seedFamilies(db: IsolatedM2Database["db"], tier: Tier) {
+async function measureSlowQueries(db: IsolatedM2Database["db"]): Promise<CapacityMetricValue> {
+  try {
+    const extension = await db.execute(sql`
+      SELECT 1 AS ok
+      FROM pg_extension
+      WHERE extname = 'pg_stat_statements'
+      LIMIT 1
+    `);
+    if (extension.length === 0) {
+      return unavailableMetric("pg_stat_statements extension is not installed");
+    }
+
+    const rows = await db.execute(sql`
+      SELECT
+        count(*)::int AS statements,
+        coalesce(max(mean_exec_time), 0)::float8 AS maxMeanExecMs,
+        coalesce(sum(calls), 0)::bigint AS totalCalls
+      FROM pg_stat_statements
+      WHERE mean_exec_time >= 50
+    `);
+    const row = rows[0] as {
+      statements: number;
+      maxMeanExecMs: number;
+      totalCalls: string | number;
+    };
+    return {
+      status: "measured",
+      value: {
+        statementsOver50ms: Number(row.statements),
+        maxMeanExecMs: Number(row.maxMeanExecMs),
+        totalCalls: Number(row.totalCalls),
+        thresholdMs: 50,
+      },
+    };
+  } catch (error) {
+    return unavailableMetric(
+      error instanceof Error ? error.message : "failed to query slow-query metrics",
+    );
+  }
+}
+
+function measureResourceBoundary(): CapacityMetricValue {
+  try {
+    const memory = process.memoryUsage();
+    return {
+      status: "measured",
+      value: {
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+        heapTotalBytes: memory.heapTotal,
+        externalBytes: memory.external,
+        freememBytes: os.freemem(),
+        totalmemBytes: os.totalmem(),
+        loadavg: os.loadavg(),
+        note: "Process/OS snapshot at capacity run end; not a production SLO.",
+      },
+    };
+  } catch (error) {
+    return unavailableMetric(
+      error instanceof Error ? error.message : "failed to read process resource metrics",
+    );
+  }
+}
+
+async function seedFamilies(db: IsolatedM2Database["db"], tier: number) {
   const started = performance.now();
 
   for (let i = 0; i < tier; i += 1) {
@@ -82,8 +142,12 @@ async function seedFamilies(db: IsolatedM2Database["db"], tier: Tier) {
   return { seedMs: performance.now() - started, families: tier };
 }
 
-async function measureExportThroughput(db: IsolatedM2Database["db"], sampleSize: number) {
-  const artifactStore = createMemoryArtifactStore();
+async function measureExportThroughput(
+  db: IsolatedM2Database["db"],
+  sampleSize: number,
+  artifactRoot: string,
+) {
+  const artifactStore = createFilesystemArtifactStore(artifactRoot);
   const students = await db.execute(sql`
     SELECT id FROM users WHERE role = 'student' ORDER BY created_at LIMIT ${sampleSize}
   `);
@@ -104,16 +168,75 @@ async function measureExportThroughput(db: IsolatedM2Database["db"], sampleSize:
 
   const elapsedMs = performance.now() - started;
   return {
-    sampleSize,
-    ready,
-    exportThroughputPerSec: sampleSize / (elapsedMs / 1000),
-    exportElapsedMs: elapsedMs,
+    status: "measured" as const,
+    value: {
+      sampleSize,
+      ready,
+      exportThroughputPerSec: sampleSize / (elapsedMs / 1000),
+      exportElapsedMs: elapsedMs,
+    },
+  };
+}
+
+async function measureDeletionThroughput(
+  db: IsolatedM2Database["db"],
+  sampleSize: number,
+  artifactRoot: string,
+): Promise<CapacityMetricValue> {
+  const artifactStore = createFilesystemArtifactStore(path.join(artifactRoot, "deletion"));
+  const students = await db.execute(sql`
+    SELECT id FROM users WHERE role = 'student' ORDER BY created_at DESC LIMIT ${sampleSize}
+  `);
+
+  if ((students as Array<{ id: string }>).length === 0) {
+    return unavailableMetric("no student rows available for deletion throughput sample");
+  }
+
+  const started = performance.now();
+  let executed = 0;
+
+  for (const row of students as Array<{ id: string }>) {
+    const deletion = await createDeletionRequest(db, {
+      targetType: DELETION_TARGET_TYPE.STUDENT_ACCOUNT,
+      targetId: row.id,
+      requestedBy: row.id,
+      requesterRole: "student",
+      idempotencyKey: `synth-deletion-${row.id}-${Date.now()}`,
+      artifactStore,
+    });
+    await confirmDeletionRequest(db, {
+      requestId: deletion.requestId,
+      studentId: row.id,
+      idempotencyKey: `synth-confirm-${row.id}-${Date.now()}`,
+    });
+    const result = await processDeletionWorker(db, {
+      requestId: deletion.requestId,
+      artifactStore,
+    });
+    if (result.status === "executed") executed += 1;
+  }
+
+  const elapsedMs = performance.now() - started;
+  return {
+    status: "measured",
+    value: {
+      sampleSize: (students as Array<{ id: string }>).length,
+      executed,
+      deletionThroughputPerSec: executed / (elapsedMs / 1000),
+      deletionElapsedMs: elapsedMs,
+    },
   };
 }
 
 async function main() {
   requireSyntheticEnvironment();
-  const tier = parseTier();
+  let tier: number;
+  try {
+    tier = parseCapacityTier(process.argv.slice(2));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
   process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
 
   const isolated = await openIsolatedM2Database({
@@ -121,6 +244,13 @@ async function main() {
   });
   const db = isolated.db;
   const runStarted = performance.now();
+  const artifactRoot = path.join(
+    process.cwd(),
+    ".braindance-artifacts",
+    "capacity",
+    isolated.dbName,
+  );
+  await mkdir(artifactRoot, { recursive: true });
 
   console.log(
     JSON.stringify({
@@ -149,16 +279,25 @@ async function main() {
     );
 
     const sampleSize = Math.min(tier, tier >= 1000 ? 20 : 10);
-    const exportMetrics = await measureExportThroughput(db, sampleSize);
+    const exportMetrics = await measureExportThroughput(db, sampleSize, artifactRoot);
+    const deletionSample = Math.min(3, sampleSize);
+    const deletionMetrics = await measureDeletionThroughput(db, deletionSample, artifactRoot);
+    const slowQueries = await measureSlowQueries(db);
+    const resources = measureResourceBoundary();
 
     const result = {
       tier,
       databaseName: isolated.dbName,
-      connections: { before: connectionsBefore, afterSeed: connectionsAfterSeed },
+      connections: {
+        status: "measured",
+        value: { before: connectionsBefore, afterSeed: connectionsAfterSeed },
+      },
       seed: { families: seed.families, elapsedMs: seed.seedMs },
-      queueDepth,
+      queueDepth: { status: "measured", value: queueDepth },
+      slowQueries,
       export: exportMetrics,
-      deletionThroughputPerSec: null,
+      deletion: deletionMetrics,
+      resources,
       totalElapsedMs: performance.now() - runStarted,
       note: "Synthetic isolated metrics; not a production capacity guarantee.",
     };

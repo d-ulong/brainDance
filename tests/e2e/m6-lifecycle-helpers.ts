@@ -1,6 +1,13 @@
+import { eq } from "drizzle-orm";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-import { loadE2eFixture } from "./ui-helpers";
+import * as schema from "@/db/schema";
+import { exportJobs } from "@/db/schema";
+import { requireDatabaseUrl } from "@/lib/env";
+
+import { fillField, loadE2eFixture } from "./ui-helpers";
 
 export async function assertNoHorizontalScroll(page: Page) {
   const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -23,76 +30,18 @@ export async function loginViaApi(
   expect(response.ok(), await response.text()).toBeTruthy();
 }
 
-export async function createRedemptionViaApi(
-  request: APIRequestContext,
-  studentId: string,
-  catalogItemId: string,
-) {
-  const response = await request.post(`/api/family/students/${studentId}/redemptions`, {
-    headers: { "Idempotency-Key": `e2e-redemption-${Date.now()}` },
-    data: { catalogItemId },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
-  return (await response.json()) as { redemption: { id: string; status: string } };
-}
-
-export async function approveRedemptionViaApi(
-  request: APIRequestContext,
-  studentId: string,
-  redemptionId: string,
-) {
-  const response = await request.post(
-    `/api/family/students/${studentId}/redemptions/${redemptionId}/approve`,
-    { headers: { "Idempotency-Key": `e2e-approve-${Date.now()}` } },
-  );
-  expect(response.ok(), await response.text()).toBeTruthy();
-}
-
-export async function createExportJobViaApi(request: APIRequestContext, studentId: string) {
-  const response = await request.post("/api/export-jobs", {
-    headers: { "Idempotency-Key": `e2e-export-${Date.now()}` },
-    data: { studentId },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
-  return (await response.json()) as { jobId: string; status: string };
-}
-
-export async function processExportJobViaApi(request: APIRequestContext, jobId: string) {
-  const response = await request.post(`/api/export-jobs/${jobId}/process`, {
-    headers: { "Idempotency-Key": `e2e-process-export-${Date.now()}` },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
-  return (await response.json()) as {
-    jobId: string;
-    status: string;
-    downloadTokenPlaintext?: string;
-  };
-}
-
-export async function downloadExportViaApi(
-  request: APIRequestContext,
-  jobId: string,
-  token: string,
-) {
-  return request.post(`/api/export-jobs/${jobId}/download`, {
-    data: { token },
-  });
-}
-
-export async function createDeletionRequestViaApi(request: APIRequestContext, studentId: string) {
-  const response = await request.post("/api/deletion-requests", {
-    headers: { "Idempotency-Key": `e2e-deletion-${Date.now()}` },
-    data: { targetType: "student_account", targetId: studentId },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
-  return (await response.json()) as { requestId: string; status: string };
-}
-
-export async function cancelDeletionRequestViaApi(request: APIRequestContext, requestId: string) {
-  const response = await request.delete(`/api/deletion-requests/${requestId}`, {
-    headers: { "Idempotency-Key": `e2e-cancel-deletion-${Date.now()}` },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
+/** Fixture-only: expire an export token so UI can assert TOKEN_EXPIRED feedback. */
+export async function expireExportJobTokenFixture(jobId: string) {
+  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const db = drizzle(client, { schema });
+  try {
+    await db
+      .update(exportJobs)
+      .set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(exportJobs.id, jobId));
+  } finally {
+    await client.end({ timeout: 5 });
+  }
 }
 
 export async function createThrowawayStudentViaApi(request: APIRequestContext) {
@@ -117,4 +66,64 @@ export function loadFixtureWithCatalog() {
   };
   expect(fixture.catalogItemId, "E2E fixture must include catalogItemId").toBeTruthy();
   return fixture;
+}
+
+/** Click create-export and return the jobId from the create API response. */
+export async function createExportViaUi(page: Page): Promise<string> {
+  const createResponsePromise = page.waitForResponse((res) => {
+    if (res.request().method() !== "POST") return false;
+    const url = res.url();
+    return url.includes("/api/export-jobs") && !url.includes("/download");
+  });
+  await page.getByTestId("create-export-button").click();
+  const createResponse = await createResponsePromise;
+  expect(createResponse.ok(), await createResponse.text()).toBeTruthy();
+  const body = (await createResponse.json()) as { jobId: string };
+  expect(body.jobId).toBeTruthy();
+  return body.jobId;
+}
+
+export async function waitForExportReady(page: Page, jobId: string, timeoutMs = 60_000) {
+  const status = page.getByTestId(`export-status-${jobId}`);
+  await expect(status).toBeVisible({ timeout: 15_000 });
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const download = page.getByTestId(`download-export-${jobId}`);
+    if (await download.isVisible().catch(() => false)) {
+      return;
+    }
+    const text = (await status.textContent()) ?? "";
+    if (text.includes("失败") || text.includes("已撤销") || text.includes("已过期")) {
+      throw new Error(`Export job ${jobId} ended in terminal state: ${text}`);
+    }
+    const refresh = page.getByTestId(`refresh-export-${jobId}`);
+    if (await refresh.isVisible().catch(() => false)) {
+      await refresh.click();
+    }
+    await page.waitForTimeout(1_500);
+  }
+
+  await expect(page.getByTestId(`download-export-${jobId}`)).toBeVisible({ timeout: 1_000 });
+}
+
+export async function loginThrowawayStudentViaUi(
+  page: Page,
+  username: string,
+  password = "ThrowPass123!Throw",
+) {
+  await page.goto("/login");
+  await fillField(page, "login-identifier", username);
+  await fillField(page, "login-password", password);
+  await page.getByRole("textbox", { name: "密码" }).press("Enter");
+  await page.waitForTimeout(1500);
+
+  if (page.url().includes("change-password")) {
+    await fillField(page, "current-password", password);
+    await fillField(page, "new-password", "ThrowPass123!Throw2");
+    await page.getByRole("button", { name: "确认修改" }).click();
+    await page.waitForURL((url) => !url.pathname.includes("change-password"), {
+      timeout: 20_000,
+    });
+  }
 }

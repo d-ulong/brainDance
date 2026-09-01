@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
@@ -11,7 +11,6 @@ import {
   exportStatusLabel,
   fetchExportJobStatus,
   fetchExportJobs,
-  processExportJob,
   readStoredExportToken,
   storeExportToken,
   type ExportJobDto,
@@ -25,14 +24,60 @@ export default function StudentExportPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [jobs, setJobs] = useState<ExportJobDto[]>([]);
   const [creating, setCreating] = useState(false);
-  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [pollingId, setPollingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearPollTimer = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
 
   const loadJobs = useCallback(async () => {
     setError(null);
     const result = await fetchExportJobs();
     setJobs(result.jobs);
+    return result.jobs;
   }, []);
+
+  const syncTokenFromStatus = useCallback(async (jobId: string) => {
+    const status = await fetchExportJobStatus(jobId);
+    if (status.downloadTokenPlaintext) {
+      storeExportToken(jobId, status.downloadTokenPlaintext);
+    }
+    return status;
+  }, []);
+
+  const startPolling = useCallback(
+    (jobId: string) => {
+      clearPollTimer();
+      setPollingId(jobId);
+      pollTimerRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const status = await syncTokenFromStatus(jobId);
+            await loadJobs();
+            if (status.status === "ready") {
+              setActionMessage("导出文件已就绪，可下载（令牌 24 小时内有效，仅可下载一次）");
+              clearPollTimer();
+              setPollingId(null);
+            } else if (status.status === "failed" || status.status === "revoked") {
+              setError(`导出任务${exportStatusLabel(status.status)}`);
+              clearPollTimer();
+              setPollingId(null);
+            }
+          } catch (err) {
+            setError(err instanceof ApiError ? err.message : "轮询导出状态失败");
+            clearPollTimer();
+            setPollingId(null);
+          }
+        })();
+      }, 1500);
+    },
+    [clearPollTimer, loadJobs, syncTokenFromStatus],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -48,14 +93,29 @@ export default function StudentExportPage() {
 
       setStudentId(session.userId);
       try {
-        await loadJobs();
+        const loaded = await loadJobs();
+        const pending = loaded.find(
+          (job) => job.status === "pending" || job.status === "processing",
+        );
+        if (pending) {
+          startPolling(pending.id);
+        }
+        for (const job of loaded) {
+          if (job.status === "ready" && !job.consumedAt && !readStoredExportToken(job.id)) {
+            await syncTokenFromStatus(job.id);
+          }
+        }
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "加载导出任务失败");
       } finally {
         setLoading(false);
       }
     })();
-  }, [loadJobs, router]);
+
+    return () => {
+      clearPollTimer();
+    };
+  }, [clearPollTimer, loadJobs, router, startPolling, syncTokenFromStatus]);
 
   async function onCreateExport() {
     if (!studentId) return;
@@ -68,6 +128,7 @@ export default function StudentExportPage() {
         result.idempotentReplay ? "导出任务已存在（幂等回放）" : "导出任务已创建，正在排队",
       );
       await loadJobs();
+      startPolling(result.jobId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "创建导出任务失败");
     } finally {
@@ -75,32 +136,18 @@ export default function StudentExportPage() {
     }
   }
 
-  async function onProcess(jobId: string) {
-    setProcessingId(jobId);
-    setActionMessage(null);
-    setError(null);
-    try {
-      const result = await processExportJob(jobId);
-      if (result.downloadTokenPlaintext) {
-        storeExportToken(jobId, result.downloadTokenPlaintext);
-      }
-      setActionMessage(
-        result.status === "ready"
-          ? "导出文件已就绪，可下载（令牌 24 小时内有效，仅可下载一次）"
-          : `任务状态：${exportStatusLabel(result.status)}`,
-      );
-      await loadJobs();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "处理导出任务失败");
-    } finally {
-      setProcessingId(null);
-    }
-  }
-
   async function onDownload(jobId: string) {
-    const token = readStoredExportToken(jobId);
+    let token = readStoredExportToken(jobId);
     if (!token) {
-      setError("下载令牌不可用，请重新生成导出文件");
+      try {
+        const status = await syncTokenFromStatus(jobId);
+        token = status.downloadTokenPlaintext ?? null;
+      } catch {
+        // fall through
+      }
+    }
+    if (!token) {
+      setError("下载令牌不可用，请等待导出完成或重新创建导出任务");
       return;
     }
 
@@ -126,15 +173,18 @@ export default function StudentExportPage() {
   }
 
   async function onRefreshStatus(jobId: string) {
-    setProcessingId(jobId);
+    setPollingId(jobId);
     setError(null);
     try {
-      await fetchExportJobStatus(jobId);
+      const status = await syncTokenFromStatus(jobId);
       await loadJobs();
+      if (status.status === "ready") {
+        setActionMessage("导出文件已就绪，可下载（令牌 24 小时内有效，仅可下载一次）");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "刷新状态失败");
     } finally {
-      setProcessingId(null);
+      setPollingId(null);
     }
   }
 
@@ -187,6 +237,7 @@ export default function StudentExportPage() {
                   <span data-testid={`export-status-${job.id}`}>
                     {exportStatusLabel(job.status)}
                   </span>
+                  {pollingId === job.id ? "（轮询中…）" : ""}
                 </p>
                 {job.expiresAt ? (
                   <p className="text-sm text-neutral-600">
@@ -199,15 +250,6 @@ export default function StudentExportPage() {
                   </p>
                 ) : null}
                 <div className="mt-3 flex flex-col gap-2">
-                  {job.status === "pending" || job.status === "processing" ? (
-                    <PrimaryButton
-                      disabled={processingId === job.id}
-                      onClick={() => void onProcess(job.id)}
-                      data-testid={`process-export-${job.id}`}
-                    >
-                      {processingId === job.id ? "生成中…" : "生成导出文件"}
-                    </PrimaryButton>
-                  ) : null}
                   {job.status === "ready" && !job.consumedAt ? (
                     <PrimaryButton
                       disabled={downloadingId === job.id}
@@ -218,7 +260,7 @@ export default function StudentExportPage() {
                     </PrimaryButton>
                   ) : null}
                   <PrimaryButton
-                    disabled={processingId === job.id}
+                    disabled={pollingId === job.id}
                     onClick={() => void onRefreshStatus(job.id)}
                     data-testid={`refresh-export-${job.id}`}
                   >

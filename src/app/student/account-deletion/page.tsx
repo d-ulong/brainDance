@@ -14,6 +14,23 @@ import {
   type DeletionRequestDto,
 } from "@/lib/client/m6-api";
 
+const DELETION_REQUEST_STORAGE_KEY = "m6-deletion-request-id";
+
+function readStoredDeletionRequestId(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(DELETION_REQUEST_STORAGE_KEY);
+}
+
+function storeDeletionRequestId(requestId: string): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(DELETION_REQUEST_STORAGE_KEY, requestId);
+}
+
+function clearStoredDeletionRequestId(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(DELETION_REQUEST_STORAGE_KEY);
+}
+
 export default function StudentAccountDeletionPage() {
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
@@ -29,6 +46,7 @@ export default function StudentAccountDeletionPage() {
   const loadRequest = useCallback(async (requestId: string) => {
     const result = await fetchDeletionRequest(requestId);
     setRequest(result.request);
+    storeDeletionRequestId(requestId);
   }, []);
 
   useEffect(() => {
@@ -44,9 +62,18 @@ export default function StudentAccountDeletionPage() {
       }
 
       setStudentId(session.userId);
+      const storedRequestId = readStoredDeletionRequestId();
+      if (storedRequestId) {
+        try {
+          await loadRequest(storedRequestId);
+        } catch {
+          // Stale or unauthorized stored id; allow creating a new request.
+          clearStoredDeletionRequestId();
+        }
+      }
       setLoading(false);
     })();
-  }, [router]);
+  }, [loadRequest, router]);
 
   async function onRequestDeletion() {
     if (!studentId || !acknowledged) {
@@ -59,13 +86,33 @@ export default function StudentAccountDeletionPage() {
     setError(null);
     try {
       const result = await createDeletionRequest("student_account", studentId);
+      // Freeze immediately revokes sessions; keep local DTO from create response so UI
+      // can show frozen state even if the follow-up GET fails.
+      const localRequest: DeletionRequestDto = {
+        id: result.requestId,
+        targetType: "student_account",
+        targetId: studentId,
+        studentId,
+        requestedBy: studentId,
+        status: result.status,
+        revocableUntil: result.revocableUntil,
+        studentConfirmedAt: null,
+        requestedAt: new Date().toISOString(),
+        executedAt: null,
+      };
+      setRequest(localRequest);
+      storeDeletionRequestId(result.requestId);
       setActionMessage(
         result.idempotentReplay
           ? "删除请求已存在（幂等回放）"
-          : "账户删除请求已提交，账户已冻结。30 天内可撤销。",
+          : "账户删除请求已提交，账户已冻结。若后续操作提示会话失效，请重新登录后继续撤销或确认。",
       );
       setShowRequestConfirm(false);
-      await loadRequest(result.requestId);
+      try {
+        await loadRequest(result.requestId);
+      } catch {
+        // Expected when the create path revoked the current session.
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "提交删除请求失败");
     } finally {
@@ -83,7 +130,12 @@ export default function StudentAccountDeletionPage() {
       setActionMessage(
         result.idempotentReplay ? "已撤销（幂等回放）" : "删除请求已撤销，账户已恢复访问",
       );
-      await loadRequest(request.id);
+      clearStoredDeletionRequestId();
+      try {
+        await loadRequest(request.id);
+      } catch {
+        setRequest({ ...request, status: result.status });
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "撤销失败");
     } finally {
@@ -102,7 +154,14 @@ export default function StudentAccountDeletionPage() {
         result.idempotentReplay ? "已确认（幂等回放）" : "已确认最终删除，后台将按步骤清除数据",
       );
       setShowExecuteConfirm(false);
-      await loadRequest(request.id);
+      try {
+        await loadRequest(request.id);
+      } catch {
+        setRequest({
+          ...request,
+          studentConfirmedAt: result.studentConfirmedAt,
+        });
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "确认失败");
     } finally {

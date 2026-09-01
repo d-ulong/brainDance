@@ -20,10 +20,15 @@ export async function GET(_request: Request, context: RouteContext) {
     const { jobId: rawJobId } = await context.params;
     const jobId = m2UuidParamSchema.parse(rawJobId);
 
-    const job = await getExportJobStatusForActor(db, jobId, {
-      actorId: dbUser.id,
-      actorRole: dbUser.role as "student" | "parent" | "admin",
-    });
+    const job = await getExportJobStatusForActor(
+      db,
+      jobId,
+      {
+        actorId: dbUser.id,
+        actorRole: dbUser.role as "student" | "parent" | "admin",
+      },
+      { artifactStore: exportRouteArtifactStore },
+    );
 
     return NextResponse.json({
       id: job.id,
@@ -31,6 +36,7 @@ export async function GET(_request: Request, context: RouteContext) {
       readyAt: job.readyAt,
       expiresAt: job.expiresAt,
       consumedAt: job.consumedAt,
+      downloadTokenPlaintext: job.downloadTokenPlaintext,
     });
   } catch (error) {
     const { status, body } = toRouteErrorResponse(error);
