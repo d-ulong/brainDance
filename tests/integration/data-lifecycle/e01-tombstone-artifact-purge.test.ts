@@ -250,4 +250,173 @@ describe.skipIf(!hasDb)("M6 P2 E01 tombstone artifact purge", () => {
     expect(outboxAfter).toHaveLength(outboxBefore.length);
     expect(restoredStore.has(artifactKey)).toBe(false);
   });
+
+  it("E01-R01: crash after DB commit before external purge recovers from persisted intent", async () => {
+    const artifactStore = createTestArtifactStore();
+    const restoredStore = createTestArtifactStore();
+    let crashAfterCommit = true;
+
+    const student = await seedStudentUser(db, {
+      username: `e01_crash_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const created = await createExportJob(db, {
+      requesterId: student.studentId,
+      requesterRole: "student",
+      studentId: student.studentId,
+      idempotencyKey: "e01-export-crash",
+    });
+
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const artifactKey = `export/${created.jobId}`;
+
+    const deletionRequestId = await executeStudentAccountDeletion(student.studentId, artifactStore);
+
+    await db
+      .update(exportJobs)
+      .set({
+        status: EXPORT_JOB_STATUS.READY,
+        downloadTokenHash: "restored_token_hash_crash",
+        artifactKey,
+      })
+      .where(eq(exportJobs.id, created.jobId));
+
+    await restoredStore.put(artifactKey, Buffer.from('{"canary":"crash-recovery"}', "utf8"));
+
+    await expect(
+      applyTombstonesBeforeProjectionRebuild(db, {
+        artifactStore: restoredStore,
+        afterReplayCommitForTest: () => {
+          if (crashAfterCommit) {
+            throw new Error("Simulated crash after DB commit before external purge");
+          }
+        },
+      }),
+    ).rejects.toThrow("Simulated crash after DB commit before external purge");
+
+    const [tombstoneAfterCrash] = await db
+      .select()
+      .from(deletionTombstones)
+      .where(eq(deletionTombstones.deletionRequestId, deletionRequestId))
+      .limit(1);
+
+    expect(readTombstoneArtifactPurgePendingKeys(tombstoneAfterCrash!.payload)).toContain(
+      artifactKey,
+    );
+    expect(restoredStore.has(artifactKey)).toBe(true);
+
+    const [jobAfterCrash] = await db
+      .select()
+      .from(exportJobs)
+      .where(eq(exportJobs.id, created.jobId))
+      .limit(1);
+    expect(jobAfterCrash!.status).toBe("revoked");
+
+    crashAfterCommit = false;
+    await applyTombstonesBeforeProjectionRebuild(db, { artifactStore: restoredStore });
+
+    expect(restoredStore.has(artifactKey)).toBe(false);
+
+    const [tombstoneAfterRecovery] = await db
+      .select()
+      .from(deletionTombstones)
+      .where(eq(deletionTombstones.deletionRequestId, deletionRequestId))
+      .limit(1);
+    expect(readTombstoneArtifactPurgePendingKeys(tombstoneAfterRecovery!.payload)).toHaveLength(0);
+  });
+
+  it("E01-R02: malformed artifactPurgePendingKeys fail-closed without clearing artifact", async () => {
+    const artifactStore = createTestArtifactStore();
+    const restoredStore = createTestArtifactStore();
+
+    const student = await seedStudentUser(db, {
+      username: `e01_malformed_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+    });
+
+    const created = await createExportJob(db, {
+      requesterId: student.studentId,
+      requesterRole: "student",
+      studentId: student.studentId,
+      idempotencyKey: "e01-export-malformed",
+    });
+
+    await processExportJob(db, { jobId: created.jobId, artifactStore });
+    const artifactKey = `export/${created.jobId}`;
+
+    const deletionRequestId = await executeStudentAccountDeletion(student.studentId, artifactStore);
+
+    await db
+      .update(exportJobs)
+      .set({
+        status: EXPORT_JOB_STATUS.READY,
+        downloadTokenHash: "restored_token_hash_malformed",
+        artifactKey,
+      })
+      .where(eq(exportJobs.id, created.jobId));
+
+    await restoredStore.put(artifactKey, Buffer.from('{"canary":"malformed-state"}', "utf8"));
+
+    await applyTombstonesBeforeProjectionRebuild(db, { artifactStore: restoredStore });
+    expect(restoredStore.has(artifactKey)).toBe(false);
+
+    const canaryStore = createTestArtifactStore();
+    await canaryStore.put(artifactKey, Buffer.from('{"canary":"malformed-state"}', "utf8"));
+
+    const malformedPayloads = [
+      "{not-valid-json",
+      JSON.stringify([artifactKey, 42]),
+      JSON.stringify({ key: artifactKey }),
+    ] as const;
+
+    for (const malformedPending of malformedPayloads) {
+      await db
+        .update(deletionTombstones)
+        .set({
+          payload: { [TOMBSTONE_PAYLOAD_PENDING_KEYS]: malformedPending },
+        })
+        .where(eq(deletionTombstones.deletionRequestId, deletionRequestId));
+
+      const auditBefore = await db.select().from(auditEvents);
+      const outboxBefore = await db.select().from(outboxEvents);
+
+      await expect(
+        applyTombstonesBeforeProjectionRebuild(db, { artifactStore: canaryStore }),
+      ).rejects.toMatchObject({
+        code: "STATE_CONFLICT",
+      });
+
+      expect(canaryStore.has(artifactKey)).toBe(true);
+
+      const [job] = await db
+        .select()
+        .from(exportJobs)
+        .where(eq(exportJobs.id, created.jobId))
+        .limit(1);
+      expect(job!.status).toBe("revoked");
+
+      const auditAfter = await db.select().from(auditEvents);
+      const outboxAfter = await db.select().from(outboxEvents);
+      expect(auditAfter).toHaveLength(auditBefore.length);
+      expect(outboxAfter).toHaveLength(outboxBefore.length);
+
+      const [tombstone] = await db
+        .select()
+        .from(deletionTombstones)
+        .where(eq(deletionTombstones.deletionRequestId, deletionRequestId))
+        .limit(1);
+      expect(tombstone!.payload?.[TOMBSTONE_PAYLOAD_PENDING_KEYS]).toBe(malformedPending);
+    }
+
+    await db
+      .update(deletionTombstones)
+      .set({
+        payload: { [TOMBSTONE_PAYLOAD_PENDING_KEYS]: JSON.stringify([artifactKey]) },
+      })
+      .where(eq(deletionTombstones.deletionRequestId, deletionRequestId));
+
+    await applyTombstonesBeforeProjectionRebuild(db, { artifactStore: canaryStore });
+    expect(canaryStore.has(artifactKey)).toBe(false);
+  });
 });

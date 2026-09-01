@@ -32,41 +32,70 @@ const TOMBSTONE_PAYLOAD_LAST_FAILED_AT = "artifactPurgeLastFailedAt";
 
 export type ApplyTombstonesBeforeProjectionRebuildInput = {
   artifactStore?: PrivateArtifactStore;
+  /** Test hook: invoked after DB transaction commits, before external artifact purge. */
+  afterReplayCommitForTest?: () => void | Promise<void>;
 };
 
 function dedupeArtifactKeys(keys: string[]): string[] {
   return [...new Set(keys.filter((key) => key.length > 0))];
 }
 
+function assertPendingArtifactKeyArray(value: unknown, context: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new DataLifecycleError("STATE_CONFLICT", `Invalid ${context}: expected string array`);
+  }
+
+  for (const key of value) {
+    if (typeof key !== "string" || key.length === 0) {
+      throw new DataLifecycleError(
+        "STATE_CONFLICT",
+        `Invalid ${context}: all elements must be non-empty strings`,
+      );
+    }
+  }
+
+  return value;
+}
+
 function readPendingArtifactPurgeKeys(
   payload: Record<string, unknown> | null | undefined,
 ): string[] {
   const pending = payload?.[TOMBSTONE_PAYLOAD_PENDING_KEYS];
+  if (pending === undefined || pending === null) {
+    return [];
+  }
+
   if (typeof pending === "string") {
     try {
       const parsed = JSON.parse(pending) as unknown;
-      if (Array.isArray(parsed)) {
-        return parsed.filter((key): key is string => typeof key === "string");
+      return assertPendingArtifactKeyArray(parsed, TOMBSTONE_PAYLOAD_PENDING_KEYS);
+    } catch (error) {
+      if (error instanceof DataLifecycleError) {
+        throw error;
       }
-    } catch {
-      return [];
+      throw new DataLifecycleError(
+        "STATE_CONFLICT",
+        `Malformed ${TOMBSTONE_PAYLOAD_PENDING_KEYS} JSON in tombstone payload`,
+      );
     }
   }
 
   if (Array.isArray(pending)) {
-    return pending.filter((key): key is string => typeof key === "string");
+    return assertPendingArtifactKeyArray(pending, TOMBSTONE_PAYLOAD_PENDING_KEYS);
   }
 
-  return [];
+  throw new DataLifecycleError(
+    "STATE_CONFLICT",
+    `Invalid ${TOMBSTONE_PAYLOAD_PENDING_KEYS} structure in tombstone payload`,
+  );
 }
 
-async function persistArtifactPurgePending(
+async function persistArtifactPurgeIntentInTx(
   db: Database,
   input: {
     tombstoneId: string;
     payload: Record<string, unknown> | null | undefined;
     artifactKeys: string[];
-    failedAt: Date;
   },
 ): Promise<void> {
   await db
@@ -75,6 +104,31 @@ async function persistArtifactPurgePending(
       payload: {
         ...(input.payload ?? {}),
         [TOMBSTONE_PAYLOAD_PENDING_KEYS]: JSON.stringify(dedupeArtifactKeys(input.artifactKeys)),
+      },
+    })
+    .where(eq(deletionTombstones.id, input.tombstoneId));
+}
+
+async function recordArtifactPurgeFailure(
+  db: Database,
+  input: {
+    tombstoneId: string;
+    failedAt: Date;
+  },
+): Promise<void> {
+  const [tombstone] = await db
+    .select({ payload: deletionTombstones.payload })
+    .from(deletionTombstones)
+    .where(eq(deletionTombstones.id, input.tombstoneId))
+    .limit(1);
+
+  const currentPayload = (tombstone?.payload ?? {}) as Record<string, unknown>;
+
+  await db
+    .update(deletionTombstones)
+    .set({
+      payload: {
+        ...currentPayload,
         [TOMBSTONE_PAYLOAD_LAST_FAILED_AT]: input.failedAt.toISOString(),
       },
     })
@@ -108,7 +162,7 @@ async function clearArtifactPurgePending(
     .where(eq(deletionTombstones.id, tombstoneId));
 }
 
-async function purgeTombstoneArtifactKeys(
+async function purgeTombstoneArtifactKeysAfterCommit(
   db: Database,
   input: {
     tombstoneId: string;
@@ -119,17 +173,12 @@ async function purgeTombstoneArtifactKeys(
 ): Promise<void> {
   const keys = dedupeArtifactKeys(input.artifactKeys);
   if (keys.length === 0) {
-    if (readPendingArtifactPurgeKeys(input.payload).length > 0) {
-      await clearArtifactPurgePending(db, input.tombstoneId, input.payload);
-    }
     return;
   }
 
   if (!input.artifactStore) {
-    await persistArtifactPurgePending(db, {
+    await recordArtifactPurgeFailure(db, {
       tombstoneId: input.tombstoneId,
-      payload: input.payload,
-      artifactKeys: keys,
       failedAt: new Date(),
     });
     throw new DataLifecycleError(
@@ -142,10 +191,8 @@ async function purgeTombstoneArtifactKeys(
     await purgeExportArtifactKeys(input.artifactStore, keys);
     await clearArtifactPurgePending(db, input.tombstoneId, input.payload);
   } catch (error) {
-    await persistArtifactPurgePending(db, {
+    await recordArtifactPurgeFailure(db, {
       tombstoneId: input.tombstoneId,
-      payload: input.payload,
-      artifactKeys: keys,
       failedAt: new Date(),
     });
     throw error;
@@ -205,13 +252,24 @@ export async function applyTombstonesBeforeProjectionRebuild(
         const revokedJobs = await revokeReadyExportJobsForStudentInTx(tx, tombstone.studentId);
         count += revokedJobs.revokedCount;
 
+        const artifactKeys = dedupeArtifactKeys([...pendingKeys, ...revokedJobs.artifactKeys]);
+        if (artifactKeys.length > 0) {
+          await persistArtifactPurgeIntentInTx(tx, {
+            tombstoneId: tombstone.id,
+            payload: tombstonePayload,
+            artifactKeys,
+          });
+        }
+
         return {
           count,
-          artifactKeys: [...pendingKeys, ...revokedJobs.artifactKeys],
+          artifactKeys,
         };
       });
 
-      await purgeTombstoneArtifactKeys(db, {
+      await input?.afterReplayCommitForTest?.();
+
+      await purgeTombstoneArtifactKeysAfterCommit(db, {
         tombstoneId: tombstone.id,
         payload: tombstonePayload,
         artifactKeys: replayResult.artifactKeys,

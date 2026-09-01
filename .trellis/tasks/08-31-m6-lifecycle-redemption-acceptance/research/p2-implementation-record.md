@@ -71,3 +71,25 @@ pnpm format → exit 0
 ### E01 Blockers
 
 - 无（相对 E01 范围）
+
+## E01-R01～R02 崩溃一致性修正
+
+> 修正基线：`3d9c4964e32ad653fc372c6e0c126e60059048ab`
+>
+> 复验前置对象：`659ccbfa9f76c895f0557b34f353b65153ab0336`（NO-GO：purge intent 未与 job revoke 同事务；损坏 pending 静默吞掉）
+
+| 项 | 修正要点 | 主要文件 | 测试名称 |
+|----|---------|---------|---------|
+| E01-R01 | purge intent 与 export job revoke 在同一 DB 事务内持久化；事务提交后才执行外部 purge，成功后清除 intent | `tombstone-replay.service.ts` | `E01-R01: crash after DB commit before external purge recovers from persisted intent` |
+| E01-R02 | `artifactPurgePendingKeys` 无法解析或结构非法时抛出 `STATE_CONFLICT` fail-closed，保留原 payload | `tombstone-replay.service.ts` | `E01-R02: malformed artifactPurgePendingKeys fail-closed without clearing artifact` |
+
+### E01-R01～R02 验证原始摘要
+
+```text
+pnpm db:migrate → Migrations complete
+pnpm test tests/integration/data-lifecycle/e01-tombstone-artifact-purge.test.ts tests/integration/data-lifecycle tests/integration/migrations/m6-schema-constraints.test.ts
+  → 7 files, 68 passed
+pnpm typecheck → exit 0
+pnpm lint → exit 0（8 warnings，0 errors；pre-existing）
+pnpm format → exit 0
+```
