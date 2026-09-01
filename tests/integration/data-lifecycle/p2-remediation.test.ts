@@ -509,7 +509,7 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
         .where(eq(pointBalanceProjection.studentId, student.studentId));
     });
 
-    await applyTombstonesBeforeProjectionRebuild(db);
+    await applyTombstonesBeforeProjectionRebuild(db, { artifactStore });
     await assertTombstoneInvariants(db, student.studentId);
 
     const [user] = await db.select().from(users).where(eq(users.id, student.studentId)).limit(1);

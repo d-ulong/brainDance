@@ -51,3 +51,23 @@ pnpm format → exit 0
 ## Blockers
 
 - `m5-concurrency.test.ts` 3 项在串行全量与单独复跑中均失败（dual-session submit / idempotency dedupe / cleanup aggregate）；P2 专用 55 项 data-lifecycle 与 typecheck/format 均通过。需 Codex 判定是否为环境 flake 或独立跟进项。
+
+## E01 生产风险闭合（tombstone artifact 物理清除）
+
+| 项 | 修正要点 | 主要文件 | 测试名称 |
+|----|---------|---------|---------|
+| E01 | tombstone replay 在 DB tx 内收集 artifact keys，tx 成功后经 `PrivateArtifactStore.purge` 物理清除；purge 失败写入 tombstone `payload.artifactPurgePendingKeys` 并 throw fail-closed，重试幂等收敛 | `tombstone-replay.service.ts` | `E01: tombstone replay purges restored ready export artifact and keeps job fail-closed`；`E01: purge failure persists pending keys fail-closed and retries after fault clears`；`E01: repeat tombstone replay and purge converge without duplicate audit/outbox` |
+
+### E01 验证原始摘要
+
+```text
+pnpm db:migrate → Migrations complete
+pnpm test tests/integration/data-lifecycle tests/integration/migrations/m6-schema-constraints.test.ts → 7 files, 66 passed
+pnpm typecheck → exit 0
+pnpm lint → exit 0（pre-existing warnings，0 errors）
+pnpm format → exit 0
+```
+
+### E01 Blockers
+
+- 无（相对 E01 范围）
