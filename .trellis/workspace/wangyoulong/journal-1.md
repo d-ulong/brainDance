@@ -159,3 +159,25 @@ Signed off M5 P3 lifecycle and dual-viewport acceptance, fast-forwarded the mile
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: M6 lifecycle acceptance final signoff
+
+**Date**: 2026-09-02
+**Task**: M6 lifecycle acceptance final signoff
+**Branch**: `feat/m6-lifecycle-redemption-acceptance`
+
+### Summary
+
+Closed final Vitest and dual-viewport E2E gates, signed off M6 while retaining production compliance and supplier deferrals, and archived the completed task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2abff52c496f53e81d1442145f5bc75ebd6b28a` | (see git log) |
+| `d4de9a4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
