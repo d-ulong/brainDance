@@ -158,6 +158,10 @@ test.describe("M2 schedule and points flow", () => {
       timeout: 15_000,
     });
     await expect(page.getByTestId(`item-status-${itemId}`)).toHaveText("已完成");
+    // Authoritative balance must stay at +10 even if lifecycle worker rebuilds from ledger.
+    await expect
+      .poll(() => fetchBalance(request, fixture.studentId), { timeout: 15_000 })
+      .toBe(balanceBeforeFlow + 10);
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
     await expect(page.getByTestId("today-task-status")).toContainText("已完成");
     assertMaintainHorizonPostCount(maintainPosts, 1);
@@ -167,6 +171,9 @@ test.describe("M2 schedule and points flow", () => {
     }
 
     await page.reload();
+    await expect
+      .poll(() => fetchBalance(request, fixture.studentId), { timeout: 15_000 })
+      .toBe(balanceBeforeFlow + 10);
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
     await expect(page.getByTestId(`item-status-${itemId}`)).toHaveText("已完成");
     assertMaintainHorizonPostCount(maintainPosts, 1);
@@ -174,6 +181,9 @@ test.describe("M2 schedule and points flow", () => {
     await logoutViaUi(page);
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/schedule");
+    await expect
+      .poll(() => fetchBalance(request, fixture.studentId), { timeout: 15_000 })
+      .toBe(balanceBeforeFlow + 10);
     await expect(page.getByTestId("points-balance")).toHaveText(String(balanceBeforeFlow + 10));
     assertMaintainHorizonPostCount(maintainPosts, 1);
 

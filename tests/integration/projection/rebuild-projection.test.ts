@@ -12,6 +12,7 @@ import { scheduleItems } from "@/db/schema";
 import { rebuildProjection } from "@/modules/projection/rebuild-projection.service";
 import { loadOrderedLedgerEntriesForStudent } from "@/modules/settlement/ledger-order";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
+import { seedRebuildSafeStudentBalance } from "../../helpers/redemption";
 import {
   bootstrapParentStudentRelationship,
   DEFAULT_PLAN_BODY,
@@ -192,6 +193,29 @@ describe.skipIf(!hasDb)("m3 projection rebuild cli", () => {
       .from(pointBalanceProjection)
       .where(eq(pointBalanceProjection.studentId, linked.studentId));
     expect(projection?.balance).toBe(10);
+  });
+
+  it("rebuild-safe seed keeps balance after projection rebuild", async () => {
+    const linked = await bootstrapParentStudentRelationship(db);
+    const seeded = await seedRebuildSafeStudentBalance(db, {
+      parentId: linked.parentId,
+      studentId: linked.studentId,
+      balance: 100,
+    });
+
+    await db.execute(
+      sql`UPDATE point_balance_projection SET balance = 1 WHERE student_id = ${linked.studentId}::uuid`,
+    );
+
+    const result = await rebuildProjection(db, { studentId: linked.studentId });
+    expect(result.ledgerEntriesScanned).toBe(1);
+
+    const [projection] = await db
+      .select()
+      .from(pointBalanceProjection)
+      .where(eq(pointBalanceProjection.studentId, linked.studentId));
+    expect(projection?.balance).toBe(100);
+    expect(projection?.lastLedgerEntryId).toBe(seeded.ledgerEntryId);
   });
 
   it("R07-04 CLI rejects invalid student-id without leaking database errors", () => {

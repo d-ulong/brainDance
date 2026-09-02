@@ -18,7 +18,7 @@ import { seedM5TrainingDefinitions } from "../src/modules/training/definition.se
 import { seedAdminUser } from "../src/modules/identity/seed-admin";
 import { migrateTestDb } from "../tests/helpers/db";
 import { bootstrapVerifiedParentWithInvite } from "../tests/helpers/family-access";
-import { bootstrapCatalogItem, seedStudentBalance } from "../tests/helpers/redemption";
+import { bootstrapCatalogItem, seedRebuildSafeStudentBalance } from "../tests/helpers/redemption";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -91,7 +91,12 @@ async function main() {
     idempotencyKey: `e2e-accept-${runId}`,
   });
 
-  await seedStudentBalance(db, created.studentId, 100);
+  // Ledger-backed seed so lifecycle-worker `points.settled` rebuild keeps the balance.
+  await seedRebuildSafeStudentBalance(db, {
+    parentId,
+    studentId: created.studentId,
+    balance: 100,
+  });
   const { item: catalogItem } = await bootstrapCatalogItem(db, {
     parentId,
     studentId: created.studentId,
