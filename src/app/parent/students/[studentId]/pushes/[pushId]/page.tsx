@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { MediaPreviewList } from "@/components/family-content/media-preview";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   createComment,
@@ -145,6 +146,13 @@ export default function ParentPushDetailPage({
               >
                 {push.linkUrl}
               </a>
+            ) : null}
+            {studentId && push.media?.length ? (
+              <MediaPreviewList
+                studentId={studentId}
+                media={push.media}
+                testIdPrefix="push-detail-media"
+              />
             ) : null}
 
             {push.canEdit ? (

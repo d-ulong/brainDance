@@ -1,3 +1,13 @@
+export type MediaAttachmentDto = {
+  referenceId: string;
+  mediaId: string;
+  purpose: string;
+  status: string;
+  detectedMime: string | null;
+  width: number | null;
+  height: number | null;
+};
+
 export type FamilyPushDto = {
   pushId: string;
   studentId: string;
@@ -6,6 +16,7 @@ export type FamilyPushDto = {
   currentVersion: number;
   body: string;
   linkUrl: string | null;
+  media: MediaAttachmentDto[];
   scheduledPublishAt: string | null;
   publishedAt: string | null;
   canEdit: boolean;
@@ -19,6 +30,7 @@ export type PushAnswerDto = {
   studentId: string;
   currentVersion: number;
   body: string;
+  media: MediaAttachmentDto[];
   updatedAt: string;
 };
 

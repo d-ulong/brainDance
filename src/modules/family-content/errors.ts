@@ -4,7 +4,11 @@ export type FamilyContentErrorCode =
   | "VALIDATION_ERROR"
   | "IDEMPOTENCY_CONFLICT"
   | "STATE_CONFLICT"
-  | "FROZEN";
+  | "FROZEN"
+  | "MEDIA_REJECTED"
+  | "MEDIA_UNAVAILABLE"
+  | "TOKEN_INVALID"
+  | "TOKEN_EXPIRED";
 
 export class FamilyContentError extends Error {
   readonly code: FamilyContentErrorCode;

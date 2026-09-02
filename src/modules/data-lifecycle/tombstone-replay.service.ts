@@ -26,6 +26,10 @@ import {
   countNonEmptyTrainingPayloadsForStudent,
   replayTrainingPayloadTombstoneForStudent,
 } from "@/modules/training/account-deletion.service";
+import {
+  assertFamilyContentDeletionCanary,
+  replayFamilyContentTombstoneForStudent,
+} from "@/modules/family-content/account-deletion.service";
 
 const TOMBSTONE_PAYLOAD_PENDING_KEYS = "artifactPurgePendingKeys";
 const TOMBSTONE_PAYLOAD_LAST_FAILED_AT = "artifactPurgeLastFailedAt";
@@ -231,6 +235,11 @@ export async function applyTombstonesBeforeProjectionRebuild(
 
         count += await replayTrainingPayloadTombstoneForStudent(tx, tombstone.studentId);
 
+        count += await replayFamilyContentTombstoneForStudent(tx, {
+          studentId: tombstone.studentId,
+          purgedAt: tombstone.purgedAt,
+        });
+
         const relationshipReplay = await replayRelationshipRevocationForStudent(tx, {
           studentId: tombstone.studentId,
           purgedAt: tombstone.purgedAt,
@@ -313,6 +322,8 @@ export async function assertTombstoneInvariants(db: Database, studentId: string)
   if (activeRelationships > 0 || activeGrants > 0 || nonEmptyPayloads > 0) {
     throw new Error("Tombstone invariants violated after replay");
   }
+
+  await assertFamilyContentDeletionCanary(db, studentId);
 }
 
 export {

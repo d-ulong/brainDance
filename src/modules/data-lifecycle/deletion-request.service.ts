@@ -33,6 +33,7 @@ import {
 import { cancelPendingScheduleItemsForStudent } from "@/modules/schedule/account-deletion.service";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { purgeTrainingPayloadsForStudent } from "@/modules/training/account-deletion.service";
+import { purgeFamilyContentBodiesForStudent } from "@/modules/family-content/account-deletion.service";
 import { dailyReflections, users } from "@/db/schema";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 
@@ -692,6 +693,7 @@ export async function processDeletionWorker(
       if (request.targetType === DELETION_TARGET_TYPE.STUDENT_ACCOUNT) {
         await purgeAllReflectionBodiesForStudent(tx, { studentId, now });
         await purgeTrainingPayloadsForStudent(tx, studentId);
+        await purgeFamilyContentBodiesForStudent(tx, { studentId, now });
       } else {
         await purgeReflectionBodyById(tx, { reflectionId: request.targetId, now });
         await revokePrivateGrantsForReflection(tx, { reflectionId: request.targetId, now });

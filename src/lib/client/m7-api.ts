@@ -1,5 +1,15 @@
 import { apiFetch, newIdempotencyKey } from "@/lib/client/api";
 
+export type MediaAttachmentDto = {
+  referenceId: string;
+  mediaId: string;
+  purpose: string;
+  status: string;
+  detectedMime: string | null;
+  width: number | null;
+  height: number | null;
+};
+
 export type FamilyPushDto = {
   pushId: string;
   studentId: string;
@@ -8,6 +18,7 @@ export type FamilyPushDto = {
   currentVersion: number;
   body: string;
   linkUrl: string | null;
+  media: MediaAttachmentDto[];
   scheduledPublishAt: string | null;
   publishedAt: string | null;
   canEdit: boolean;
@@ -22,6 +33,7 @@ export type PushAnswerDto = {
   studentId: string;
   currentVersion: number;
   body: string;
+  media: MediaAttachmentDto[];
   updatedAt: string;
   idempotentReplay?: boolean;
 };
@@ -37,6 +49,18 @@ export type PushCommentDto = {
   canEdit: boolean;
   createdAt: string;
   updatedAt: string;
+  idempotentReplay?: boolean;
+};
+
+export type MediaObjectDto = {
+  mediaId: string;
+  status: string;
+  declaredMime: string;
+  detectedMime: string | null;
+  width: number | null;
+  height: number | null;
+  byteSize: number;
+  readyAt: string | null;
   idempotentReplay?: boolean;
 };
 
@@ -76,6 +100,7 @@ export async function createPush(
   body: {
     body?: string;
     linkUrl?: string;
+    mediaIds?: string[];
     publishMode: "draft" | "immediate" | "scheduled";
     scheduledPublishAt?: string | null;
   },
@@ -90,7 +115,12 @@ export async function createPush(
 export async function editPush(
   studentId: string,
   pushId: string,
-  body: { body?: string; linkUrl?: string; scheduledPublishAt?: string | null },
+  body: {
+    body?: string;
+    linkUrl?: string;
+    mediaIds?: string[];
+    scheduledPublishAt?: string | null;
+  },
 ) {
   return apiFetch<FamilyPushDto>(`/api/family/students/${studentId}/pushes/${pushId}`, {
     method: "PATCH",
@@ -124,12 +154,60 @@ export async function getAnswer(studentId: string, pushId: string) {
   );
 }
 
-export async function submitAnswer(studentId: string, pushId: string, body: string) {
+export async function submitAnswer(
+  studentId: string,
+  pushId: string,
+  body: {
+    body?: string;
+    mediaIds?: string[];
+    handwritingMediaIds?: string[];
+  },
+) {
   return apiFetch<PushAnswerDto>(`/api/family/students/${studentId}/pushes/${pushId}/answers`, {
     method: "POST",
     headers: { "Idempotency-Key": newIdempotencyKey("submit-answer") },
-    body: JSON.stringify({ body }),
+    body: JSON.stringify(body),
   });
+}
+
+export async function uploadMedia(
+  studentId: string,
+  file: File,
+  declaredMime: string,
+): Promise<MediaObjectDto> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("declaredMime", declaredMime);
+  return apiFetch<MediaObjectDto>(`/api/family/students/${studentId}/media`, {
+    method: "POST",
+    headers: { "Idempotency-Key": newIdempotencyKey("upload-media") },
+    body: form,
+  });
+}
+
+export async function issueMediaCapability(studentId: string, referenceId: string) {
+  return apiFetch<{
+    capabilityToken: string;
+    expiresAt: string;
+    mediaId: string;
+    referenceId: string;
+  }>(`/api/family/students/${studentId}/media/references/${referenceId}/capability`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function fetchMediaBytes(capabilityToken: string): Promise<Blob> {
+  const response = await fetch("/api/media/read", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ capabilityToken }),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to load media");
+  }
+  return response.blob();
 }
 
 export async function listComments(studentId: string, pushId: string) {

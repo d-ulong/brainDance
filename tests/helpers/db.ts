@@ -30,6 +30,10 @@ export async function resetIdentityTables(db: TestDb): Promise<void> {
     await db.execute(sql`
       TRUNCATE TABLE
         notifications,
+        media_read_capabilities,
+        media_purge_intents,
+        media_references,
+        media_objects,
         push_comment_versions,
         push_comments,
         push_answer_versions,

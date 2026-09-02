@@ -15,6 +15,10 @@ import {
 import { normalizePushContent } from "@/modules/family-content/content";
 import type { FamilyPushDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import {
+  attachReadyMediaToResource,
+  listActiveMediaDtosForResource,
+} from "@/modules/family-content/media-reference.service";
 import { lockUserRowForUpdate } from "@/modules/identity/user-role.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
@@ -24,6 +28,7 @@ export type CreateFamilyPushInput = {
   studentId: string;
   body?: string | null;
   linkUrl?: string | null;
+  mediaIds?: string[] | null;
   publishMode: FamilyPushPublishMode;
   scheduledPublishAt?: string | null;
   idempotencyKey: string;
@@ -36,11 +41,13 @@ export type CreateFamilyPushResult = {
   idempotentReplay: boolean;
 };
 
-function toPushDto(
+async function toPushDto(
+  db: Database,
   push: typeof familyPushes.$inferSelect,
   version: typeof familyPushVersions.$inferSelect,
   canEdit: boolean,
-): FamilyPushDto {
+): Promise<FamilyPushDto> {
+  const media = await listActiveMediaDtosForResource(db, "family_push_version", version.id);
   return {
     pushId: push.id,
     studentId: push.studentId,
@@ -49,6 +56,7 @@ function toPushDto(
     currentVersion: push.currentVersion,
     body: version.body,
     linkUrl: version.linkUrl,
+    media,
     scheduledPublishAt: push.scheduledPublishAt?.toISOString() ?? null,
     publishedAt: push.publishedAt?.toISOString() ?? null,
     canEdit,
@@ -94,7 +102,7 @@ async function findCreateReplay(
   }
 
   return {
-    push: toPushDto(existing, version, true),
+    push: await toPushDto(db, existing, version, true),
     idempotentReplay: true,
   };
 }
@@ -104,7 +112,11 @@ export async function createFamilyPush(
   input: CreateFamilyPushInput,
 ): Promise<CreateFamilyPushResult> {
   const now = input.now ?? new Date();
-  const content = normalizePushContent({ body: input.body, linkUrl: input.linkUrl });
+  const content = normalizePushContent({
+    body: input.body,
+    linkUrl: input.linkUrl,
+    mediaIds: input.mediaIds,
+  });
 
   let status: FamilyPushStatus;
   let scheduledPublishAt: Date | null = null;
@@ -133,6 +145,7 @@ export async function createFamilyPush(
     studentId: input.studentId,
     body: content.body,
     linkUrl: content.linkUrl,
+    mediaIds: content.mediaIds,
     publishMode: input.publishMode,
     scheduledPublishAt: scheduledPublishAt?.toISOString() ?? null,
   });
@@ -196,6 +209,18 @@ export async function createFamilyPush(
       })
       .returning();
 
+    for (const mediaId of content.mediaIds) {
+      await attachReadyMediaToResource(tx, {
+        actorId: input.actorId,
+        mediaId,
+        resourceType: "family_push_version",
+        resourceId: version!.id,
+        purpose: "push_image",
+        studentId: push.studentId,
+        now,
+      });
+    }
+
     await appendAuditEvent(tx, {
       actorId: input.actorId,
       action: "family_push.created",
@@ -209,6 +234,7 @@ export async function createFamilyPush(
         version: 1,
         hasLink: Boolean(content.linkUrl),
         bodyLength: content.body.length,
+        mediaCount: content.mediaIds.length,
       },
     });
 
@@ -243,7 +269,7 @@ export async function createFamilyPush(
     }
 
     return {
-      push: toPushDto(push, version!, true),
+      push: await toPushDto(tx, push, version!, true),
       idempotentReplay: false,
     };
   });
@@ -268,7 +294,7 @@ export async function loadPushDto(
   if (!version) {
     throw new FamilyContentError("NOT_FOUND", "Push version not found");
   }
-  return toPushDto(push, version, canEdit);
+  return toPushDto(db, push, version, canEdit);
 }
 
 export { toPushDto };

@@ -135,6 +135,10 @@ function familyContentErrorToStatus(code: FamilyContentErrorCode): number {
       return 403;
     case "VALIDATION_ERROR":
     case "FROZEN":
+    case "MEDIA_REJECTED":
+    case "MEDIA_UNAVAILABLE":
+    case "TOKEN_INVALID":
+    case "TOKEN_EXPIRED":
       return 400;
     case "IDEMPOTENCY_CONFLICT":
     case "STATE_CONFLICT":

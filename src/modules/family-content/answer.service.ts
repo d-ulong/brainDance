@@ -11,22 +11,29 @@ import {
   ANSWERABLE_STATUSES,
   FAMILY_CONTENT_EVENT_TYPES,
 } from "@/modules/family-content/constants";
-import { normalizeAnswerBody } from "@/modules/family-content/content";
+import { normalizeAnswerContent } from "@/modules/family-content/content";
 import type { PushAnswerDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import {
+  attachReadyMediaToResource,
+  listActiveMediaDtosForResource,
+} from "@/modules/family-content/media-reference.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 
-function toAnswerDto(
+async function toAnswerDto(
+  db: Database,
   answer: typeof pushAnswers.$inferSelect,
   version: typeof pushAnswerVersions.$inferSelect,
-): PushAnswerDto {
+): Promise<PushAnswerDto> {
+  const media = await listActiveMediaDtosForResource(db, "push_answer_version", version.id);
   return {
     answerId: answer.id,
     pushId: answer.pushId,
     studentId: answer.studentId,
     currentVersion: answer.currentVersion,
     body: version.body,
+    media,
     updatedAt: answer.updatedAt.toISOString(),
   };
 }
@@ -50,24 +57,68 @@ export async function getPushAnswer(db: Database, pushId: string): Promise<PushA
   if (!version) {
     return null;
   }
-  return toAnswerDto(answer, version);
+  return toAnswerDto(db, answer, version);
 }
 
 export type SubmitPushAnswerInput = {
   studentId: string;
   pushId: string;
-  body: string;
+  body?: string | null;
+  mediaIds?: string[] | null;
+  handwritingMediaIds?: string[] | null;
   idempotencyKey: string;
   requestId?: string;
   now?: Date;
 };
 
+async function attachAnswerMedia(
+  tx: Database,
+  input: {
+    studentId: string;
+    versionId: string;
+    mediaIds: string[];
+    handwritingMediaIds: string[];
+    now: Date;
+  },
+): Promise<void> {
+  for (const mediaId of input.mediaIds) {
+    await attachReadyMediaToResource(tx, {
+      actorId: input.studentId,
+      mediaId,
+      resourceType: "push_answer_version",
+      resourceId: input.versionId,
+      purpose: "answer_image",
+      studentId: input.studentId,
+      now: input.now,
+    });
+  }
+  for (const mediaId of input.handwritingMediaIds) {
+    await attachReadyMediaToResource(tx, {
+      actorId: input.studentId,
+      mediaId,
+      resourceType: "push_answer_version",
+      resourceId: input.versionId,
+      purpose: "handwriting_image",
+      studentId: input.studentId,
+      now: input.now,
+    });
+  }
+}
+
 export async function submitPushAnswer(
   db: Database,
   input: SubmitPushAnswerInput,
 ): Promise<{ answer: PushAnswerDto; idempotentReplay: boolean }> {
-  const body = normalizeAnswerBody(input.body);
-  const payloadHash = hashIdempotencyPayload({ body });
+  const content = normalizeAnswerContent({
+    body: input.body,
+    mediaIds: input.mediaIds,
+    handwritingMediaIds: input.handwritingMediaIds,
+  });
+  const payloadHash = hashIdempotencyPayload({
+    body: content.body,
+    mediaIds: content.mediaIds,
+    handwritingMediaIds: content.handwritingMediaIds,
+  });
 
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
@@ -111,7 +162,7 @@ export async function submitPushAnswer(
           )
           .limit(1);
         return {
-          answer: toAnswerDto(existingAnswer, current ?? replayVersion),
+          answer: await toAnswerDto(tx, existingAnswer, current ?? replayVersion),
           idempotentReplay: true,
         };
       }
@@ -130,12 +181,20 @@ export async function submitPushAnswer(
         .values({
           answerId: existingAnswer.id,
           version: nextVersion,
-          body,
+          body: content.body,
           submitIdempotencyKey: input.idempotencyKey,
           submitIdempotencyPayloadHash: payloadHash,
           createdAt: now,
         })
         .returning();
+
+      await attachAnswerMedia(tx, {
+        studentId: input.studentId,
+        versionId: version!.id,
+        mediaIds: content.mediaIds,
+        handwritingMediaIds: content.handwritingMediaIds,
+        now,
+      });
 
       await appendAuditEvent(tx, {
         actorId: input.studentId,
@@ -148,7 +207,8 @@ export async function submitPushAnswer(
           pushId: push.id,
           studentId: push.studentId,
           version: nextVersion,
-          bodyLength: body.length,
+          bodyLength: content.body.length,
+          mediaCount: content.mediaIds.length + content.handwritingMediaIds.length,
         },
       });
 
@@ -165,7 +225,7 @@ export async function submitPushAnswer(
         },
       });
 
-      return { answer: toAnswerDto(updated!, version!), idempotentReplay: false };
+      return { answer: await toAnswerDto(tx, updated!, version!), idempotentReplay: false };
     }
 
     const now = input.now ?? new Date();
@@ -186,12 +246,20 @@ export async function submitPushAnswer(
       .values({
         answerId: answer!.id,
         version: 1,
-        body,
+        body: content.body,
         submitIdempotencyKey: input.idempotencyKey,
         submitIdempotencyPayloadHash: payloadHash,
         createdAt: now,
       })
       .returning();
+
+    await attachAnswerMedia(tx, {
+      studentId: input.studentId,
+      versionId: version!.id,
+      mediaIds: content.mediaIds,
+      handwritingMediaIds: content.handwritingMediaIds,
+      now,
+    });
 
     await appendAuditEvent(tx, {
       actorId: input.studentId,
@@ -204,7 +272,8 @@ export async function submitPushAnswer(
         pushId: push.id,
         studentId: push.studentId,
         version: 1,
-        bodyLength: body.length,
+        bodyLength: content.body.length,
+        mediaCount: content.mediaIds.length + content.handwritingMediaIds.length,
       },
     });
 
@@ -221,9 +290,8 @@ export async function submitPushAnswer(
       },
     });
 
-    // Touch push updated_at for list ordering without changing status.
     await tx.update(familyPushes).set({ updatedAt: now }).where(eq(familyPushes.id, push.id));
 
-    return { answer: toAnswerDto(answer!, version!), idempotentReplay: false };
+    return { answer: await toAnswerDto(tx, answer!, version!), idempotentReplay: false };
   });
 }

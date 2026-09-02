@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { MediaPreviewList } from "@/components/family-content/media-preview";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   createComment,
@@ -14,6 +15,7 @@ import {
   getPush,
   listComments,
   submitAnswer,
+  uploadMedia,
   type FamilyPushDto,
   type PushAnswerDto,
   type PushCommentDto,
@@ -29,6 +31,9 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
   const [answer, setAnswer] = useState<PushAnswerDto | null>(null);
   const [comments, setComments] = useState<PushCommentDto[]>([]);
   const [answerBody, setAnswerBody] = useState("");
+  const [answerImage, setAnswerImage] = useState<File | null>(null);
+  const [handwritingImage, setHandwritingImage] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [replyTo, setReplyTo] = useState<string | null>(null);
 
@@ -64,13 +69,50 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
   }, [loadAll, params, router]);
 
   async function onSubmitAnswer() {
-    if (!studentId || !pushId || !answerBody.trim()) return;
+    if (!studentId || !pushId) return;
+    if (!answerBody.trim() && !answerImage && !handwritingImage) return;
     setError(null);
+    setUploadStatus(null);
     try {
-      await submitAnswer(studentId, pushId, answerBody);
+      const mediaIds: string[] = [];
+      const handwritingMediaIds: string[] = [];
+      if (answerImage) {
+        setUploadStatus("uploading");
+        const mime =
+          answerImage.type === "image/jpg" ? "image/jpeg" : answerImage.type || "image/jpeg";
+        const uploaded = await uploadMedia(studentId, answerImage, mime);
+        if (uploaded.status !== "ready") {
+          setUploadStatus("failed");
+          throw new Error("图片处理未完成");
+        }
+        mediaIds.push(uploaded.mediaId);
+      }
+      if (handwritingImage) {
+        setUploadStatus("uploading");
+        const mime =
+          handwritingImage.type === "image/jpg"
+            ? "image/jpeg"
+            : handwritingImage.type || "image/jpeg";
+        const uploaded = await uploadMedia(studentId, handwritingImage, mime);
+        if (uploaded.status !== "ready") {
+          setUploadStatus("failed");
+          throw new Error("手写图片处理未完成");
+        }
+        handwritingMediaIds.push(uploaded.mediaId);
+      }
+      setUploadStatus(mediaIds.length || handwritingMediaIds.length ? "ready" : null);
+      await submitAnswer(studentId, pushId, {
+        body: answerBody || undefined,
+        mediaIds: mediaIds.length ? mediaIds : undefined,
+        handwritingMediaIds: handwritingMediaIds.length ? handwritingMediaIds : undefined,
+      });
       setAnswerBody("");
+      setAnswerImage(null);
+      setHandwritingImage(null);
+      setUploadStatus(null);
       await loadAll(studentId, pushId);
     } catch (err) {
+      setUploadStatus((prev) => (prev === "uploading" ? "failed" : prev));
       setError(err instanceof ApiError ? err.message : "提交作答失败");
     }
   }
@@ -122,15 +164,31 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
                 {push.linkUrl}
               </a>
             ) : null}
+            {studentId && push.media?.length ? (
+              <MediaPreviewList
+                studentId={studentId}
+                media={push.media}
+                testIdPrefix="student-push-media"
+              />
+            ) : null}
           </article>
         ) : null}
 
         <section className="flex flex-col gap-2">
           <h2 className="text-base font-medium">我的作答</h2>
           {answer ? (
-            <p className="whitespace-pre-wrap text-sm" data-testid="student-answer-current">
-              当前版本 v{answer.currentVersion}：{answer.body}
-            </p>
+            <div data-testid="student-answer-current">
+              <p className="whitespace-pre-wrap text-sm">
+                当前版本 v{answer.currentVersion}：{answer.body || "(图片作答)"}
+              </p>
+              {studentId && answer.media?.length ? (
+                <MediaPreviewList
+                  studentId={studentId}
+                  media={answer.media}
+                  testIdPrefix="student-answer-media"
+                />
+              ) : null}
+            </div>
           ) : (
             <p className="text-sm text-neutral-600">尚未作答</p>
           )}
@@ -143,6 +201,35 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
                 onChange={(e) => setAnswerBody(e.target.value)}
                 placeholder={answer ? "补充新版本作答" : "提交作答"}
               />
+              <label className="flex flex-col gap-1 text-sm">
+                图片作答（可选）
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  data-testid="student-answer-image-input"
+                  className="min-h-11 text-sm"
+                  onChange={(e) => setAnswerImage(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                手写图片（可选）
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  data-testid="student-handwriting-image-input"
+                  className="min-h-11 text-sm"
+                  onChange={(e) => setHandwritingImage(e.target.files?.[0] ?? null)}
+                />
+              </label>
+              {uploadStatus ? (
+                <p className="text-sm text-neutral-600" data-testid="student-answer-upload-status">
+                  {uploadStatus === "uploading"
+                    ? "图片处理中…"
+                    : uploadStatus === "ready"
+                      ? "图片已就绪"
+                      : "图片处理失败，可重试"}
+                </p>
+              ) : null}
               <button
                 type="button"
                 data-testid="student-answer-submit"

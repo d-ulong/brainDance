@@ -10,6 +10,7 @@ import {
   createPush,
   familyPushStatusLabel,
   listParentPushes,
+  uploadMedia,
   type FamilyPushDto,
 } from "@/lib/client/m7-api";
 
@@ -21,6 +22,8 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
   const [pushes, setPushes] = useState<FamilyPushDto[]>([]);
   const [body, setBody] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [publishMode, setPublishMode] = useState<"immediate" | "scheduled" | "draft">("immediate");
   const [scheduledAt, setScheduledAt] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -57,10 +60,25 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
     if (!studentId) return;
     setSubmitting(true);
     setError(null);
+    setUploadStatus(null);
     try {
+      let mediaIds: string[] | undefined;
+      if (imageFile) {
+        setUploadStatus("uploading");
+        const mime =
+          imageFile.type === "image/jpg" ? "image/jpeg" : imageFile.type || "image/jpeg";
+        const uploaded = await uploadMedia(studentId, imageFile, mime);
+        if (uploaded.status !== "ready") {
+          setUploadStatus("failed");
+          throw new Error("图片处理未完成");
+        }
+        setUploadStatus("ready");
+        mediaIds = [uploaded.mediaId];
+      }
       await createPush(studentId, {
         body: body || undefined,
         linkUrl: linkUrl || undefined,
+        mediaIds,
         publishMode,
         scheduledPublishAt:
           publishMode === "scheduled" && scheduledAt
@@ -70,8 +88,11 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
       setBody("");
       setLinkUrl("");
       setScheduledAt("");
+      setImageFile(null);
+      setUploadStatus(null);
       await load(studentId);
     } catch (err) {
+      setUploadStatus((prev) => (prev === "uploading" ? "failed" : prev));
       setError(err instanceof ApiError ? err.message : "创建推送失败");
     } finally {
       setSubmitting(false);
@@ -116,6 +137,28 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
               placeholder="https://"
             />
           </label>
+          <label className="flex flex-col gap-1 text-sm">
+            图片（可选，JPG/PNG/WebP，≤10MB）
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              data-testid="push-image-input"
+              className="min-h-11 text-sm"
+              onChange={(e) => {
+                setImageFile(e.target.files?.[0] ?? null);
+                setUploadStatus(null);
+              }}
+            />
+          </label>
+          {uploadStatus ? (
+            <p className="text-sm text-neutral-600" data-testid="push-image-status">
+              {uploadStatus === "uploading"
+                ? "图片校验/扫描/处理中…"
+                : uploadStatus === "ready"
+                  ? "图片已就绪"
+                  : "图片处理失败，可重试"}
+            </p>
+          ) : null}
           <fieldset className="flex flex-col gap-2 text-sm">
             <legend>发布方式</legend>
             <label className="flex items-center gap-2">
@@ -201,6 +244,14 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
                       data-testid={`push-link-${push.pushId}`}
                     >
                       {push.linkUrl}
+                    </p>
+                  ) : null}
+                  {push.media?.length ? (
+                    <p
+                      className="mt-1 text-sm text-neutral-600"
+                      data-testid={`push-media-count-${push.pushId}`}
+                    >
+                      含图片 {push.media.length} 张
                     </p>
                   ) : null}
                   <Link

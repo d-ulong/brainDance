@@ -15,6 +15,8 @@ import {
 } from "@/modules/notification/notification.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import type { ClaimedOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
+import { handleMediaPurgeRequestedV1 } from "@/modules/family-content/media-purge.service";
+import { getRouteMediaStore } from "@/modules/family-content/route-media-stores";
 
 export type M7OutboxHandler = (db: Database, event: ClaimedOutboxEvent) => Promise<void>;
 
@@ -32,10 +34,21 @@ const M7_EVENT_HANDLERS: ReadonlyMap<string, ReadonlyMap<number, M7OutboxHandler
     FAMILY_CONTENT_EVENT_TYPES.COMMENTED,
     new Map<number, M7OutboxHandler>([[1, handleCommentedV1]]),
   ],
+  [
+    FAMILY_CONTENT_EVENT_TYPES.MEDIA_PURGE_REQUESTED,
+    new Map<number, M7OutboxHandler>([[1, handleMediaPurgeRequestedOutboxV1]]),
+  ],
 ]);
 
 export function getM7EventHandler(eventType: string, eventVersion: number): M7OutboxHandler | null {
   return M7_EVENT_HANDLERS.get(eventType)?.get(eventVersion) ?? null;
+}
+
+async function handleMediaPurgeRequestedOutboxV1(
+  db: Database,
+  event: ClaimedOutboxEvent,
+): Promise<void> {
+  await handleMediaPurgeRequestedV1(db, event, getRouteMediaStore());
 }
 
 async function cancelScheduledPushInTx(

@@ -7,7 +7,10 @@ loadEnv({ path: ".env.local", override: true });
 loadEnv({ override: true });
 
 const artifactRoot = path.resolve(process.cwd(), ".braindance-artifacts", "vitest");
+const mediaRoot = path.resolve(process.cwd(), ".braindance-media", "vitest");
 process.env.BRAIN_DANCE_ARTIFACT_ROOT ??= artifactRoot;
+process.env.BRAIN_DANCE_MEDIA_ROOT ??= mediaRoot;
+process.env.BRAIN_DANCE_MEDIA_SCANNER ??= "test-clean";
 
 export default defineConfig({
   test: {
@@ -29,6 +32,8 @@ export default defineConfig({
     },
     env: {
       BRAIN_DANCE_ARTIFACT_ROOT: process.env.BRAIN_DANCE_ARTIFACT_ROOT ?? artifactRoot,
+      BRAIN_DANCE_MEDIA_ROOT: process.env.BRAIN_DANCE_MEDIA_ROOT ?? mediaRoot,
+      BRAIN_DANCE_MEDIA_SCANNER: process.env.BRAIN_DANCE_MEDIA_SCANNER ?? "test-clean",
     },
   },
   resolve: {

@@ -15,6 +15,7 @@ import { FamilyContentError } from "@/modules/family-content/errors";
 const editBodySchema = z.object({
   body: z.string().optional().nullable(),
   linkUrl: z.string().optional().nullable(),
+  mediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
   scheduledPublishAt: z.string().datetime().optional().nullable(),
 });
 
@@ -67,6 +68,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       pushId,
       body: parsed.body,
       linkUrl: parsed.linkUrl,
+      mediaIds: parsed.mediaIds,
       scheduledPublishAt: parsed.scheduledPublishAt,
       idempotencyKey: idempotency.key,
       requestId: request.headers.get("x-request-id") ?? undefined,

@@ -5,3 +5,5 @@ config({ path: ".env" });
 
 process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
 process.env.BRAIN_DANCE_ARTIFACT_ROOT ??= `${process.cwd().replace(/\\/g, "/")}/.braindance-artifacts/vitest`;
+process.env.BRAIN_DANCE_MEDIA_ROOT ??= `${process.cwd().replace(/\\/g, "/")}/.braindance-media/vitest`;
+process.env.BRAIN_DANCE_MEDIA_SCANNER ??= "test-clean";

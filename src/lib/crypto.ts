@@ -44,6 +44,16 @@ export function hashDeletionCapabilityToken(plaintext: string): string {
     .digest("hex");
 }
 
+export function generateMediaCapabilityToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function hashMediaCapabilityToken(plaintext: string): string {
+  return createHmac("sha256", getSecretPepper())
+    .update(`media-capability:${plaintext}`)
+    .digest("hex");
+}
+
 export function generateOtpPlaintext(): string {
   return randomInt(100_000, 1_000_000).toString();
 }

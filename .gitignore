@@ -21,6 +21,7 @@ __pycache__/
 
 # Local private artifact store (never commit contents)
 .braindance-artifacts/
+.braindance-media/
 
 # User-local Codex and shared-agent runtime integration
 .agents/

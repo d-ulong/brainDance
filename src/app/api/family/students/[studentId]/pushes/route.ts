@@ -11,6 +11,7 @@ import { listFamilyPushes } from "@/modules/family-content/push-lifecycle.servic
 const createBodySchema = z.object({
   body: z.string().optional().nullable(),
   linkUrl: z.string().optional().nullable(),
+  mediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
   publishMode: z.enum(["draft", "immediate", "scheduled"]),
   scheduledPublishAt: z.string().datetime().optional().nullable(),
 });
@@ -55,6 +56,7 @@ export async function POST(request: Request, context: RouteContext) {
       studentId,
       body: parsed.body,
       linkUrl: parsed.linkUrl,
+      mediaIds: parsed.mediaIds,
       publishMode: parsed.publishMode,
       scheduledPublishAt: parsed.scheduledPublishAt,
       idempotencyKey: idempotency.key,

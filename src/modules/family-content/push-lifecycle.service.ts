@@ -28,6 +28,12 @@ import {
 } from "@/modules/family-content/audit-replay";
 import type { FamilyPushDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import {
+  attachReadyMediaToResource,
+  findAnswerIdForPush,
+  revokeAllReferencesForAnswerInTx,
+  revokeAllReferencesForPushInTx,
+} from "@/modules/family-content/media-reference.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 
@@ -40,6 +46,7 @@ export type EditFamilyPushInput = {
   pushId: string;
   body?: string | null;
   linkUrl?: string | null;
+  mediaIds?: string[] | null;
   scheduledPublishAt?: string | null;
   idempotencyKey: string;
   requestId?: string;
@@ -50,12 +57,17 @@ export async function editFamilyPush(
   db: Database,
   input: EditFamilyPushInput,
 ): Promise<{ push: FamilyPushDto; idempotentReplay: boolean }> {
-  const content = normalizePushContent({ body: input.body, linkUrl: input.linkUrl });
+  const content = normalizePushContent({
+    body: input.body,
+    linkUrl: input.linkUrl,
+    mediaIds: input.mediaIds,
+  });
   const payloadHash = hashIdempotencyPayload({
     command: "edit",
     pushId: input.pushId,
     body: content.body,
     linkUrl: content.linkUrl,
+    mediaIds: content.mediaIds,
     scheduledPublishAt: input.scheduledPublishAt ?? null,
   });
   const auditKey = pushCommandAuditKey(input.idempotencyKey);
@@ -135,6 +147,18 @@ export async function editFamilyPush(
       })
       .returning();
 
+    for (const mediaId of content.mediaIds) {
+      await attachReadyMediaToResource(tx, {
+        actorId: input.actorId,
+        mediaId,
+        resourceType: "family_push_version",
+        resourceId: version!.id,
+        purpose: "push_image",
+        studentId: push.studentId,
+        now,
+      });
+    }
+
     await appendAuditEvent(tx, {
       actorId: input.actorId,
       action: "family_push.edited",
@@ -147,6 +171,7 @@ export async function editFamilyPush(
         version: nextVersion,
         hasLink: Boolean(content.linkUrl),
         bodyLength: content.body.length,
+        mediaCount: content.mediaIds.length,
         payloadHash,
       },
     });
@@ -161,7 +186,7 @@ export async function editFamilyPush(
       `);
     }
 
-    return { push: toPushDto(updated!, version!, true), idempotentReplay: false };
+    return { push: await toPushDto(tx, updated!, version!, true), idempotentReplay: false };
   });
 }
 
@@ -296,6 +321,14 @@ export async function transitionFamilyPush(
       // Leave pending publish request; worker will no-op on non-scheduled status.
     }
 
+    if (input.action === "delete") {
+      await revokeAllReferencesForPushInTx(tx, push.id, now, input.actorId);
+      const answerId = await findAnswerIdForPush(tx, push.id);
+      if (answerId) {
+        await revokeAllReferencesForAnswerInTx(tx, answerId, now, input.actorId);
+      }
+    }
+
     const [version] = await tx
       .select()
       .from(familyPushVersions)
@@ -305,7 +338,7 @@ export async function transitionFamilyPush(
       .limit(1);
 
     return {
-      push: toPushDto(updated!, version!, canEdit),
+      push: await toPushDto(tx, updated!, version!, canEdit),
       idempotentReplay: false,
     };
   });
@@ -370,7 +403,8 @@ export async function listFamilyPushes(
       continue;
     }
     results.push(
-      toPushDto(
+      await toPushDto(
+        db,
         push,
         version[0],
         input.actorRole === "parent" && push.creatorParentId === input.actorId,

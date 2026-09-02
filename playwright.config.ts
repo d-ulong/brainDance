@@ -58,6 +58,11 @@ export default defineConfig({
             BRAIN_DANCE_ARTIFACT_ROOT:
               process.env.BRAIN_DANCE_ARTIFACT_ROOT ??
               path.join(process.cwd(), ".braindance-artifacts", "e2e"),
+            BRAIN_DANCE_MEDIA_ROOT:
+              process.env.BRAIN_DANCE_MEDIA_ROOT ??
+              path.join(process.cwd(), ".braindance-media", "e2e"),
+            BRAIN_DANCE_MEDIA_SCANNER: process.env.BRAIN_DANCE_MEDIA_SCANNER ?? "test-clean",
+            BRAIN_DANCE_ALLOW_TEST_MEDIA_SCANNER: "true",
           },
         },
       }),

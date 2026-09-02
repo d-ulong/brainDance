@@ -10,7 +10,9 @@ import { getFamilyPush } from "@/modules/family-content/push-lifecycle.service";
 import { FamilyContentError } from "@/modules/family-content/errors";
 
 const submitBodySchema = z.object({
-  body: z.string(),
+  body: z.string().optional().nullable(),
+  mediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
+  handwritingMediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
 });
 
 type RouteContext = {
@@ -66,6 +68,8 @@ export async function POST(request: Request, context: RouteContext) {
       studentId,
       pushId,
       body: parsed.body,
+      mediaIds: parsed.mediaIds,
+      handwritingMediaIds: parsed.handwritingMediaIds,
       idempotencyKey: idempotency.key,
       requestId: request.headers.get("x-request-id") ?? undefined,
     });
