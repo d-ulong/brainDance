@@ -103,6 +103,7 @@ export async function waitForExportReady(
   await expect(status).toBeVisible({ timeout: 15_000 });
 
   const deadline = Date.now() + timeoutMs;
+  const refreshClickTimeoutMs = 3_000;
   while (Date.now() < deadline) {
     const download = page.getByTestId(`${prefix}download-export-${jobId}`);
     if (await download.isVisible().catch(() => false)) {
@@ -114,14 +115,17 @@ export async function waitForExportReady(
     }
     const refresh = page.getByTestId(`${prefix}refresh-export-${jobId}`);
     if (await refresh.isVisible().catch(() => false)) {
-      await refresh.click();
+      if (await refresh.isEnabled().catch(() => false)) {
+        await refresh.click({ timeout: refreshClickTimeoutMs }).catch(() => undefined);
+      }
     }
     await page.waitForTimeout(1_500);
   }
 
-  await expect(page.getByTestId(`${prefix}download-export-${jobId}`)).toBeVisible({
-    timeout: 1_000,
-  });
+  const finalText = (await status.textContent()) ?? "";
+  throw new Error(
+    `Export job ${jobId} did not become ready within ${timeoutMs}ms (status: ${finalText})`,
+  );
 }
 
 export async function loginThrowawayStudentViaUi(
