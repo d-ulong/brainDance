@@ -42,8 +42,8 @@
 | AC-M6-03～06 | P2 签署 GO | 继承通过；未削弱冻结/tombstone/一次性 token |
 | AC-M6-07 | 隔离 TEMPLATE 快照恢复 + tombstone 先于 rebuild + 完整 canary + 观测 RPO/RTO | **通过（隔离合成演练）** |
 | AC-M6-08 | 三档脚本可执行；指标字段完整；仅实测档记通过 | **tier 100 通过**；1k/10k **deferred**；slowQueries 本机 `unavailable`（无 pg_stat_statements） |
-| AC-M6-09 | desktop + mobile-360 UI 交互；夹具与 UI 断言已区分 | **聚焦通过**：`30eb52f` 后 desktop-chromium **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 `pnpm test:e2e` 仍无最终通过结果 |
-| AC-M6-10 | migration / test / typecheck / lint / format / build / e2e | 见下方原始摘要 |
+| AC-M6-09 | desktop + mobile-360 UI 交互；夹具与 UI 断言已区分 | **通过**：最终 `pnpm test:e2e` desktop/mobile 各 34 项，总计 **68/68 passed** |
+| AC-M6-10 | migration / test / typecheck / lint / format / build / e2e | **通过**；见下方最终复验摘要 |
 
 ## 夹具 vs UI 断言（P3-C06）
 
@@ -181,8 +181,24 @@ git diff --check → exit 0
 
 - **closed（两级锁）**：`m5-concurrency.test.ts` 竞争证据过期导致的聚焦失败已按两级锁顺序整改；见「M5 并发验证聚焦整改」。
 - **closed（最终复验 C01）**：Codex 于 `5bf14b7` 复验 `17 passed / 1 failed`（R32 runner client close）；已按 C01 消除非确定性，见「M5 并发最终复验整改」。
-- **blocker（本阶段/环境）**：`pnpm test` 全量两次超时无最终结果（约 5m24s / 5m36s 手动中止；第二次含 `--exclude m5-concurrency` 仍无结果）。聚焦/相关测试均通过，排除已知并发用例后的全量未能完成。
-- **blocker（本阶段/环境）**：全量 `pnpm test:e2e` 长时间无最终结果已中止（**未关闭**）。聚焦 M6 lifecycle E2E 已有通过证据：`30eb52f` desktop **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 E2E 仍无最终通过结果。
+- **closed（全量 test）**：固定 `e4a1808df03b2d29b99f38f141423054f07e4275` 完整 `pnpm test` 最终通过：76 files / 607 tests，约 605.87s。
+- **closed（全量 E2E）**：修复投影孤儿夹具后，固定 `e2abff52c496f53e81d1442145f5bc75ebd6b28a` 完整 `pnpm test:e2e` 最终通过：desktop/mobile 各 34 项，总计 68/68，约 7.5m；3003 端口清理成功。
 - **deferred**：容量档 1,000 / 10,000 未在本机实测。
 - **deferred/环境**：slowQueries 因本机未安装 `pg_stat_statements` 记为 unavailable（非伪造 null）。
 - **上线 blocker（规格冻结）**：供应商、DPA、数据驻留、生产密钥、真实生产备份/演练、法律期限。
+
+## 最终复验补记
+
+```text
+固定 e4a1808df03b2d29b99f38f141423054f07e4275：
+  pnpm test → 76 files / 607 tests passed，Duration 605.87s
+  pnpm typecheck → exit 0
+  pnpm format → exit 0
+
+固定 e2abff52c496f53e81d1442145f5bc75ebd6b28a：
+  pnpm test -- tests/integration/projection/rebuild-projection.test.ts → 1 file / 7 tests passed
+  pnpm exec playwright test tests/e2e/m2-schedule-points-flow.spec.ts --project=desktop-chromium --project=mobile-360 → 2/2 passed
+  pnpm typecheck → exit 0
+  pnpm format → exit 0
+  pnpm test:e2e → 68/68 passed（desktop 34 + mobile 34），7.5m，port 3003 released
+```

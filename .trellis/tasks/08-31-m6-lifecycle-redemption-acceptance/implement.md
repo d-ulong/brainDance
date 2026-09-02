@@ -50,7 +50,7 @@ pnpm format
 
 P2 禁止：产品 UI、真实云对象存储、生产数据/备份、容量宣称、M7/M8、无关重构、依赖升级、merge/rebase/reset/push/deploy。
 
-## P3：UI、容量与恢复联合验收
+## P3：UI、容量与恢复联合验收（已签署 GO：`e2abff52c496f53e81d1442145f5bc75ebd6b28a`）
 
 - [ ] 完成学生兑换/撤销、家长目录/审批、导出状态/下载和删除请求/撤销/确认 UI。
 - [ ] desktop Chromium 与 mobile-360 覆盖成功、越权、终态冲突、过期 token、冻结和危险操作确认；验证无横向滚动。
