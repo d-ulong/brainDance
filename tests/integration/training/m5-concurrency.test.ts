@@ -15,7 +15,6 @@ import {
 } from "@/db/schema";
 import * as auditModule from "@/modules/audit/append-audit-event";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
-import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
 import { getMetricDefinitions } from "@/modules/training/protocol";
 import {
   appendTrainingEvent,
@@ -32,6 +31,8 @@ import {
 } from "../../helpers/db";
 import { requireDatabaseUrl } from "@/lib/env";
 import {
+  buildFullRebuildProjectionLockKey,
+  buildSubmitCompetitionLockKey,
   FIXED_NEGATIVE_HASH_LOCK_KEY,
   FIXED_POSITIVE_HASH_LOCK_KEY,
   INJECTED_GATE_CLOSE_FAILURE_MESSAGE,
@@ -214,31 +215,26 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       startIdempotencyKey: "concurrent-dual-start-b",
     });
 
-    const [sessionRow] = await db
-      .select({ familyDate: trainingSessions.familyDate })
-      .from(trainingSessions)
-      .where(eq(trainingSessions.id, startedA.sessionId));
-
-    const lockKey = buildSubmitCompetitionLockKey(
-      student.studentId,
-      REACTION_TRAINING_KEY,
-      sessionRow!.familyDate,
+    // Gate the first lock in production submit order (full-rebuild), not the
+    // per-student competition lock — the global exclusive lock serializes runners
+    // before they can both wait on competition.
+    const results = await runConcurrentSubmitsWithContentionEvidence(
+      buildFullRebuildProjectionLockKey(),
+      [
+        (conn) =>
+          submitTrainingSession(conn, {
+            studentId: student.studentId,
+            sessionId: startedA.sessionId,
+            idempotencyKey: "concurrent-dual-submit-a",
+          }),
+        (conn) =>
+          submitTrainingSession(conn, {
+            studentId: student.studentId,
+            sessionId: startedB.sessionId,
+            idempotencyKey: "concurrent-dual-submit-b",
+          }),
+      ],
     );
-
-    const results = await runConcurrentSubmitsWithContentionEvidence(lockKey, [
-      (conn) =>
-        submitTrainingSession(conn, {
-          studentId: student.studentId,
-          sessionId: startedA.sessionId,
-          idempotencyKey: "concurrent-dual-submit-a",
-        }),
-      (conn) =>
-        submitTrainingSession(conn, {
-          studentId: student.studentId,
-          sessionId: startedB.sessionId,
-          idempotencyKey: "concurrent-dual-submit-b",
-        }),
-    ]);
 
     expect(results.every((result) => result.status === "completed")).toBe(true);
     const kinds = results.map((result) => result.sessionKind).sort();
@@ -302,31 +298,23 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       startIdempotencyKey: "concurrent-idem-start",
     });
 
-    const [sessionRow] = await db
-      .select({ familyDate: trainingSessions.familyDate })
-      .from(trainingSessions)
-      .where(eq(trainingSessions.id, started.sessionId));
-
-    const lockKey = buildSubmitCompetitionLockKey(
-      student.studentId,
-      REACTION_TRAINING_KEY,
-      sessionRow!.familyDate,
+    const results = await runConcurrentSubmitsWithContentionEvidence(
+      buildFullRebuildProjectionLockKey(),
+      [
+        (conn) =>
+          submitTrainingSession(conn, {
+            studentId: student.studentId,
+            sessionId: started.sessionId,
+            idempotencyKey: "concurrent-idem-submit",
+          }),
+        (conn) =>
+          submitTrainingSession(conn, {
+            studentId: student.studentId,
+            sessionId: started.sessionId,
+            idempotencyKey: "concurrent-idem-submit",
+          }),
+      ],
     );
-
-    const results = await runConcurrentSubmitsWithContentionEvidence(lockKey, [
-      (conn) =>
-        submitTrainingSession(conn, {
-          studentId: student.studentId,
-          sessionId: started.sessionId,
-          idempotencyKey: "concurrent-idem-submit",
-        }),
-      (conn) =>
-        submitTrainingSession(conn, {
-          studentId: student.studentId,
-          sessionId: started.sessionId,
-          idempotencyKey: "concurrent-idem-submit",
-        }),
-    ]);
 
     expect(results).toHaveLength(2);
     expect(results.filter((result) => result.idempotentReplay)).toHaveLength(1);
@@ -423,9 +411,10 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
     expect(domainCheck).toBeDefined();
   });
 
-  it("P1-R21: contention helper reuses production submit competition lock key builder", () => {
+  it("P1-R21: contention helper reuses production two-level submit lock key builders", () => {
     const studentId = "00000000-0000-0000-0000-000000000123";
     const familyDate = "2025-08-30";
+    expect(buildFullRebuildProjectionLockKey()).toBe("training:profile-projection:full-rebuild");
     expect(buildSubmitCompetitionLockKey(studentId, REACTION_TRAINING_KEY, familyDate)).toBe(
       `${studentId}:${REACTION_TRAINING_KEY}:${familyDate}`,
     );
@@ -544,7 +533,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         lockKeys: [lockKey],
         assertOutcome: ({ reason, elapsedMs, rejected }) => {
           expect(rejected).toBe(true);
-          expectThrownMessage(reason, /Failed to release competition advisory lock/);
+          expectThrownMessage(reason, /Failed to release gated advisory lock/);
           expectBoundedElapsed(elapsedMs);
         },
       },

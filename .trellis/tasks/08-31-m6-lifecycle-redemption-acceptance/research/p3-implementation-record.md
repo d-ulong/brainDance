@@ -120,6 +120,27 @@ BRAIN_DANCE_SYNTHETIC=1 pnpm capacity:synthetic -- --tier 100 → passed（见�
 BRAIN_DANCE_SYNTHETIC=1 pnpm recovery:drill → passed: true（两轮；第二轮阶段计时实测）
 ```
 
+## M5 并发验证聚焦整改（执行基线 `0a07ed715f497678815b8e958bd3c31dc28d1fce`）
+
+| 项 | 要点 | 证据 |
+|----|------|------|
+| 根因 | 旧竞争辅助器只 gate 第二把 competition lock，并要求两 runner 同时等待；生产先取全局 full-rebuild 排他锁，已将第二 runner 挡在第一把锁上，等待条件不可能成立 | Codex 复现：`m5-concurrency.test.ts` → `2 failed / 16 passed`，超时文案 `Timed out waiting for all submit backends waiting on competition advisory lock` |
+| 整改 | 真实 submit 用例改为 gate `buildFullRebuildProjectionLockKey()`；保留真实 PostgreSQL advisory-lock 证据、有界清理、正负 hash、失败注入与无残留锁/连接；不改生产锁顺序 | `tests/helpers/training-submit-race.ts`；`tests/integration/training/m5-concurrency.test.ts` |
+| 验证 | 本轮各只跑一次 | 见下方本轮命令摘要 |
+| 生产代码 | 未触及 `src/` | — |
+
+本轮验证命令摘要（各最多一次；format 首次失败后仅对改动文件定向 write，未重跑全量 format）：
+
+```text
+pnpm test -- tests/integration/training/m5-concurrency.test.ts --reporter=verbose
+  → exit 0；Test Files 1 passed (1)；Tests 18 passed (18)；Duration ~38.67s
+pnpm typecheck → exit 0
+pnpm lint → exit 0（6 warnings，0 errors；与既有无关告警一致）
+pnpm format → exit 1（仅 tests/integration/training/m5-concurrency.test.ts 样式）
+  定向：pnpm exec prettier --write tests/integration/training/m5-concurrency.test.ts tests/helpers/training-submit-race.ts → exit 0（后者 unchanged）
+git diff --check → exit 0
+```
+
 ## P3 最终测试整改（F03/F04）
 
 | 项 | 要点 | 证据 |
@@ -137,7 +158,7 @@ BRAIN_DANCE_SYNTHETIC=1 pnpm recovery:drill → passed: true（两轮；第二�
 
 ## Blockers / deferred
 
-- **blocker（沿用）**：`m5-concurrency.test.ts` 3 项失败（未重跑确认；全量超时无法给出失败清单）。
+- **closed（本轮）**：`m5-concurrency.test.ts` 竞争证据过期导致的聚焦失败已按两级锁顺序整改；见上方「M5 并发验证聚焦整改」。历史“3 项失败/未复核”表述作废，以本轮聚焦命令最终摘要为准。
 - **blocker（本阶段/环境）**：`pnpm test` 全量两次超时无最终结果（约 5m24s / 5m36s 手动中止；第二次含 `--exclude m5-concurrency` 仍无结果）。聚焦/相关测试均通过，排除已知并发用例后的全量未能完成。
 - **blocker（本阶段/环境）**：全量 `pnpm test:e2e` 长时间无最终结果已中止（**未关闭**）。聚焦 M6 lifecycle E2E 已有通过证据：`30eb52f` desktop **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 E2E 仍无最终通过结果。
 - **deferred**：容量档 1,000 / 10,000 未在本机实测。

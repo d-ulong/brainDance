@@ -3,10 +3,13 @@ import postgres from "postgres";
 
 import * as schema from "@/db/schema";
 import { requireDatabaseUrl } from "@/lib/env";
-import { buildSubmitCompetitionLockKey } from "@/modules/training/submit-competition-lock-key";
+import {
+  buildFullRebuildProjectionLockKey,
+  buildSubmitCompetitionLockKey,
+} from "@/modules/training/submit-competition-lock-key";
 import type { TestDb } from "./db";
 
-export { buildSubmitCompetitionLockKey };
+export { buildFullRebuildProjectionLockKey, buildSubmitCompetitionLockKey };
 
 const DEFAULT_OBSERVATION_TIMEOUT_MS = 15000;
 const DEFAULT_RUNNER_SETTLE_MS = 5000;
@@ -276,7 +279,7 @@ async function unlockGateAfterObservation(
     injectUnlock === "return_false" ? false : await queryAdvisoryUnlock(gate, lockKey);
 
   if (!unlocked) {
-    throw new Error(`Failed to release competition advisory lock for ${lockKey}`);
+    throw new Error(`Failed to release gated advisory lock for ${lockKey}`);
   }
   gatePhase.value = "released";
 }
@@ -344,12 +347,15 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
       return promise;
     });
 
+    // Gate the first lock in the production submit chain (full-rebuild global lock for
+    // real submits; probe keys for helper isolation). Both runners can wait here before
+    // any one holds the exclusive first lock and proceeds to the competition lock.
     await waitForCondition(
       async () => {
         const { waiting } = await readSubmitAdvisoryLockState(monitor, pids, lockKey);
         return waiting.length >= runners.length;
       },
-      "all submit backends waiting on competition advisory lock",
+      "all submit backends waiting on gated advisory lock",
       observationTimeoutMs,
     );
 
@@ -360,7 +366,7 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
         const { waiting, holding } = await readSubmitAdvisoryLockState(monitor, pids, lockKey);
         return holding.length >= 1 && waiting.length >= 1;
       },
-      "one submit backend holding and another waiting on competition advisory lock",
+      "one submit backend holding and another waiting on gated advisory lock",
       observationTimeoutMs,
     );
 
