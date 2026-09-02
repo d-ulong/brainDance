@@ -33,7 +33,7 @@ function localDatetimeOffset(minutesFromNow: number): string {
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
 }
 
-/** Drive only the tracked target outbox row; never defer unrelated pending events. */
+/** Drive only the tracked target outbox row; never clear an active lease or touch unrelated rows. */
 async function processTrackedOutboxByDedupeKey(
   db: ReturnType<typeof drizzle<typeof schema>>,
   dedupeKey: string,
@@ -43,12 +43,16 @@ async function processTrackedOutboxByDedupeKey(
   const due = new Date(Date.now() - 60_000);
   const maxSteps = options?.maxSteps ?? 12;
   const untilProcessed = options?.untilProcessed ?? true;
+  const activeLeasePollMs = 25;
+  const activeLeasePollLimit = 8;
 
   for (let i = 0; i < maxSteps; i += 1) {
     const [target] = await db
       .select({
         id: outboxEvents.id,
         status: outboxEvents.status,
+        availableAt: outboxEvents.availableAt,
+        leasedUntil: outboxEvents.leasedUntil,
       })
       .from(outboxEvents)
       .where(eq(outboxEvents.dedupeKey, dedupeKey))
@@ -63,30 +67,73 @@ async function processTrackedOutboxByDedupeKey(
     if (target.status === "processed") {
       return true;
     }
-    if (target.status !== "pending" && target.status !== "leased") {
-      return false;
+
+    if (target.status === "pending") {
+      const availableAt = target.availableAt ? new Date(target.availableAt) : null;
+      if (availableAt && availableAt.getTime() > Date.now()) {
+        await db
+          .update(outboxEvents)
+          .set({ availableAt: due })
+          .where(eq(outboxEvents.id, target.id));
+      }
+      await processOutboxEventById(db, {
+        eventId: target.id,
+        workerId: `${workerPrefix}-${i}`,
+        now: new Date(),
+      });
+      if (!untilProcessed) {
+        return true;
+      }
+      continue;
     }
 
-    await db
-      .update(outboxEvents)
-      .set({
-        availableAt: due,
-        status: "pending",
-        leaseToken: null,
-        leaseOwner: null,
-        leasedUntil: null,
-      })
-      .where(eq(outboxEvents.id, target.id));
+    if (target.status === "leased") {
+      const leasedUntil = target.leasedUntil ? new Date(target.leasedUntil) : null;
+      if (leasedUntil && leasedUntil.getTime() > Date.now()) {
+        let stillActive = true;
+        for (let poll = 0; poll < activeLeasePollLimit; poll += 1) {
+          await new Promise((resolve) => setTimeout(resolve, activeLeasePollMs));
+          const [again] = await db
+            .select({
+              status: outboxEvents.status,
+              leasedUntil: outboxEvents.leasedUntil,
+            })
+            .from(outboxEvents)
+            .where(eq(outboxEvents.id, target.id))
+            .limit(1);
+          if (!again || again.status === "processed") {
+            return again?.status === "processed";
+          }
+          if (again.status !== "leased") {
+            stillActive = false;
+            break;
+          }
+          const until = again.leasedUntil ? new Date(again.leasedUntil).getTime() : 0;
+          if (until <= Date.now()) {
+            stillActive = false;
+            break;
+          }
+        }
+        if (stillActive) {
+          throw new Error(
+            `Target outbox ${dedupeKey} remains leased by another worker; refusing to clear active lease`,
+          );
+        }
+        continue;
+      }
 
-    await processOutboxEventById(db, {
-      eventId: target.id,
-      workerId: `${workerPrefix}-${i}`,
-      now: new Date(),
-    });
-
-    if (!untilProcessed) {
-      return true;
+      await processOutboxEventById(db, {
+        eventId: target.id,
+        workerId: `${workerPrefix}-${i}`,
+        now: new Date(),
+      });
+      if (!untilProcessed) {
+        return true;
+      }
+      continue;
     }
+
+    return false;
   }
 
   const [finalRow] = await db

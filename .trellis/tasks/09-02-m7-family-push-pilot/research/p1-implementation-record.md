@@ -188,3 +188,35 @@ Scheduled publish: `family_push.publish_requested` with `available_at = schedule
 | `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — 11/11 passed (20.84s) |
 | `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 passed (1.5m) |
 | `git diff --check` | exit 0 — clean |
+
+## P1 租约违规修正（相对基线 `197f59786c2e878bb0c51bd9a237ba73ccff9394`）
+
+- 范围：outbox claim seam、目标事件 helper、聚焦测试、本实施记录；未改 Family Content 业务行为、未实现 P2
+
+### 1. 目标 outbox helper 遵守租约
+
+- 集成/E2E helper 仅可加速 **pending** 目标行的 `availableAt`
+- 不得把 leased 强制改回 pending，不得清除有效 `leaseToken` / `leaseOwner` / `leasedUntil`
+- 未到期 leased：有上限轮询；仍占用则明确失败
+- 已过期 leased：经 `processOutboxEventById` 正式 claim 规则接管
+- 不修改无关 outbox 行
+
+### 2. claim 路径去重
+
+- `takeOutboxClaimLease` 私有 helper 统一租约更新、attempt 记账与日志
+- `claimNextOutboxEvent` / `claimOutboxEventById` 共用；生产 `processNextOutboxEvent` 语义不变
+- by-id seam 仍检查 `availableAt`、pending 或已过期 leased
+
+### 3. 聚焦租约三态测试
+
+- 文件：`tests/integration/outbox/outbox-claim-by-id.test.ts`
+- pending 可按 ID 领取处理；未到期 leased 不可抢占且 owner/token/attempt 不变；已过期 leased 可正式接管
+
+### 本轮验证命令日志
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/outbox/outbox-claim-by-id.test.ts` | exit 0 — 3/3 passed (6.12s) |
+| `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — 11/11 passed |
+| `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 passed (1.4m) |
+| `git diff --check` | exit 0 — clean |

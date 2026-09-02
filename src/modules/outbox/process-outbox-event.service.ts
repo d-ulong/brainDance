@@ -32,6 +32,69 @@ export type ClaimOutboxEventInput = {
   now?: Date;
 };
 
+type ClaimableOutboxRow = {
+  id: string;
+  event_type: string;
+  event_version: number;
+  payload: Record<string, unknown>;
+  attempts: number;
+  aggregate_type: string;
+  aggregate_id: string;
+};
+
+/** Shared lease acquisition for claimNext and claim-by-id seams. */
+async function takeOutboxClaimLease(
+  tx: Database,
+  row: ClaimableOutboxRow,
+  input: { workerId: string; now: Date },
+): Promise<ClaimedOutboxEvent> {
+  const attemptNumber = await nextGlobalAttemptNumber(tx, row.id);
+  const retryCycleAttempt = row.attempts + 1;
+  const leaseToken = randomUUID();
+  const leasedUntil = new Date(input.now.getTime() + OUTBOX_LEASE_DURATION_MS);
+
+  await tx
+    .update(outboxEvents)
+    .set({
+      status: "leased",
+      leaseToken,
+      leaseOwner: input.workerId,
+      leasedUntil,
+      attempts: retryCycleAttempt,
+    })
+    .where(sql`${outboxEvents.id} = ${row.id}::uuid`);
+
+  await tx.insert(workerAttempts).values({
+    outboxEventId: row.id,
+    attemptNumber,
+    outcome: "leased",
+    startedAt: input.now,
+    finishedAt: null,
+    leaseToken,
+  });
+
+  logWorkerEvent({
+    eventId: row.id,
+    eventType: row.event_type,
+    eventVersion: row.event_version,
+    attemptNumber,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+    outcome: "claimed",
+  });
+
+  return {
+    eventId: row.id,
+    eventType: row.event_type,
+    eventVersion: row.event_version,
+    payload: row.payload,
+    leaseToken,
+    attemptNumber,
+    aggregateType: row.aggregate_type,
+    aggregateId: row.aggregate_id,
+  };
+}
+
 export async function claimNextOutboxEvent(
   db: Database,
   input: ClaimOutboxEventInput,
@@ -67,61 +130,10 @@ export async function claimNextOutboxEvent(
       return null;
     }
 
-    const row = rows[0] as {
-      id: string;
-      event_type: string;
-      event_version: number;
-      payload: Record<string, unknown>;
-      attempts: number;
-      aggregate_type: string;
-      aggregate_id: string;
-    };
-
-    const attemptNumber = await nextGlobalAttemptNumber(tx, row.id);
-    const retryCycleAttempt = row.attempts + 1;
-    const leaseToken = randomUUID();
-    const leasedUntil = new Date(now.getTime() + OUTBOX_LEASE_DURATION_MS);
-
-    await tx
-      .update(outboxEvents)
-      .set({
-        status: "leased",
-        leaseToken,
-        leaseOwner: input.workerId,
-        leasedUntil,
-        attempts: retryCycleAttempt,
-      })
-      .where(sql`${outboxEvents.id} = ${row.id}::uuid`);
-
-    await tx.insert(workerAttempts).values({
-      outboxEventId: row.id,
-      attemptNumber,
-      outcome: "leased",
-      startedAt: now,
-      finishedAt: null,
-      leaseToken,
+    return takeOutboxClaimLease(tx, rows[0] as ClaimableOutboxRow, {
+      workerId: input.workerId,
+      now,
     });
-
-    logWorkerEvent({
-      eventId: row.id,
-      eventType: row.event_type,
-      eventVersion: row.event_version,
-      attemptNumber,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-      outcome: "claimed",
-    });
-
-    return {
-      eventId: row.id,
-      eventType: row.event_type,
-      eventVersion: row.event_version,
-      payload: row.payload,
-      leaseToken,
-      attemptNumber,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-    };
   });
 }
 
@@ -305,6 +317,7 @@ export type ProcessOutboxEventResult = {
 
 /**
  * Test/control seam: claim one specific outbox row by id without scanning the global queue.
+ * Honors the same pending/availableAt and expired-lease rules as claimNextOutboxEvent.
  * Production workers continue to use claimNextOutboxEvent ordering.
  */
 export async function claimOutboxEventById(
@@ -326,14 +339,7 @@ export async function claimOutboxEventById(
       return null;
     }
 
-    const row = rows[0] as {
-      id: string;
-      event_type: string;
-      event_version: number;
-      payload: Record<string, unknown>;
-      attempts: number;
-      aggregate_type: string;
-      aggregate_id: string;
+    const row = rows[0] as ClaimableOutboxRow & {
       status: string;
       available_at: Date | string;
       leased_until: Date | string | null;
@@ -348,51 +354,7 @@ export async function claimOutboxEventById(
       return null;
     }
 
-    const attemptNumber = await nextGlobalAttemptNumber(tx, row.id);
-    const retryCycleAttempt = row.attempts + 1;
-    const leaseToken = randomUUID();
-    const leasedUntilNext = new Date(now.getTime() + OUTBOX_LEASE_DURATION_MS);
-
-    await tx
-      .update(outboxEvents)
-      .set({
-        status: "leased",
-        leaseToken,
-        leaseOwner: input.workerId,
-        leasedUntil: leasedUntilNext,
-        attempts: retryCycleAttempt,
-      })
-      .where(sql`${outboxEvents.id} = ${row.id}::uuid`);
-
-    await tx.insert(workerAttempts).values({
-      outboxEventId: row.id,
-      attemptNumber,
-      outcome: "leased",
-      startedAt: now,
-      finishedAt: null,
-      leaseToken,
-    });
-
-    logWorkerEvent({
-      eventId: row.id,
-      eventType: row.event_type,
-      eventVersion: row.event_version,
-      attemptNumber,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-      outcome: "claimed",
-    });
-
-    return {
-      eventId: row.id,
-      eventType: row.event_type,
-      eventVersion: row.event_version,
-      payload: row.payload,
-      leaseToken,
-      attemptNumber,
-      aggregateType: row.aggregate_type,
-      aggregateId: row.aggregate_id,
-    };
+    return takeOutboxClaimLease(tx, row, { workerId: input.workerId, now });
   });
 }
 

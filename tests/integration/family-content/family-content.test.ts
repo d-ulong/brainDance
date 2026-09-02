@@ -95,7 +95,8 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
   }
 
   /**
-   * Process only the tracked target outbox row (by dedupeKey). Does not defer unrelated pending events.
+   * Process only the tracked target outbox row (by dedupeKey).
+   * Accelerates pending availableAt only; never clears an active lease.
    */
   async function processTargetOutboxUntil(
     dedupeKey: string,
@@ -103,6 +104,8 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
     maxSteps = 12,
   ) {
     const due = new Date(Date.now() - 60_000);
+    const activeLeasePollMs = 25;
+    const activeLeasePollLimit = 8;
 
     for (let i = 0; i < maxSteps; i += 1) {
       if (await predicate()) {
@@ -114,6 +117,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
           id: outboxEvents.id,
           status: outboxEvents.status,
           availableAt: outboxEvents.availableAt,
+          leasedUntil: outboxEvents.leasedUntil,
         })
         .from(outboxEvents)
         .where(eq(outboxEvents.dedupeKey, dedupeKey))
@@ -124,27 +128,65 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
         continue;
       }
 
-      if (target.status === "pending" || target.status === "leased") {
-        await db
-          .update(outboxEvents)
-          .set({
-            availableAt: due,
-            status: "pending",
-            leaseToken: null,
-            leaseOwner: null,
-            leasedUntil: null,
-          })
-          .where(eq(outboxEvents.id, target.id));
+      if (target.status === "pending") {
+        const availableAt = target.availableAt ? new Date(target.availableAt) : null;
+        if (availableAt && availableAt.getTime() > Date.now()) {
+          await db
+            .update(outboxEvents)
+            .set({ availableAt: due })
+            .where(eq(outboxEvents.id, target.id));
+        }
 
-        const result = await processOutboxEventById(db, {
+        await processOutboxEventById(db, {
           eventId: target.id,
           workerId: `m7-target-${dedupeKey.slice(-8)}-${i}`,
           now: new Date(),
         });
-        if (!result.processed && !(await predicate())) {
-          // Event not claimable yet; retry within budget.
+        continue;
+      }
+
+      if (target.status === "leased") {
+        const leasedUntil = target.leasedUntil ? new Date(target.leasedUntil) : null;
+        const now = Date.now();
+        if (leasedUntil && leasedUntil.getTime() > now) {
+          let stillActive = true;
+          for (let poll = 0; poll < activeLeasePollLimit; poll += 1) {
+            await new Promise((resolve) => setTimeout(resolve, activeLeasePollMs));
+            if (await predicate()) {
+              return;
+            }
+            const [again] = await db
+              .select({
+                status: outboxEvents.status,
+                leasedUntil: outboxEvents.leasedUntil,
+              })
+              .from(outboxEvents)
+              .where(eq(outboxEvents.id, target.id))
+              .limit(1);
+            if (!again || again.status !== "leased") {
+              stillActive = false;
+              break;
+            }
+            const until = again.leasedUntil ? new Date(again.leasedUntil).getTime() : 0;
+            if (until <= Date.now()) {
+              stillActive = false;
+              break;
+            }
+          }
+          if (stillActive) {
+            throw new Error(
+              `Target outbox ${dedupeKey} remains leased by another worker; refusing to clear active lease`,
+            );
+          }
           continue;
         }
+
+        // Expired lease: reclaim via formal claim-by-id rules (no forced pending rewrite).
+        await processOutboxEventById(db, {
+          eventId: target.id,
+          workerId: `m7-target-${dedupeKey.slice(-8)}-${i}`,
+          now: new Date(),
+        });
         continue;
       }
 
