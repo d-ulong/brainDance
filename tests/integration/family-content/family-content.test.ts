@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -31,8 +31,9 @@ import {
 import { loadUserRole } from "@/modules/family-content/access";
 import { listActiveParentIdsForStudent } from "@/modules/family-access/authorization.service";
 import { getParentOrStudentRole } from "@/modules/identity/user-role.service";
-import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
+import { processOutboxEventById } from "@/modules/outbox/process-outbox-event.service";
 import { replayDeadOutboxEvent } from "@/modules/outbox/replay-outbox-event.service";
+import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import {
   acceptParentForStudent,
   bootstrapVerifiedParentWithInvite,
@@ -93,13 +94,14 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
     return { suffix, creatorId, otherParentId, student, relationshipId };
   }
 
-  /** Make one outbox row the next claimable event, then process until predicate holds. */
+  /**
+   * Process only the tracked target outbox row (by dedupeKey). Does not defer unrelated pending events.
+   */
   async function processTargetOutboxUntil(
     dedupeKey: string,
     predicate: () => Promise<boolean>,
     maxSteps = 12,
   ) {
-    const farFuture = new Date(Date.now() + 86_400_000);
     const due = new Date(Date.now() - 60_000);
 
     for (let i = 0; i < maxSteps; i += 1) {
@@ -107,39 +109,55 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
         return;
       }
 
-      await db
-        .update(outboxEvents)
-        .set({
-          availableAt: farFuture,
+      const [target] = await db
+        .select({
+          id: outboxEvents.id,
+          status: outboxEvents.status,
+          availableAt: outboxEvents.availableAt,
         })
-        .where(and(eq(outboxEvents.status, "pending"), ne(outboxEvents.dedupeKey, dedupeKey)));
+        .from(outboxEvents)
+        .where(eq(outboxEvents.dedupeKey, dedupeKey))
+        .limit(1);
 
-      await db
-        .update(outboxEvents)
-        .set({
-          availableAt: due,
-          status: "pending",
-          leaseToken: null,
-          leaseOwner: null,
-          leasedUntil: null,
-        })
-        .where(
-          and(
-            eq(outboxEvents.dedupeKey, dedupeKey),
-            inArray(outboxEvents.status, ["pending", "leased"]),
-          ),
-        );
-
-      const result = await processNextOutboxEvent(db, {
-        workerId: `m7-target-${dedupeKey.slice(-8)}-${i}`,
-        now: new Date(),
-      });
-      if (!result.processed && !(await predicate())) {
-        break;
+      if (!target) {
+        // Follow-up event may not be inserted yet; keep polling without touching other rows.
+        continue;
       }
+
+      if (target.status === "pending" || target.status === "leased") {
+        await db
+          .update(outboxEvents)
+          .set({
+            availableAt: due,
+            status: "pending",
+            leaseToken: null,
+            leaseOwner: null,
+            leasedUntil: null,
+          })
+          .where(eq(outboxEvents.id, target.id));
+
+        const result = await processOutboxEventById(db, {
+          eventId: target.id,
+          workerId: `m7-target-${dedupeKey.slice(-8)}-${i}`,
+          now: new Date(),
+        });
+        if (!result.processed && !(await predicate())) {
+          // Event not claimable yet; retry within budget.
+          continue;
+        }
+        continue;
+      }
+
+      // Already processed/dead: re-check predicate on next iteration without mutating other events.
     }
 
     expect(await predicate()).toBe(true);
+  }
+
+  function assertNoUniqueViolationLeak(reason: unknown) {
+    expect(isPostgresUniqueViolation(reason)).toBe(false);
+    const message = reason instanceof Error ? reason.message : String(reason);
+    expect(message).not.toMatch(/unique|duplicate key|23505/i);
   }
 
   async function assertPushStatus(pushId: string, status: string) {
@@ -812,25 +830,80 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       expect(editWrites).toHaveLength(1);
       expect(editReplays).toHaveLength(1);
 
-      const conflictResults = await Promise.allSettled([
+      // Different resources reusing one brand-new key must not leak Postgres unique violations.
+      const draftAlt = await createFamilyPush(db, {
+        actorId: creatorId,
+        studentId: student.studentId,
+        body: "c1-alt",
+        publishMode: "draft",
+        idempotencyKey: `c1-create-alt-${suffix}`,
+      });
+      const crossResourceKey = `c1-cross-resource-${suffix}`;
+      const crossResults = await Promise.allSettled([
         editFamilyPush(indepA.db, {
           actorId: creatorId,
           pushId: draft.push.pushId,
-          body: "c1-other",
-          idempotencyKey: editKey,
+          body: "c1-cross-a",
+          idempotencyKey: crossResourceKey,
+        }),
+        editFamilyPush(indepB.db, {
+          actorId: creatorId,
+          pushId: draftAlt.push.pushId,
+          body: "c1-cross-b",
+          idempotencyKey: crossResourceKey,
+        }),
+      ]);
+      for (const result of crossResults) {
+        if (result.status === "rejected") {
+          assertNoUniqueViolationLeak(result.reason);
+          expect(result.reason).toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+        } else {
+          expect(result.value.idempotentReplay).toBe(false);
+        }
+      }
+      expect(crossResults.every((r) => r.status === "fulfilled" || r.status === "rejected")).toBe(
+        true,
+      );
+
+      // Fresh key never present in audit: same resource, concurrent different payload/action.
+      // Lock order (FOR UPDATE push row → in-tx audit replay) serializes writers:
+      // exactly one write succeeds; the other must be IDEMPOTENCY_CONFLICT (not unique-violation).
+      const raceDraft = await createFamilyPush(db, {
+        actorId: creatorId,
+        studentId: student.studentId,
+        body: "c1-race-base",
+        publishMode: "draft",
+        idempotencyKey: `c1-create-race-${suffix}`,
+      });
+      const freshDiffKey = `c1-fresh-diff-${suffix}`;
+      const freshDiffResults = await Promise.allSettled([
+        editFamilyPush(indepA.db, {
+          actorId: creatorId,
+          pushId: raceDraft.push.pushId,
+          body: "c1-fresh-a",
+          idempotencyKey: freshDiffKey,
         }),
         transitionFamilyPush(indepB.db, {
           actorId: creatorId,
-          pushId: draft.push.pushId,
+          pushId: raceDraft.push.pushId,
           action: "publish",
-          idempotencyKey: editKey,
+          idempotencyKey: freshDiffKey,
         }),
       ]);
-      for (const result of conflictResults) {
-        expect(result.status).toBe("rejected");
+      const freshDiffFulfilled = freshDiffResults.filter((r) => r.status === "fulfilled");
+      const freshDiffRejected = freshDiffResults.filter((r) => r.status === "rejected");
+      expect(freshDiffFulfilled.length + freshDiffRejected.length).toBe(2);
+      expect(freshDiffFulfilled.length).toBeGreaterThanOrEqual(1);
+      expect(freshDiffRejected.length).toBeGreaterThanOrEqual(1);
+      for (const result of freshDiffRejected) {
+        assertNoUniqueViolationLeak((result as PromiseRejectedResult).reason);
         expect((result as PromiseRejectedResult).reason).toMatchObject({
           code: "IDEMPOTENCY_CONFLICT",
         });
+      }
+      for (const result of freshDiffFulfilled) {
+        expect(result.status).toBe("fulfilled");
+        expect(result.value.idempotentReplay).toBe(false);
       }
 
       const published = await transitionFamilyPush(db, {
@@ -872,22 +945,28 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
         mutateFulfilled.filter((r) => r.status === "fulfilled" && r.value.idempotentReplay),
       ).toHaveLength(1);
 
-      const mutateConflicts = await Promise.allSettled([
+      // Fresh mutate key: concurrent different action (edit vs delete) on same comment.
+      const freshMutateKey = `c1-fresh-cmutate-${suffix}`;
+      const freshMutateResults = await Promise.allSettled([
         mutatePushComment(indepA.db, {
           actorId: creatorId,
           commentId: comment.comment.commentId,
-          body: "different",
-          idempotencyKey: mutateKey,
+          body: "c1-comment-fresh",
+          idempotencyKey: freshMutateKey,
         }),
         mutatePushComment(indepB.db, {
           actorId: creatorId,
           commentId: comment.comment.commentId,
           delete: true,
-          idempotencyKey: mutateKey,
+          idempotencyKey: freshMutateKey,
         }),
       ]);
-      for (const result of mutateConflicts) {
-        expect(result.status).toBe("rejected");
+      const freshMutateFulfilled = freshMutateResults.filter((r) => r.status === "fulfilled");
+      const freshMutateRejected = freshMutateResults.filter((r) => r.status === "rejected");
+      expect(freshMutateFulfilled.length).toBeGreaterThanOrEqual(1);
+      expect(freshMutateRejected.length).toBeGreaterThanOrEqual(1);
+      for (const result of freshMutateRejected) {
+        assertNoUniqueViolationLeak((result as PromiseRejectedResult).reason);
         expect((result as PromiseRejectedResult).reason).toMatchObject({
           code: "IDEMPOTENCY_CONFLICT",
         });
@@ -1032,6 +1111,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       return row?.status === "processed";
     });
 
+    const freezeNotifBeforeReplay = (await db.select().from(notifications)).length;
     await replayDeadOnce(freezeRequestedKey, freezeParent.parentId, `freeze-${suffix}`);
     await processTargetOutboxUntil(freezeRequestedKey, () => assertPushStatus(freezeId, "cancelled"));
     expect(
@@ -1042,6 +1122,10 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       (await db.select().from(outboxEvents).where(eq(outboxEvents.dedupeKey, freezeCancelledKey)))
         .length,
     ).toBe(1);
+    expect((await db.select().from(notifications)).length).toBe(freezeNotifBeforeReplay);
+    for (const notif of await db.select().from(notifications)) {
+      expect(JSON.stringify(notif)).not.toContain(`freeze-${secret}`);
+    }
 
     // Relationship-inactive: mark relationship ended without endRelationship cancel helper,
     // leaving the scheduled push intact for Worker realtime check.
@@ -1108,6 +1192,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       return row?.status === "processed";
     });
 
+    const inactiveNotifBeforeReplay = (await db.select().from(notifications)).length;
     await replayDeadOnce(inactiveRequestedKey, inactiveParent, `inactive-${suffix}`);
     await processTargetOutboxUntil(inactiveRequestedKey, () =>
       assertPushStatus(inactiveId, "cancelled"),
@@ -1124,6 +1209,10 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       (await db.select().from(outboxEvents).where(eq(outboxEvents.dedupeKey, inactiveCancelledKey)))
         .length,
     ).toBe(1);
+    expect((await db.select().from(notifications)).length).toBe(inactiveNotifBeforeReplay);
+    for (const notif of await db.select().from(notifications)) {
+      expect(JSON.stringify(notif)).not.toContain(`inactive-${secret}`);
+    }
 
     const notifBefore = (await db.select().from(notifications)).length;
     await replayDeadOnce(scheduledRequestedKey, creatorId, `pub-${suffix}`);
@@ -1147,6 +1236,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       ).length,
     ).toBe(1);
     expect((await db.select().from(notifications)).length).toBe(notifBefore);
+    expect(JSON.stringify(await db.select().from(notifications))).not.toContain(secret);
   });
 
   it("P1-F03: family-access/identity interfaces via Family Content public services", async () => {

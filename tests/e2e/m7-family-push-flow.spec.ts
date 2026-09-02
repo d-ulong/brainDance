@@ -6,7 +6,7 @@ import postgres from "postgres";
 import * as schema from "@/db/schema";
 import { familyPushes, outboxEvents } from "@/db/schema";
 import { requireDatabaseUrl } from "@/lib/env";
-import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
+import { processOutboxEventById } from "@/modules/outbox/process-outbox-event.service";
 
 import { createVerifiedSecondParent } from "./m5-training-helpers";
 import {
@@ -33,6 +33,70 @@ function localDatetimeOffset(minutesFromNow: number): string {
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
 }
 
+/** Drive only the tracked target outbox row; never defer unrelated pending events. */
+async function processTrackedOutboxByDedupeKey(
+  db: ReturnType<typeof drizzle<typeof schema>>,
+  dedupeKey: string,
+  workerPrefix: string,
+  options?: { untilProcessed?: boolean; maxSteps?: number },
+) {
+  const due = new Date(Date.now() - 60_000);
+  const maxSteps = options?.maxSteps ?? 12;
+  const untilProcessed = options?.untilProcessed ?? true;
+
+  for (let i = 0; i < maxSteps; i += 1) {
+    const [target] = await db
+      .select({
+        id: outboxEvents.id,
+        status: outboxEvents.status,
+      })
+      .from(outboxEvents)
+      .where(eq(outboxEvents.dedupeKey, dedupeKey))
+      .limit(1);
+
+    if (!target) {
+      if (!untilProcessed) {
+        return false;
+      }
+      continue;
+    }
+    if (target.status === "processed") {
+      return true;
+    }
+    if (target.status !== "pending" && target.status !== "leased") {
+      return false;
+    }
+
+    await db
+      .update(outboxEvents)
+      .set({
+        availableAt: due,
+        status: "pending",
+        leaseToken: null,
+        leaseOwner: null,
+        leasedUntil: null,
+      })
+      .where(eq(outboxEvents.id, target.id));
+
+    await processOutboxEventById(db, {
+      eventId: target.id,
+      workerId: `${workerPrefix}-${i}`,
+      now: new Date(),
+    });
+
+    if (!untilProcessed) {
+      return true;
+    }
+  }
+
+  const [finalRow] = await db
+    .select({ status: outboxEvents.status })
+    .from(outboxEvents)
+    .where(eq(outboxEvents.dedupeKey, dedupeKey))
+    .limit(1);
+  return finalRow?.status === "processed";
+}
+
 /** Drive due publish_requested through the real outbox Worker path (no UI publish click). */
 async function publishScheduledPushViaWorker(pushId: string) {
   const client = postgres(requireDatabaseUrl(), { max: 1 });
@@ -40,8 +104,6 @@ async function publishScheduledPushViaWorker(pushId: string) {
   try {
     const requestedKey = `family_push.publish_requested:${pushId}`;
     const publishedKey = `family_push.published:${pushId}`;
-    const due = new Date(Date.now() - 60_000);
-    const farFuture = new Date(Date.now() + 86_400_000);
 
     for (let i = 0; i < 20; i += 1) {
       const [push] = await db
@@ -53,27 +115,20 @@ async function publishScheduledPushViaWorker(pushId: string) {
         break;
       }
 
-      await db
-        .update(outboxEvents)
-        .set({ availableAt: farFuture })
-        .where(eq(outboxEvents.status, "pending"));
-      await db
-        .update(outboxEvents)
-        .set({
-          availableAt: due,
-          status: "pending",
-          leaseToken: null,
-          leaseOwner: null,
-          leasedUntil: null,
-        })
-        .where(eq(outboxEvents.dedupeKey, requestedKey));
-
-      const result = await processNextOutboxEvent(db, {
-        workerId: `e2e-m7-sched-${i}`,
-        now: new Date(),
+      const stepped = await processTrackedOutboxByDedupeKey(db, requestedKey, "e2e-m7-sched", {
+        untilProcessed: false,
+        maxSteps: 1,
       });
-      if (!result.processed && push?.status !== "published") {
-        throw new Error(`Worker did not publish scheduled push ${pushId}`);
+      if (!stepped) {
+        const [again] = await db
+          .select({ status: familyPushes.status })
+          .from(familyPushes)
+          .where(eq(familyPushes.id, pushId))
+          .limit(1);
+        if (again?.status !== "published") {
+          throw new Error(`Worker did not publish scheduled push ${pushId}`);
+        }
+        break;
       }
     }
 
@@ -84,34 +139,11 @@ async function publishScheduledPushViaWorker(pushId: string) {
       .limit(1);
     expect(published?.status).toBe("published");
 
-    for (let i = 0; i < 12; i += 1) {
-      const [event] = await db
-        .select({ status: outboxEvents.status })
-        .from(outboxEvents)
-        .where(eq(outboxEvents.dedupeKey, publishedKey))
-        .limit(1);
-      if (event?.status === "processed") {
-        return;
-      }
-      await db
-        .update(outboxEvents)
-        .set({ availableAt: farFuture })
-        .where(eq(outboxEvents.status, "pending"));
-      await db
-        .update(outboxEvents)
-        .set({
-          availableAt: due,
-          status: "pending",
-          leaseToken: null,
-          leaseOwner: null,
-          leasedUntil: null,
-        })
-        .where(eq(outboxEvents.dedupeKey, publishedKey));
-      await processNextOutboxEvent(db, {
-        workerId: `e2e-m7-pub-${i}`,
-        now: new Date(),
-      });
-    }
+    const publishedDone = await processTrackedOutboxByDedupeKey(db, publishedKey, "e2e-m7-pub", {
+      untilProcessed: true,
+      maxSteps: 12,
+    });
+    expect(publishedDone).toBe(true);
   } finally {
     await client.end({ timeout: 5 });
   }

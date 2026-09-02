@@ -303,48 +303,135 @@ export type ProcessOutboxEventResult = {
   noOp: boolean;
 };
 
-export async function processNextOutboxEvent(
+/**
+ * Test/control seam: claim one specific outbox row by id without scanning the global queue.
+ * Production workers continue to use claimNextOutboxEvent ordering.
+ */
+export async function claimOutboxEventById(
   db: Database,
+  input: { eventId: string; workerId: string; now?: Date },
+): Promise<ClaimedOutboxEvent | null> {
+  const now = input.now ?? new Date();
+
+  return db.transaction(async (tx) => {
+    const rows = await tx.execute(sql`
+      SELECT id, event_type, event_version, payload, attempts, aggregate_type, aggregate_id, status,
+             available_at, leased_until
+      FROM outbox_events
+      WHERE id = ${input.eventId}::uuid
+      FOR UPDATE
+    `);
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0] as {
+      id: string;
+      event_type: string;
+      event_version: number;
+      payload: Record<string, unknown>;
+      attempts: number;
+      aggregate_type: string;
+      aggregate_id: string;
+      status: string;
+      available_at: Date | string;
+      leased_until: Date | string | null;
+    };
+
+    const availableAt = new Date(row.available_at);
+    const leasedUntil = row.leased_until ? new Date(row.leased_until) : null;
+    const claimablePending = row.status === "pending" && availableAt.getTime() <= now.getTime();
+    const claimableLeaseExpired =
+      row.status === "leased" && leasedUntil !== null && leasedUntil.getTime() <= now.getTime();
+    if (!claimablePending && !claimableLeaseExpired) {
+      return null;
+    }
+
+    const attemptNumber = await nextGlobalAttemptNumber(tx, row.id);
+    const retryCycleAttempt = row.attempts + 1;
+    const leaseToken = randomUUID();
+    const leasedUntilNext = new Date(now.getTime() + OUTBOX_LEASE_DURATION_MS);
+
+    await tx
+      .update(outboxEvents)
+      .set({
+        status: "leased",
+        leaseToken,
+        leaseOwner: input.workerId,
+        leasedUntil: leasedUntilNext,
+        attempts: retryCycleAttempt,
+      })
+      .where(sql`${outboxEvents.id} = ${row.id}::uuid`);
+
+    await tx.insert(workerAttempts).values({
+      outboxEventId: row.id,
+      attemptNumber,
+      outcome: "leased",
+      startedAt: now,
+      finishedAt: null,
+      leaseToken,
+    });
+
+    logWorkerEvent({
+      eventId: row.id,
+      eventType: row.event_type,
+      eventVersion: row.event_version,
+      attemptNumber,
+      aggregateType: row.aggregate_type,
+      aggregateId: row.aggregate_id,
+      outcome: "claimed",
+    });
+
+    return {
+      eventId: row.id,
+      eventType: row.event_type,
+      eventVersion: row.event_version,
+      payload: row.payload,
+      leaseToken,
+      attemptNumber,
+      aggregateType: row.aggregate_type,
+      aggregateId: row.aggregate_id,
+    };
+  });
+}
+
+async function runClaimedOutboxEvent(
+  db: Database,
+  claimed: ClaimedOutboxEvent,
   input: { workerId: string; now?: Date },
 ): Promise<ProcessOutboxEventResult> {
-  const claimed = await claimNextOutboxEvent(db, input);
-  if (claimed) {
-    const handler =
-      getM3EventHandler(claimed.eventType, claimed.eventVersion) ??
-      getM6EventHandler(claimed.eventType, claimed.eventVersion) ??
-      getM7EventHandler(claimed.eventType, claimed.eventVersion);
-    if (handler) {
-      try {
-        await handler(db, claimed);
-        await completeOutboxEvent(db, {
-          eventId: claimed.eventId,
-          leaseToken: claimed.leaseToken,
-          attemptNumber: claimed.attemptNumber,
-          workerId: input.workerId,
-          now: input.now,
-        });
-        return { processed: true, noOp: false };
-      } catch {
-        await failOutboxEvent(db, {
-          eventId: claimed.eventId,
-          leaseToken: claimed.leaseToken,
-          attemptNumber: claimed.attemptNumber,
-          errorCategory: "handler_failure",
-          workerId: input.workerId,
-          now: input.now,
-        }).catch((failError) => {
-          if (failError instanceof OutboxError && failError.code === "LEASE_MISMATCH") {
-            return;
-          }
-          throw failError;
-        });
-        return { processed: true, noOp: false };
-      }
+  const handler =
+    getM3EventHandler(claimed.eventType, claimed.eventVersion) ??
+    getM6EventHandler(claimed.eventType, claimed.eventVersion) ??
+    getM7EventHandler(claimed.eventType, claimed.eventVersion);
+  if (handler) {
+    try {
+      await handler(db, claimed);
+      await completeOutboxEvent(db, {
+        eventId: claimed.eventId,
+        leaseToken: claimed.leaseToken,
+        attemptNumber: claimed.attemptNumber,
+        workerId: input.workerId,
+        now: input.now,
+      });
+      return { processed: true, noOp: false };
+    } catch {
+      await failOutboxEvent(db, {
+        eventId: claimed.eventId,
+        leaseToken: claimed.leaseToken,
+        attemptNumber: claimed.attemptNumber,
+        errorCategory: "handler_failure",
+        workerId: input.workerId,
+        now: input.now,
+      }).catch((failError) => {
+        if (failError instanceof OutboxError && failError.code === "LEASE_MISMATCH") {
+          return;
+        }
+        throw failError;
+      });
+      return { processed: true, noOp: false };
     }
-  }
-
-  if (!claimed) {
-    return { processed: false, noOp: false };
   }
 
   if (isSupportedNoopEvent(claimed.eventType, claimed.eventVersion)) {
@@ -375,4 +462,26 @@ export async function processNextOutboxEvent(
   }
 
   return { processed: true, noOp: false };
+}
+
+export async function processOutboxEventById(
+  db: Database,
+  input: { eventId: string; workerId: string; now?: Date },
+): Promise<ProcessOutboxEventResult> {
+  const claimed = await claimOutboxEventById(db, input);
+  if (!claimed) {
+    return { processed: false, noOp: false };
+  }
+  return runClaimedOutboxEvent(db, claimed, input);
+}
+
+export async function processNextOutboxEvent(
+  db: Database,
+  input: { workerId: string; now?: Date },
+): Promise<ProcessOutboxEventResult> {
+  const claimed = await claimNextOutboxEvent(db, input);
+  if (!claimed) {
+    return { processed: false, noOp: false };
+  }
+  return runClaimedOutboxEvent(db, claimed, input);
 }

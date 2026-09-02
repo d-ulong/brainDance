@@ -159,3 +159,32 @@ Scheduled publish: `family_push.publish_requested` with `available_at = schedule
 | `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — 11/11 passed |
 | `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 |
 | `git diff --check` | exit 0 — clean |
+
+## P1 测试证据最终修正（相对基线 `7f70716d29261e8d882da3094a62bc2ea6df0f4f`）
+
+- 范围：仅测试、受控 outbox seam、本实施记录；未改业务契约、未实现 P2
+
+### 1. 消除 outbox 测试全局队列污染
+
+- Seam：`claimOutboxEventById` / `processOutboxEventById`（`process-outbox-event.service.ts`）按 eventId 领取/处理，不改变生产 `claimNextOutboxEvent` 排序语义
+- 集成 helper：`processTargetOutboxUntil` 只更新并处理本测试追踪的 `dedupeKey` 目标行，不再把无关 pending 延后 24h
+- E2E helper：`publishScheduledPushViaWorker` / `processTrackedOutboxByDedupeKey` 同上；desktop/mobile 轮次之间不遗留全局队列改写
+
+### 2. 真正的并发不同 payload/action 证据
+
+- `C1`：使用从未写入 audit 的全新 Idempotency-Key，同时启动同资源不同 payload/action（edit vs publish、comment edit vs delete）
+- 锁序说明：先 `FOR UPDATE` 资源行再事务内 audit 复核 → 至多一次成功写入，另一请求 `IDEMPOTENCY_CONFLICT`，且不得泄漏 Postgres unique violation
+- 另覆盖不同资源复用同一全新 key：结果为成功或 `IDEMPOTENCY_CONFLICT`，断言无 unique/23505 泄漏
+
+### 3. 两类自动取消 dead replay 的通知断言
+
+- `frozen` / `relationship_inactive`：replay 前记录 notification 数量；replay+处理后数量不变；cancel audit/outbox 仍各一条
+- 保留正文不进入 audit/outbox/notification 的隐私断言
+
+### 本轮验证命令日志
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — 11/11 passed (20.84s) |
+| `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 passed (1.5m) |
+| `git diff --check` | exit 0 — clean |
