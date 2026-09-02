@@ -3,7 +3,7 @@
   "name": "m7-family-push-pilot",
   "title": "M7 家庭推送试点",
   "description": "交付家庭内家长推送试点：文本/链接/受控图片、预约发布、学生版本化作答、家庭评论、实时授权、站内通知与媒体安全生命周期。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
