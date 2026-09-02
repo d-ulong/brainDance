@@ -15,9 +15,9 @@ import {
 } from "@/modules/family-content/constants";
 import { normalizeCommentBody } from "@/modules/family-content/content";
 import {
-  findAuditReplay,
   assertAuditReplayMatch,
-} from "@/modules/family-content/create-push.service";
+  findAuditReplay,
+} from "@/modules/family-content/audit-replay";
 import type { PushCommentDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
@@ -317,6 +317,8 @@ export async function mutatePushComment(
   }
 
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM push_comments WHERE id = ${input.commentId} FOR UPDATE`);
+
     const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
       assertAuditReplayMatch({
@@ -328,7 +330,6 @@ export async function mutatePushComment(
       return loadCommentReplay(tx, replayInTx.resourceId);
     }
 
-    await tx.execute(sql`SELECT id FROM push_comments WHERE id = ${input.commentId} FOR UPDATE`);
     const [comment] = await tx
       .select()
       .from(pushComments)

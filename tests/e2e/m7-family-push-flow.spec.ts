@@ -1,4 +1,12 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+
+import * as schema from "@/db/schema";
+import { familyPushes, outboxEvents } from "@/db/schema";
+import { requireDatabaseUrl } from "@/lib/env";
+import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
 
 import { createVerifiedSecondParent } from "./m5-training-helpers";
 import {
@@ -23,6 +31,90 @@ function localDatetimeOffset(minutesFromNow: number): string {
   const when = new Date(Date.now() + minutesFromNow * 60_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`;
+}
+
+/** Drive due publish_requested through the real outbox Worker path (no UI publish click). */
+async function publishScheduledPushViaWorker(pushId: string) {
+  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const db = drizzle(client, { schema });
+  try {
+    const requestedKey = `family_push.publish_requested:${pushId}`;
+    const publishedKey = `family_push.published:${pushId}`;
+    const due = new Date(Date.now() - 60_000);
+    const farFuture = new Date(Date.now() + 86_400_000);
+
+    for (let i = 0; i < 20; i += 1) {
+      const [push] = await db
+        .select({ status: familyPushes.status })
+        .from(familyPushes)
+        .where(eq(familyPushes.id, pushId))
+        .limit(1);
+      if (push?.status === "published") {
+        break;
+      }
+
+      await db
+        .update(outboxEvents)
+        .set({ availableAt: farFuture })
+        .where(eq(outboxEvents.status, "pending"));
+      await db
+        .update(outboxEvents)
+        .set({
+          availableAt: due,
+          status: "pending",
+          leaseToken: null,
+          leaseOwner: null,
+          leasedUntil: null,
+        })
+        .where(eq(outboxEvents.dedupeKey, requestedKey));
+
+      const result = await processNextOutboxEvent(db, {
+        workerId: `e2e-m7-sched-${i}`,
+        now: new Date(),
+      });
+      if (!result.processed && push?.status !== "published") {
+        throw new Error(`Worker did not publish scheduled push ${pushId}`);
+      }
+    }
+
+    const [published] = await db
+      .select({ status: familyPushes.status })
+      .from(familyPushes)
+      .where(eq(familyPushes.id, pushId))
+      .limit(1);
+    expect(published?.status).toBe("published");
+
+    for (let i = 0; i < 12; i += 1) {
+      const [event] = await db
+        .select({ status: outboxEvents.status })
+        .from(outboxEvents)
+        .where(eq(outboxEvents.dedupeKey, publishedKey))
+        .limit(1);
+      if (event?.status === "processed") {
+        return;
+      }
+      await db
+        .update(outboxEvents)
+        .set({ availableAt: farFuture })
+        .where(eq(outboxEvents.status, "pending"));
+      await db
+        .update(outboxEvents)
+        .set({
+          availableAt: due,
+          status: "pending",
+          leaseToken: null,
+          leaseOwner: null,
+          leasedUntil: null,
+        })
+        .where(eq(outboxEvents.dedupeKey, publishedKey));
+      await processNextOutboxEvent(db, {
+        workerId: `e2e-m7-pub-${i}`,
+        now: new Date(),
+      });
+    }
+  } finally {
+    await client.end({ timeout: 5 });
+  }
 }
 
 async function createPushViaApi(
@@ -242,7 +334,10 @@ test.describe("M7 family push P1 AC-M7-08 matrix", () => {
 
     await page.getByTestId(`push-open-${createdJson.pushId}`).click();
     await expect(page.getByTestId("push-detail-status")).toContainText("已预约");
-    await page.getByTestId("push-publish").click();
+
+    // Real due Worker path — do not click push-publish.
+    await publishScheduledPushViaWorker(createdJson.pushId);
+    await page.reload();
     await expect(page.getByTestId("push-detail-status")).toContainText("已发布", {
       timeout: 15_000,
     });
@@ -311,17 +406,52 @@ test.describe("M7 family push P1 AC-M7-08 matrix", () => {
     await deleteResponse;
     await expect(page).toHaveURL(new RegExp(`/parent/students/${fixture.studentId}/pushes$`));
 
+    // Terminal conflict from UI: create published push as creator, open detail, disable via API,
+    // then click stale disable and assert recoverable error feedback.
     await loginViaApi(request, fixture.parentEmail, fixture.parentPassword);
-    const terminal = await request.post(
-      `/api/family/students/${fixture.studentId}/pushes/${pushId}/publish`,
+    const conflictCreate = await createPushViaApi(
+      request,
+      fixture.studentId,
       {
-        headers: { "Idempotency-Key": `e2e-terminal-${suffix}` },
+        body: `terminal-${suffix}`,
+        publishMode: "immediate",
+      },
+      `e2e-terminal-create-${suffix}`,
+    );
+    expect(conflictCreate.ok(), await conflictCreate.text()).toBeTruthy();
+    const conflictJson = (await conflictCreate.json()) as { pushId: string };
+
+    await page.goto(`/parent/students/${fixture.studentId}/pushes/${conflictJson.pushId}`);
+    await expect(page.getByTestId("push-disable")).toBeVisible({ timeout: 15_000 });
+
+    const disabledViaApi = await request.post(
+      `/api/family/students/${fixture.studentId}/pushes/${conflictJson.pushId}/disable`,
+      {
+        headers: { "Idempotency-Key": `e2e-terminal-disable-api-${suffix}` },
         data: {},
       },
     );
-    expect([404, 409]).toContain(terminal.status());
-    const terminalBody = await terminal.text();
-    expect(terminalBody.length).toBeGreaterThan(0);
+    expect(disabledViaApi.ok(), await disabledViaApi.text()).toBeTruthy();
+
+    const conflictResponse = page.waitForResponse(
+      (resp) =>
+        resp.request().method() === "POST" &&
+        resp.url().includes(`/pushes/${conflictJson.pushId}/disable`),
+    );
+    await page.getByTestId("push-disable").click();
+    const conflictResp = await conflictResponse;
+    expect(conflictResp.status()).toBe(409);
+    await expect(page.getByTestId("push-detail-error")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("push-detail-error")).toContainText(
+      /Only published pushes can be disabled|不能从当前状态|状态冲突|停用/,
+    );
+    // Recoverable: detail shell and navigation remain usable.
+    await expect(page.getByTestId("push-detail")).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId("push-detail-status")).toContainText("已停用", {
+      timeout: 15_000,
+    });
+    await assertNoHorizontalScroll(page);
   });
 
   test("freeze and unlink revoke write/access with recoverable feedback", async ({

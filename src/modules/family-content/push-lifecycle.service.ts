@@ -19,11 +19,13 @@ import {
 } from "@/modules/family-content/constants";
 import { normalizePushContent } from "@/modules/family-content/content";
 import {
-  assertAuditReplayMatch,
-  findAuditReplay,
   loadPushDto,
   toPushDto,
 } from "@/modules/family-content/create-push.service";
+import {
+  assertAuditReplayMatch,
+  findAuditReplay,
+} from "@/modules/family-content/audit-replay";
 import type { FamilyPushDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
@@ -70,6 +72,8 @@ export async function editFamilyPush(
   }
 
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
+
     const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
       assertAuditReplayMatch({
@@ -81,7 +85,6 @@ export async function editFamilyPush(
       return { push: await loadPushDto(tx, replayInTx.resourceId, true), idempotentReplay: true };
     }
 
-    await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
     const push = await loadPushOrThrow(tx, input.pushId);
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
     await requireCreatorOwnership(tx, { actorId: input.actorId, push });
@@ -198,6 +201,8 @@ export async function transitionFamilyPush(
   }
 
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
+
     const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
       assertAuditReplayMatch({
@@ -212,7 +217,6 @@ export async function transitionFamilyPush(
       };
     }
 
-    await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
     const push = await loadPushOrThrow(tx, input.pushId);
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
     await requireCreatorOwnership(tx, { actorId: input.actorId, push });

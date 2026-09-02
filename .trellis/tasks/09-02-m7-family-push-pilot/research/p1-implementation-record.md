@@ -117,3 +117,45 @@ Scheduled publish: `family_push.publish_requested` with `available_at = schedule
 | `pnpm exec playwright test tests/e2e/home.spec.ts --project=desktop-chromium` | exit 0 — health 2/2 |
 | `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 |
 | `git diff --check` | exit 0 — clean |
+
+## 最终最小修正（相对被复验提交 `4b7c95e0487c6b942ed38285df3d75f9851bacd6`）
+
+- 执行基线：见 Cursor Prompt 完整 SHA
+- 指令：`research/p1-final-correction-directive.md`
+- 范围：仅 C1～C5；未实现 P2
+
+### C1 并发幂等顺序
+
+- 文件：`audit-replay.ts`（自 `create-push.service.ts` 抽出）、`push-lifecycle.service.ts`、`comment.service.ts`
+- 事务路径：先 `FOR UPDATE` 稳定资源行，再事务内 `findAuditReplay` / `assertAuditReplayMatch`，然后业务写入
+- 证据：`family-content.test.ts` → `C1: concurrent same-key replay and different-payload conflict`
+
+### C2 预约测试确定性
+
+- `processTargetOutboxUntil(dedupeKey, predicate)`：推迟无关 pending、使目标到期并有上限条件等待；替换固定 `drainOutbox()` 盲跑
+- 证据：`AC-M7-07` 期望 `published` 且保留通知/隐私断言
+
+### C3 Worker 自动取消证据
+
+- 冻结：删除请求冻结后推送仍为 `scheduled`，Worker 取消；断言单一 cancel audit/outbox、隐私、dead replay 不去重失败
+- 关系失效：直接将 `relationships.status` 置 `ended`（不经 `endRelationship` 取消助手、不伪造 push 回 `scheduled`），Worker 以 `relationship_inactive` 取消并同样断言
+- 证据：`P1-F02`
+
+### C4 双视口 E2E
+
+- 预约发布：`publishScheduledPushViaWorker` 到期驱动 outbox Worker，禁止点击 `push-publish`
+- 终态冲突：UI 点击陈旧停用 → `push-detail-error` 具体文案 + 详情可恢复/刷新后「已停用」
+- 证据：`m7-family-push-flow.spec.ts` desktop + mobile
+
+### C5 新接口经 Family Content 公共 service
+
+- `getFamilyPush` / `listFamilyPushes` / `createFamilyPush` / `loadUserRole` 覆盖 active/inactive、parent/student/admin/missing
+- 证据：`P1-F03`
+
+### 最终修正验证命令日志
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — 11/11 passed |
+| `pnpm exec playwright test tests/e2e/m7-family-push-flow.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — 8/8 |
+| `git diff --check` | exit 0 — clean |
