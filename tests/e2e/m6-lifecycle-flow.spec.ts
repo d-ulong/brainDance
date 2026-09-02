@@ -110,14 +110,29 @@ test.describe("M6 lifecycle flow", () => {
       timeout: 15_000,
     });
 
-    // Stale page still shows the pending state; its reject is a terminal-state
-    // conflict that the UI must surface explicitly (F03).
+    // Stale page still shows the pending state; its reject races a redemption
+    // that Page A already moved to a terminal state. The server must answer with
+    // an explicit STATE_CONFLICT (409), and the parent UI must surface that
+    // conflict feedback — not merely any error region (F03).
+    const staleRejectResponse = stalePage.waitForResponse(
+      (res) =>
+        res.request().method() === "POST" &&
+        /\/api\/family\/students\/.+\/redemptions\/.+\/reject$/.test(new URL(res.url()).pathname),
+    );
     await stalePage.getByTestId(`reject-redemption-${redemptionId}`).click();
     await fillField(stalePage, `reject-reason-${redemptionId}`, "再次拒绝");
     await stalePage.getByTestId(`confirm-reject-${redemptionId}`).click();
-    await expect(stalePage.getByTestId("parent-redemption-error")).toBeVisible({
-      timeout: 15_000,
-    });
+
+    const conflictResponse = await staleRejectResponse;
+    expect(conflictResponse.status()).toBe(409);
+    const conflictBody = (await conflictResponse.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(conflictBody.error?.code).toBe("STATE_CONFLICT");
+
+    const conflictFeedback = stalePage.getByTestId("parent-redemption-error");
+    await expect(conflictFeedback).toBeVisible({ timeout: 15_000 });
+    await expect(conflictFeedback).toContainText("not pending");
 
     await stalePage.close();
     await assertNoHorizontalScroll(page);
@@ -207,6 +222,46 @@ test.describe("M6 lifecycle flow", () => {
       timeout: 30_000,
     });
     await downloadPromise;
+    await assertNoHorizontalScroll(page);
+  });
+
+  test("AC-M6-09 expired parent export token fails via UI after fixture expiry", async ({
+    page,
+  }) => {
+    const fixture = loadE2eFixture();
+
+    await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
+    await page.goto(`/parent/students/${fixture.studentId}/export`);
+    await expect(page.getByTestId("parent-create-export-button")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const jobId = await createParentExportViaUi(page);
+    await expect(page.getByTestId(`parent-export-job-${jobId}`)).toBeVisible({
+      timeout: 15_000,
+    });
+    await waitForExportReady(page, jobId, 90_000, { prefix: "parent-" });
+    await expect(page.getByTestId(`parent-download-export-${jobId}`)).toBeVisible();
+
+    // Fixture-only: expire the job's download window before the first download
+    // attempt so the parent UI must surface an explicit TOKEN_EXPIRED failure.
+    await expireExportJobTokenFixture(jobId);
+
+    const tokenResponse = page.waitForResponse(
+      (res) =>
+        res.request().method() === "POST" && res.url().includes(`/api/export-jobs/${jobId}/token`),
+    );
+    await page.getByTestId(`parent-download-export-${jobId}`).click();
+    const issueResponse = await tokenResponse;
+    expect(issueResponse.status()).toBe(400);
+    const issueBody = (await issueResponse.json()) as {
+      error?: { code?: string; message?: string };
+    };
+    expect(issueBody.error?.code).toBe("TOKEN_EXPIRED");
+
+    const parentError = page.getByTestId("parent-export-error");
+    await expect(parentError).toBeVisible({ timeout: 15_000 });
+    await expect(parentError).toContainText("expired");
     await assertNoHorizontalScroll(page);
   });
 

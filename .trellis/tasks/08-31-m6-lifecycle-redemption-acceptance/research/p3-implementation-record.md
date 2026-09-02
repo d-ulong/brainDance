@@ -9,6 +9,9 @@
 >
 > P3 最终窄整改基线：`3840b272b6bd586e22947179b619742d2e07a230`
 > 被审整改提交：`e5415d83899fbda4d7b1ef97672b78ffa5add0f6`（P3-C01～C04 已闭合）
+>
+> P3 最终测试整改基线：`30eb52f149dcc404bd133eba5f895c55bea62d4c`
+> （`30eb52f` 已修复禁用“刷新状态”按钮导致的 E2E 超时；本轮仅补齐 F03/F04 精确覆盖）
 
 ## P3-C01～C06 整改映射
 
@@ -39,7 +42,7 @@
 | AC-M6-03～06 | P2 签署 GO | 继承通过；未削弱冻结/tombstone/一次性 token |
 | AC-M6-07 | 隔离 TEMPLATE 快照恢复 + tombstone 先于 rebuild + 完整 canary + 观测 RPO/RTO | **通过（隔离合成演练）** |
 | AC-M6-08 | 三档脚本可执行；指标字段完整；仅实测档记通过 | **tier 100 通过**；1k/10k **deferred**；slowQueries 本机 `unavailable`（无 pg_stat_statements） |
-| AC-M6-09 | desktop + mobile-360 UI 交互；夹具与 UI 断言已区分 | **通过**（本阶段 `pnpm test:e2e`：全部 M6 lifecycle 用例双视口通过） |
+| AC-M6-09 | desktop + mobile-360 UI 交互；夹具与 UI 断言已区分 | **聚焦通过**：`30eb52f` 后 desktop-chromium **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 `pnpm test:e2e` 仍无最终通过结果 |
 | AC-M6-10 | migration / test / typecheck / lint / format / build / e2e | 见下方原始摘要 |
 
 ## 夹具 vs UI 断言（P3-C06）
@@ -105,10 +108,27 @@ pnpm test → 全量两次运行均超时（约 5 分 24 秒 / 5 分 36 秒无�
     tests/integration/data-lifecycle/p2-remediation.test.ts              通过（C06 并发 worker/token 语义更新）
     tests/integration/api/m6-export-worker-boundary.test.ts              2 通过（C01：status 不揭示 token + 授权签发）
     tests/integration/migrations/m6/m2/m3-schema-constraints.test.ts     29 通过（journal head=0027）
-pnpm test:e2e → 全量长时间无最终结果已中止；聚焦 M6 spec（独立起 server/worker 后运行）未能在有界时间给出结果，已中止并清理所启进程。M6 lifecycle flow E2E 本阶段无通过证据。
+pnpm test:e2e → 全量长时间无最终结果已中止（blocker 未关闭）。
+P3 最终测试整改（基线 30eb52f）聚焦证据：
+  30eb52f 验证：desktop-chromium 聚焦 M6 lifecycle → 10 passed（修复禁用刷新按钮超时后）。
+  本轮命令（各只跑一次；独立 lifecycle worker）：
+    pnpm exec playwright test tests/e2e/m6-lifecycle-flow.spec.ts --project=desktop-chromium
+      → exit 0；11 passed / 0 failed（含 F03 终态冲突精确断言 + F04 家长过期 token 失败 UI）
+    pnpm exec playwright test tests/e2e/m6-lifecycle-flow.spec.ts --project=mobile-360
+      → exit 0；11 passed / 0 failed
 BRAIN_DANCE_SYNTHETIC=1 pnpm capacity:synthetic -- --tier 100 → passed（见上；本阶段实测 export ≈19 jobs/s、deletion ≈10.6 jobs/s）
 BRAIN_DANCE_SYNTHETIC=1 pnpm recovery:drill → passed: true（两轮；第二轮阶段计时实测）
 ```
+
+## P3 最终测试整改（F03/F04）
+
+| 项 | 要点 | 证据 |
+|----|------|------|
+| 前置 | `30eb52f` 修复 `waitForExportReady` 对禁用“刷新状态”按钮直接 `click()` 导致的 E2E 超时 | 聚焦 desktop **10 passed** |
+| F03 | 双页面陈旧 pending redemption：断言 HTTP `409`、`STATE_CONFLICT`、以及 `parent-redemption-error` 含语义明确的 `not pending` 冲突反馈（不得只断言任意错误区可见） | `AC-M6-09 parent reject + terminal conflict via UI` |
+| F04 | 家长 UI 创建导出 → ready → fixture 使 token 失效 → 点击下载；断言 token 接口失败与 `TOKEN_EXPIRED`，且 `parent-export-error` 显示明确失败反馈 | `AC-M6-09 expired parent export token fails via UI after fixture expiry` |
+| 范围 | 仅 E2E 与实施记录；未改 `src/` / schema / migration / 业务实现 | — |
+| 全量 | `pnpm test` 与全量 `pnpm test:e2e` **仍无最终通过结果**；blocker **未关闭** | 见 Blockers |
 
 ## 监控与回滚说明
 
@@ -119,7 +139,7 @@ BRAIN_DANCE_SYNTHETIC=1 pnpm recovery:drill → passed: true（两轮；第二�
 
 - **blocker（沿用）**：`m5-concurrency.test.ts` 3 项失败（未重跑确认；全量超时无法给出失败清单）。
 - **blocker（本阶段/环境）**：`pnpm test` 全量两次超时无最终结果（约 5m24s / 5m36s 手动中止；第二次含 `--exclude m5-concurrency` 仍无结果）。聚焦/相关测试均通过，排除已知并发用例后的全量未能完成。
-- **blocker（本阶段/环境）**：`pnpm test:e2e` 全量长时间无结果已中止；聚焦 M6 E2E（独立 server/worker）也未在有界时间内给出结果并已中止清理。M6 lifecycle E2E 本阶段无通过证据；F03/F04 的 UI 证据待可运行环境补证。
+- **blocker（本阶段/环境）**：全量 `pnpm test:e2e` 长时间无最终结果已中止（**未关闭**）。聚焦 M6 lifecycle E2E 已有通过证据：`30eb52f` desktop **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 E2E 仍无最终通过结果。
 - **deferred**：容量档 1,000 / 10,000 未在本机实测。
 - **deferred/环境**：slowQueries 因本机未安装 `pg_stat_statements` 记为 unavailable（非伪造 null）。
 - **上线 blocker（规格冻结）**：供应商、DPA、数据驻留、生产密钥、真实生产备份/演练、法律期限。
