@@ -10,6 +10,7 @@ export type AppendOutboxInput = {
   eventVersion?: number;
   dedupeKey: string;
   payload: Record<string, unknown>;
+  availableAt?: Date;
 };
 
 export async function appendOutboxEvent(db: Database, input: AppendOutboxInput): Promise<string> {
@@ -33,6 +34,7 @@ export async function appendOutboxEvent(db: Database, input: AppendOutboxInput):
       dedupeKey: input.dedupeKey,
       payload: input.payload,
       status: "pending",
+      ...(input.availableAt ? { availableAt: input.availableAt } : {}),
     })
     .onConflictDoNothing({ target: outboxEvents.dedupeKey })
     .returning({ id: outboxEvents.id });

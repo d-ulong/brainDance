@@ -3,6 +3,7 @@ import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { IdentityError } from "@/modules/identity/errors";
 import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
 import { TrainingError } from "@/modules/training/errors";
+import { FamilyContentError } from "@/modules/family-content/errors";
 
 export function appErrorToStatus(code: string): number {
   switch (code) {
@@ -42,6 +43,7 @@ export function appErrorToStatus(code: string): number {
       return 400;
     case "IDEMPOTENCY_SESSION_MISMATCH":
     case "STATE_CONFLICT":
+    case "IDEMPOTENCY_CONFLICT":
       return 409;
     case "USER_NOT_FOUND":
     case "RELATIONSHIP_NOT_FOUND":
@@ -76,7 +78,8 @@ export function toErrorResponse(error: unknown): {
     error instanceof FamilyAccessError ||
     error instanceof ReflectionPrivacyError ||
     error instanceof TrainingError ||
-    error instanceof DataLifecycleError
+    error instanceof DataLifecycleError ||
+    error instanceof FamilyContentError
   ) {
     return {
       status: appErrorToStatus(error.code),

@@ -90,6 +90,13 @@ export default function ParentStudentsPage() {
                   兑换目录
                 </Link>
                 <Link
+                  href={`/parent/students/${student.studentId}/pushes`}
+                  data-testid={`student-pushes-${student.studentId}`}
+                  className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"
+                >
+                  家庭推送
+                </Link>
+                <Link
                   href={`/parent/students/${student.studentId}/export`}
                   data-testid={`student-export-${student.studentId}`}
                   className="flex min-h-11 items-center rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50"

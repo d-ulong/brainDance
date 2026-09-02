@@ -7,6 +7,7 @@ import { deactivateCreatorConfigsOnRelationshipEnd } from "@/modules/family-acce
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { reconcileMembershipAfterRelationshipEnd } from "@/modules/family-access/membership-projection.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { cancelScheduledPushesOnRelationshipEnd } from "@/modules/family-content/push-lifecycle.service";
 import { revokePrivateGrantsOnRelationshipEnd } from "@/modules/reflection-privacy/grant-private-access.service";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
@@ -152,6 +153,15 @@ export async function endRelationship(
       studentId: relationship.studentId,
       actorId: input.actorId,
       relationshipEndIdempotencyKey: input.idempotencyKey,
+      requestId: input.requestId,
+    });
+
+    await cancelScheduledPushesOnRelationshipEnd(tx, {
+      parentId: relationship.parentId,
+      studentId: relationship.studentId,
+      endedAt,
+      relationshipEndIdempotencyKey: input.idempotencyKey,
+      actorId: input.actorId,
       requestId: input.requestId,
     });
 
