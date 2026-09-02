@@ -1,0 +1,6 @@
+{"file":"CONTEXT.md","reason":"Family push, answers, comments, image limits, deletion and unlink terminology are frozen here."}
+{"file":"docs/user-flows.md","reason":"Canonical delayed family-push user flow, media safety and lifecycle behavior."}
+{"file":"docs/product-scope.md","reason":"Product scope, permissions and out-of-scope boundaries for M7."}
+{"file":"docs/architecture.md","reason":"Module, outbox, authorization, notification and lifecycle architecture constraints."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality and database guideline index."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend UI, accessibility and responsive guideline index."}

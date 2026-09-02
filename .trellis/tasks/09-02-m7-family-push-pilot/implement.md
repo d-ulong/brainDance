@@ -1,0 +1,37 @@
+# M7 家庭推送试点实施计划
+
+## 固定信息
+
+- Active task：`.trellis/tasks/09-02-m7-family-push-pilot`
+- 规划基线：`3513cd1a94206335162a3805548068a6942f52d3`
+- 建议分支：`feat/m7-family-push-pilot`
+- 分工：Codex 冻结指令并审核固定 SHA；Cursor 只实现当前唯一阶段指令。
+
+## P1：文本/链接、预约、作答与评论闭环
+
+1. 先写 migration/schema 约束和授权矩阵测试，建立 push/version、answer/version、comment/version 权威表。
+2. 实现创建者所有权、版本化编辑、立即/预约发布、停用/删除及关系结束时取消 scheduled。
+3. 接入既有 outbox Worker，保证重试/dead replay 只发布和通知一次。
+4. 实现学生版本化文本作答、家长评论/学生回复、自有评论编辑删除及无正文审计。
+5. 增加薄 Route、DTO 与文本/原始 URL UI；覆盖 desktop/mobile 主路径及越权/冲突/冻结。
+6. 写 `research/p1-implementation-record.md`，映射 R-M7-01～04、07～08 与 AC-M7-01～04、07～08。
+
+P1 验证：migration、family-content、family-access、freeze、outbox、audit、notification、API、聚焦 E2E、typecheck、lint、format、build。
+
+## P2：受控图片与删除/恢复闭环
+
+1. 建立 `PrivateMediaStore` seam、media objects/references/purge intents 与数据库约束。
+2. 实现 10MB 限制、magic bytes/解码校验、扫描接口、重编码、staging 隔离和 ready promote。
+3. 实现资源绑定短时读取能力和实时授权；离关联、冻结、删除后立即拒绝。
+4. 实现 90 天无引用清理、失败重放、账户删除/tombstone/恢复防复现。
+5. 增加恶意/伪装/超限/重编码失败测试及双视口图片推送与作答 E2E。
+6. 写 `research/p2-implementation-record.md`，映射 R-M7-05～06 与 AC-M7-05～06，并汇总 AC-M7-09。
+
+P2 验证：migration、媒体安全、删除/恢复、全量 test、typecheck、lint、format、build、完整双视口 E2E。
+
+## 审核与回滚点
+
+- 每个阶段只允许一个聚焦业务提交；Cursor 只能声明“已交审核”。
+- Codex 按固定 SHA 审核；NO-GO 一次性冻结全部阻断项，单阶段最多实现审核、集中整改、最终复验三轮。
+- P1 不得提前实现图片、供应商 SDK 或生产媒体配置；P2 不得重写 P1 权威状态机。
+- 禁止 merge/rebase/reset/force-push、部署、生产数据/媒体和关闭上线 blocker。

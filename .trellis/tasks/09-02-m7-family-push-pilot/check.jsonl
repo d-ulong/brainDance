@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/09-02-m7-family-push-pilot/prd.md","reason":"Review implementation against R-M7 and AC-M7 contracts."}
+{"file":".trellis/tasks/09-02-m7-family-push-pilot/design.md","reason":"Review module boundaries, media pipeline, authorization and deletion ordering."}
+{"file":".trellis/tasks/09-02-m7-family-push-pilot/implement.md","reason":"Review phase scope and verification gates without crossing into later phases."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend test and quality gates."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend E2E, accessibility and responsive gates."}
