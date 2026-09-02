@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { notifications } from "@/db/schema";
-import type { NotificationDto } from "@/modules/family-content/dto";
+import type { NotificationDto } from "@/modules/notification/dto";
 
 export const NOTIFICATION_TYPES = {
   PUBLISHED: "family_push.published",

@@ -22,10 +22,13 @@ import {
   mutatePushComment,
 } from "@/modules/family-content/comment.service";
 import {
+  editFamilyPush,
   getFamilyPush,
   listFamilyPushes,
   transitionFamilyPush,
 } from "@/modules/family-content/push-lifecycle.service";
+import { listActiveParentIdsForStudent } from "@/modules/family-access/authorization.service";
+import { getParentOrStudentRole } from "@/modules/identity/user-role.service";
 import { processNextOutboxEvent } from "@/modules/outbox/process-outbox-event.service";
 import { replayDeadOutboxEvent } from "@/modules/outbox/replay-outbox-event.service";
 import {
@@ -577,5 +580,376 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       true,
     );
     expect(studentList.some((p) => p.status === "draft")).toBe(false);
+  });
+
+  it("P1-F01: edit/transition/comment mutate idempotency payload conflicts", async () => {
+    const { creatorId, student, suffix } = await seedFamily();
+    const draft = await createFamilyPush(db, {
+      actorId: creatorId,
+      studentId: student.studentId,
+      body: "v1",
+      linkUrl: "https://example.com/a",
+      publishMode: "draft",
+      idempotencyKey: `f01-create-${suffix}`,
+    });
+
+    const edited = await editFamilyPush(db, {
+      actorId: creatorId,
+      pushId: draft.push.pushId,
+      body: "v2",
+      linkUrl: "https://example.com/a",
+      idempotencyKey: `f01-shared-${suffix}`,
+    });
+    expect(edited.push.body).toBe("v2");
+
+    const editReplay = await editFamilyPush(db, {
+      actorId: creatorId,
+      pushId: draft.push.pushId,
+      body: "v2",
+      linkUrl: "https://example.com/a",
+      idempotencyKey: `f01-shared-${suffix}`,
+    });
+    expect(editReplay.idempotentReplay).toBe(true);
+
+    await expect(
+      editFamilyPush(db, {
+        actorId: creatorId,
+        pushId: draft.push.pushId,
+        body: "different",
+        linkUrl: "https://example.com/a",
+        idempotencyKey: `f01-shared-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    // Same client key + different command (publish) must conflict — action not in key.
+    await expect(
+      transitionFamilyPush(db, {
+        actorId: creatorId,
+        pushId: draft.push.pushId,
+        action: "publish",
+        idempotencyKey: `f01-shared-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const published = await transitionFamilyPush(db, {
+      actorId: creatorId,
+      pushId: draft.push.pushId,
+      action: "publish",
+      idempotencyKey: `f01-pub-${suffix}`,
+    });
+    expect(published.push.status).toBe("published");
+
+    const pubReplay = await transitionFamilyPush(db, {
+      actorId: creatorId,
+      pushId: draft.push.pushId,
+      action: "publish",
+      idempotencyKey: `f01-pub-${suffix}`,
+    });
+    expect(pubReplay.idempotentReplay).toBe(true);
+
+    await expect(
+      transitionFamilyPush(db, {
+        actorId: creatorId,
+        pushId: draft.push.pushId,
+        action: "delete",
+        idempotencyKey: `f01-pub-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const comment = await createPushComment(db, {
+      actorId: creatorId,
+      actorRole: "parent",
+      pushId: draft.push.pushId,
+      body: "c1",
+      idempotencyKey: `f01-ccreate-${suffix}`,
+    });
+
+    const editedComment = await mutatePushComment(db, {
+      actorId: creatorId,
+      commentId: comment.comment.commentId,
+      body: "c1-edit",
+      idempotencyKey: `f01-cmutate-${suffix}`,
+    });
+    expect(editedComment.comment.body).toBe("c1-edit");
+
+    const commentReplay = await mutatePushComment(db, {
+      actorId: creatorId,
+      commentId: comment.comment.commentId,
+      body: "c1-edit",
+      idempotencyKey: `f01-cmutate-${suffix}`,
+    });
+    expect(commentReplay.idempotentReplay).toBe(true);
+
+    await expect(
+      mutatePushComment(db, {
+        actorId: creatorId,
+        commentId: comment.comment.commentId,
+        body: "other-body",
+        idempotencyKey: `f01-cmutate-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    await expect(
+      mutatePushComment(db, {
+        actorId: creatorId,
+        commentId: comment.comment.commentId,
+        delete: true,
+        idempotencyKey: `f01-cmutate-${suffix}`,
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const deleted = await mutatePushComment(db, {
+      actorId: creatorId,
+      commentId: comment.comment.commentId,
+      delete: true,
+      idempotencyKey: `f01-cdel-${suffix}`,
+    });
+    expect(deleted.comment.deleted).toBe(true);
+
+    const deleteReplay = await mutatePushComment(db, {
+      actorId: creatorId,
+      commentId: comment.comment.commentId,
+      delete: true,
+      idempotencyKey: `f01-cdel-${suffix}`,
+    });
+    expect(deleteReplay.idempotentReplay).toBe(true);
+  });
+
+  it("P1-F02: scheduled publish and auto-cancel write audit/outbox atomically", async () => {
+    const { creatorId, student, suffix, relationshipId } = await seedFamily();
+    const secret = `worker-secret-${suffix}`;
+
+    const scheduled = await createFamilyPush(db, {
+      actorId: creatorId,
+      studentId: student.studentId,
+      body: secret,
+      publishMode: "scheduled",
+      scheduledPublishAt: new Date(Date.now() + 60_000).toISOString(),
+      idempotencyKey: `f02-sched-${suffix}`,
+    });
+
+    await db
+      .update(outboxEvents)
+      .set({ availableAt: new Date(Date.now() - 1_000) })
+      .where(eq(outboxEvents.dedupeKey, `family_push.publish_requested:${scheduled.push.pushId}`));
+
+    await drainOutbox();
+    await drainOutbox();
+
+    const publishAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        eq(auditEvents.idempotencyKey, `audit:family-push-worker-publish:${scheduled.push.pushId}`),
+      );
+    expect(publishAudits).toHaveLength(1);
+    expect(JSON.stringify(publishAudits[0]?.metadata ?? {})).not.toContain(secret);
+
+    const publishedOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.dedupeKey, `family_push.published:${scheduled.push.pushId}`));
+    expect(publishedOutbox).toHaveLength(1);
+    expect(JSON.stringify(publishedOutbox[0]?.payload ?? {})).not.toContain(secret);
+
+    // Frozen auto-cancel path.
+    const freezeParent = await bootstrapVerifiedParentWithInvite(
+      db,
+      `f02_freeze_p_${suffix}@test.local`,
+    );
+    const freezeStudent = await seedStudentUser(db, {
+      username: `f02_freeze_s_${suffix}`,
+      password: "StudentPass123!Student",
+    });
+    await acceptParentForStudent(db, {
+      parentId: freezeParent.parentId,
+      studentId: freezeStudent.studentId,
+    });
+    const freezeSched = await createFamilyPush(db, {
+      actorId: freezeParent.parentId,
+      studentId: freezeStudent.studentId,
+      body: `freeze-${secret}`,
+      publishMode: "scheduled",
+      scheduledPublishAt: new Date(Date.now() + 60_000).toISOString(),
+      idempotencyKey: `f02-freeze-sched-${suffix}`,
+    });
+    await createDeletionRequest(db, {
+      targetType: DELETION_TARGET_TYPE.STUDENT_ACCOUNT,
+      targetId: freezeStudent.studentId,
+      requestedBy: freezeStudent.studentId,
+      requesterRole: "student",
+      idempotencyKey: `f02-freeze-${suffix}`,
+    });
+    await db
+      .update(outboxEvents)
+      .set({ availableAt: new Date(Date.now() - 1_000) })
+      .where(
+        eq(outboxEvents.dedupeKey, `family_push.publish_requested:${freezeSched.push.pushId}`),
+      );
+    await drainOutbox();
+
+    const [frozenPush] = await db
+      .select()
+      .from(familyPushes)
+      .where(eq(familyPushes.id, freezeSched.push.pushId))
+      .limit(1);
+    expect(frozenPush?.status).toBe("cancelled");
+
+    const freezeAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        eq(
+          auditEvents.idempotencyKey,
+          `audit:family-push-worker-cancel:${freezeSched.push.pushId}`,
+        ),
+      );
+    expect(freezeAudits).toHaveLength(1);
+    expect((freezeAudits[0]?.metadata as { reason?: string } | null)?.reason).toBe("frozen");
+    expect(JSON.stringify(freezeAudits[0]?.metadata ?? {})).not.toContain(`freeze-${secret}`);
+
+    const freezeCancelledOutbox = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.dedupeKey, `family_push.cancelled:${freezeSched.push.pushId}`));
+    expect(freezeCancelledOutbox).toHaveLength(1);
+    expect(JSON.stringify(freezeCancelledOutbox[0]?.payload ?? {})).not.toContain(
+      `freeze-${secret}`,
+    );
+
+    // Relationship-inactive auto-cancel path.
+    const unlinkSched = await createFamilyPush(db, {
+      actorId: creatorId,
+      studentId: student.studentId,
+      body: `unlink-${secret}`,
+      publishMode: "scheduled",
+      scheduledPublishAt: new Date(Date.now() + 60_000).toISOString(),
+      idempotencyKey: `f02-unlink-sched-${suffix}`,
+    });
+    await endRelationship(db, {
+      actorId: creatorId,
+      relationshipId,
+      idempotencyKey: `f02-end-${suffix}`,
+    });
+    // Recreate relationship for other flows? Not needed. Force worker on remaining scheduled.
+    // Relationship end already cancelled creator scheduled pushes; create another with inactive check:
+    // Re-link creator then create schedule, then end again via direct status trick —
+    // Instead: seed a push while active, then end relationship before worker (already cancelled by end).
+    // For worker path with relationship_inactive: create push, manually set relationship ended
+    // without cancelScheduled helper by using a second parent-owned schedule after end.
+
+    const { parentId: inactiveParent } = await bootstrapVerifiedParentWithInvite(
+      db,
+      `f02_inactive_p_${suffix}@test.local`,
+    );
+    const inactiveStudent = await seedStudentUser(db, {
+      username: `f02_inactive_s_${suffix}`,
+      password: "StudentPass123!Student",
+    });
+    const { relationshipId: inactiveRel } = await acceptParentForStudent(db, {
+      parentId: inactiveParent,
+      studentId: inactiveStudent.studentId,
+    });
+    const inactiveSched = await createFamilyPush(db, {
+      actorId: inactiveParent,
+      studentId: inactiveStudent.studentId,
+      body: `inactive-${secret}`,
+      publishMode: "scheduled",
+      scheduledPublishAt: new Date(Date.now() + 60_000).toISOString(),
+      idempotencyKey: `f02-inactive-sched-${suffix}`,
+    });
+    // End relationship but leave the push scheduled by updating status back for worker path.
+    await endRelationship(db, {
+      actorId: inactiveParent,
+      relationshipId: inactiveRel,
+      idempotencyKey: `f02-inactive-end-${suffix}`,
+    });
+    await db
+      .update(familyPushes)
+      .set({ status: "scheduled" })
+      .where(eq(familyPushes.id, inactiveSched.push.pushId));
+    await db
+      .update(outboxEvents)
+      .set({ availableAt: new Date(Date.now() - 1_000), status: "pending" })
+      .where(
+        eq(outboxEvents.dedupeKey, `family_push.publish_requested:${inactiveSched.push.pushId}`),
+      );
+    await drainOutbox();
+
+    const [inactivePush] = await db
+      .select()
+      .from(familyPushes)
+      .where(eq(familyPushes.id, inactiveSched.push.pushId))
+      .limit(1);
+    expect(inactivePush?.status).toBe("cancelled");
+
+    const inactiveAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        eq(
+          auditEvents.idempotencyKey,
+          `audit:family-push-worker-cancel:${inactiveSched.push.pushId}`,
+        ),
+      );
+    expect(inactiveAudits).toHaveLength(1);
+    expect((inactiveAudits[0]?.metadata as { reason?: string } | null)?.reason).toBe(
+      "relationship_inactive",
+    );
+
+    // Dead replay of publish_requested must not duplicate audit/outbox/notifications for published push.
+    const notifBefore = (await db.select().from(notifications)).length;
+    await db
+      .update(outboxEvents)
+      .set({ status: "dead", attempts: 5 })
+      .where(eq(outboxEvents.dedupeKey, `family_push.publish_requested:${scheduled.push.pushId}`));
+    await replayDeadOutboxEvent(db, {
+      eventId: (
+        await db
+          .select()
+          .from(outboxEvents)
+          .where(
+            eq(outboxEvents.dedupeKey, `family_push.publish_requested:${scheduled.push.pushId}`),
+          )
+          .limit(1)
+      )[0]!.id,
+      actorId: creatorId,
+      reason: "f02 replay",
+      idempotencyKey: `f02-replay-${suffix}`,
+    });
+    await drainOutbox();
+    expect(
+      (
+        await db
+          .select()
+          .from(auditEvents)
+          .where(
+            eq(
+              auditEvents.idempotencyKey,
+              `audit:family-push-worker-publish:${scheduled.push.pushId}`,
+            ),
+          )
+      ).length,
+    ).toBe(1);
+    expect(
+      (
+        await db
+          .select()
+          .from(outboxEvents)
+          .where(eq(outboxEvents.dedupeKey, `family_push.published:${scheduled.push.pushId}`))
+      ).length,
+    ).toBe(1);
+    expect((await db.select().from(notifications)).length).toBe(notifBefore);
+
+    void unlinkSched;
+  });
+
+  it("P1-F03: family-access/identity interfaces own relationship and role reads", async () => {
+    const { creatorId, otherParentId, student } = await seedFamily();
+    const parentIds = await listActiveParentIdsForStudent(db, student.studentId);
+    expect(parentIds.sort()).toEqual([creatorId, otherParentId].sort());
+
+    await expect(getParentOrStudentRole(db, creatorId)).resolves.toBe("parent");
+    await expect(getParentOrStudentRole(db, student.studentId)).resolves.toBe("student");
   });
 });

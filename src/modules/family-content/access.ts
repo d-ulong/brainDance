@@ -1,7 +1,7 @@
-import { and, eq, ne } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { familyPushes, relationships, users } from "@/db/schema";
+import { familyPushes } from "@/db/schema";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import {
@@ -14,6 +14,11 @@ import {
   type FamilyPushStatus,
 } from "@/modules/family-content/constants";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import { IdentityError } from "@/modules/identity/errors";
+import {
+  getParentOrStudentRole,
+  type ParentOrStudentRole,
+} from "@/modules/identity/user-role.service";
 
 export type FamilyContentActor = {
   actorId: string;
@@ -83,8 +88,7 @@ export async function assertCanAccessPush(
   if (!READABLE_STATUSES_FOR_FAMILY.has(input.push.status as FamilyPushStatus)) {
     throw new FamilyContentError("NOT_FOUND", "Push not found");
   }
-  // Non-creator parents cannot see unpublished drafts/schedules belonging to another parent?
-  // Spec: 目标学生和全部当前关联家长可见 — so yes they can see scheduled/draft from other parents.
+  // Spec: 目标学生和全部当前关联家长可见 — linked parents can see drafts/schedules too.
   return "linked_parent";
 }
 
@@ -100,17 +104,6 @@ export async function requireCreatorOwnership(
   }
 }
 
-export async function listActiveParentIdsForStudent(
-  db: Database,
-  studentId: string,
-): Promise<string[]> {
-  const rows = await db
-    .select({ parentId: relationships.parentId })
-    .from(relationships)
-    .where(and(eq(relationships.studentId, studentId), eq(relationships.status, "active")));
-  return rows.map((row) => row.parentId);
-}
-
 export async function loadPushOrThrow(
   db: Database,
   pushId: string,
@@ -122,14 +115,13 @@ export async function loadPushOrThrow(
   return push;
 }
 
-export async function loadUserRole(db: Database, userId: string): Promise<"parent" | "student"> {
-  const [user] = await db
-    .select({ role: users.role })
-    .from(users)
-    .where(and(eq(users.id, userId), ne(users.role, "admin")))
-    .limit(1);
-  if (!user || (user.role !== "parent" && user.role !== "student")) {
-    throw new FamilyContentError("FORBIDDEN", "Access denied");
+export async function loadUserRole(db: Database, userId: string): Promise<ParentOrStudentRole> {
+  try {
+    return await getParentOrStudentRole(db, userId);
+  } catch (error) {
+    if (error instanceof IdentityError) {
+      throw new FamilyContentError("FORBIDDEN", "Access denied");
+    }
+    throw error;
   }
-  return user.role;
 }

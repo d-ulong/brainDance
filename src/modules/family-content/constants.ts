@@ -15,6 +15,7 @@ export type FamilyPushPublishMode = (typeof FAMILY_PUSH_PUBLISH_MODES)[number];
 export const FAMILY_CONTENT_EVENT_TYPES = {
   PUBLISH_REQUESTED: "family_push.publish_requested",
   PUBLISHED: "family_push.published",
+  CANCELLED: "family_push.cancelled",
   ANSWERED: "family_push.answered",
   COMMENTED: "family_push.commented",
 } as const;

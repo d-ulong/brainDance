@@ -14,7 +14,10 @@ import {
   FAMILY_CONTENT_EVENT_TYPES,
 } from "@/modules/family-content/constants";
 import { normalizeCommentBody } from "@/modules/family-content/content";
-import { findAuditReplayResourceId } from "@/modules/family-content/create-push.service";
+import {
+  findAuditReplay,
+  assertAuditReplayMatch,
+} from "@/modules/family-content/create-push.service";
 import type { PushCommentDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
@@ -264,25 +267,32 @@ export async function mutatePushComment(
   input: MutatePushCommentInput,
 ): Promise<{ comment: PushCommentDto; idempotentReplay: boolean }> {
   const auditKey = `audit:push-comment-mutate:${input.idempotencyKey}`;
-  const replayId = await findAuditReplayResourceId(db, auditKey);
-  if (replayId) {
-    if (replayId !== input.commentId) {
-      throw new FamilyContentError(
-        "IDEMPOTENCY_CONFLICT",
-        "Comment mutate idempotency key bound elsewhere",
-      );
-    }
-    const [comment] = await db
+  const payloadHash = input.delete
+    ? hashIdempotencyPayload({
+        command: "delete",
+        commentId: input.commentId,
+      })
+    : hashIdempotencyPayload({
+        command: "edit",
+        commentId: input.commentId,
+        body: input.body ? normalizeCommentBody(input.body) : null,
+      });
+
+  async function loadCommentReplay(
+    client: Database,
+    commentId: string,
+  ): Promise<{ comment: PushCommentDto; idempotentReplay: boolean }> {
+    const [comment] = await client
       .select()
       .from(pushComments)
-      .where(eq(pushComments.id, replayId))
+      .where(eq(pushComments.id, commentId))
       .limit(1);
     if (!comment) {
       throw new FamilyContentError("NOT_FOUND", "Comment not found");
     }
     const [version] = comment.deletedAt
       ? [null]
-      : await db
+      : await client
           .select()
           .from(pushCommentVersions)
           .where(
@@ -295,30 +305,27 @@ export async function mutatePushComment(
     };
   }
 
+  const replay = await findAuditReplay(db, auditKey);
+  if (replay) {
+    assertAuditReplayMatch({
+      replay,
+      expectedResourceId: input.commentId,
+      payloadHash,
+      conflictMessage: "Comment mutate idempotency payload mismatch",
+    });
+    return loadCommentReplay(db, replay.resourceId);
+  }
+
   return db.transaction(async (tx) => {
-    const replayInTx = await findAuditReplayResourceId(tx, auditKey);
+    const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
-      const [comment] = await tx
-        .select()
-        .from(pushComments)
-        .where(eq(pushComments.id, replayInTx))
-        .limit(1);
-      if (!comment) {
-        throw new FamilyContentError("NOT_FOUND", "Comment not found");
-      }
-      const [version] = comment.deletedAt
-        ? [null]
-        : await tx
-            .select()
-            .from(pushCommentVersions)
-            .where(
-              sql`${pushCommentVersions.commentId} = ${comment.id}::uuid AND ${pushCommentVersions.version} = ${comment.currentVersion}`,
-            )
-            .limit(1);
-      return {
-        comment: toCommentDto(comment, version ?? null, input.actorId),
-        idempotentReplay: true,
-      };
+      assertAuditReplayMatch({
+        replay: replayInTx,
+        expectedResourceId: input.commentId,
+        payloadHash,
+        conflictMessage: "Comment mutate idempotency payload mismatch",
+      });
+      return loadCommentReplay(tx, replayInTx.resourceId);
     }
 
     await tx.execute(sql`SELECT id FROM push_comments WHERE id = ${input.commentId} FOR UPDATE`);
@@ -369,6 +376,7 @@ export async function mutatePushComment(
         metadata: {
           pushId: push.id,
           studentId: push.studentId,
+          payloadHash,
         },
       });
 
@@ -379,7 +387,6 @@ export async function mutatePushComment(
       throw new FamilyContentError("VALIDATION_ERROR", "Comment body is required");
     }
     const body = normalizeCommentBody(input.body);
-    const payloadHash = hashIdempotencyPayload({ body });
     const nextVersion = comment.currentVersion + 1;
 
     const [updated] = await tx
@@ -412,6 +419,7 @@ export async function mutatePushComment(
         studentId: push.studentId,
         version: nextVersion,
         bodyLength: body.length,
+        payloadHash,
       },
     });
 

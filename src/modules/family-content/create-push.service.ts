@@ -15,6 +15,7 @@ import {
 import { normalizePushContent } from "@/modules/family-content/content";
 import type { FamilyPushDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import { lockUserRowForUpdate } from "@/modules/identity/user-role.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 
@@ -152,7 +153,7 @@ export async function createFamilyPush(
 
     await requireParentLinkedToStudent(tx, input.actorId, input.studentId);
     await assertStudentNotFrozenForFamilyContent(tx, input.studentId, "write");
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId} FOR UPDATE`);
+    await lockUserRowForUpdate(tx, input.studentId);
 
     const [push] = await tx
       .insert(familyPushes)
@@ -272,14 +273,55 @@ export async function loadPushDto(
 
 export { toPushDto };
 
+export type AuditReplayLookup = {
+  resourceId: string;
+  payloadHash: string | null;
+};
+
+function readStoredPayloadHash(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+  const value = (metadata as { payloadHash?: unknown }).payloadHash;
+  return typeof value === "string" ? value : null;
+}
+
+export async function findAuditReplay(
+  db: Database,
+  idempotencyKey: string,
+): Promise<AuditReplayLookup | null> {
+  const [row] = await db
+    .select({ resourceId: auditEvents.resourceId, metadata: auditEvents.metadata })
+    .from(auditEvents)
+    .where(eq(auditEvents.idempotencyKey, idempotencyKey))
+    .limit(1);
+  if (!row?.resourceId) {
+    return null;
+  }
+  return {
+    resourceId: row.resourceId,
+    payloadHash: readStoredPayloadHash(row.metadata),
+  };
+}
+
 export async function findAuditReplayResourceId(
   db: Database,
   idempotencyKey: string,
 ): Promise<string | null> {
-  const [row] = await db
-    .select({ resourceId: auditEvents.resourceId })
-    .from(auditEvents)
-    .where(eq(auditEvents.idempotencyKey, idempotencyKey))
-    .limit(1);
-  return row?.resourceId ?? null;
+  const replay = await findAuditReplay(db, idempotencyKey);
+  return replay?.resourceId ?? null;
+}
+
+export function assertAuditReplayMatch(input: {
+  replay: AuditReplayLookup;
+  expectedResourceId: string;
+  payloadHash: string;
+  conflictMessage: string;
+}): void {
+  if (
+    input.replay.resourceId !== input.expectedResourceId ||
+    input.replay.payloadHash !== input.payloadHash
+  ) {
+    throw new FamilyContentError("IDEMPOTENCY_CONFLICT", input.conflictMessage);
+  }
 }

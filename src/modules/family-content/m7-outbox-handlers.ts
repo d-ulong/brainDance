@@ -2,8 +2,11 @@ import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { familyPushes } from "@/db/schema";
-import { hasActiveRelationship } from "@/modules/family-access/authorization.service";
-import { listActiveParentIdsForStudent } from "@/modules/family-content/access";
+import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import {
+  hasActiveRelationship,
+  listActiveParentIdsForStudent,
+} from "@/modules/family-access/authorization.service";
 import { isStudentAccountFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { FAMILY_CONTENT_EVENT_TYPES } from "@/modules/family-content/constants";
 import {
@@ -35,6 +38,45 @@ export function getM7EventHandler(eventType: string, eventVersion: number): M7Ou
   return M7_EVENT_HANDLERS.get(eventType)?.get(eventVersion) ?? null;
 }
 
+async function cancelScheduledPushInTx(
+  tx: Database,
+  push: typeof familyPushes.$inferSelect,
+  reason: "frozen" | "relationship_inactive",
+): Promise<void> {
+  const now = new Date();
+  await tx
+    .update(familyPushes)
+    .set({ status: "cancelled", updatedAt: now })
+    .where(eq(familyPushes.id, push.id));
+
+  await appendAuditEvent(tx, {
+    actorId: null,
+    action: "family_push.cancelled",
+    resourceType: "family_push",
+    resourceId: push.id,
+    idempotencyKey: `audit:family-push-worker-cancel:${push.id}`,
+    metadata: {
+      studentId: push.studentId,
+      fromStatus: "scheduled",
+      toStatus: "cancelled",
+      reason,
+    },
+  });
+
+  await appendOutboxEvent(tx, {
+    aggregateType: "family_push",
+    aggregateId: push.id,
+    eventType: FAMILY_CONTENT_EVENT_TYPES.CANCELLED,
+    dedupeKey: `family_push.cancelled:${push.id}`,
+    payload: {
+      pushId: push.id,
+      studentId: push.studentId,
+      creatorParentId: push.creatorParentId,
+      reason,
+    },
+  });
+}
+
 async function handlePublishRequestedV1(db: Database, event: ClaimedOutboxEvent): Promise<void> {
   const pushId = event.payload.pushId;
   if (typeof pushId !== "string") {
@@ -54,18 +96,12 @@ async function handlePublishRequestedV1(db: Database, event: ClaimedOutboxEvent)
     }
 
     if (await isStudentAccountFrozen(tx, push.studentId)) {
-      await tx
-        .update(familyPushes)
-        .set({ status: "cancelled", updatedAt: new Date() })
-        .where(eq(familyPushes.id, push.id));
+      await cancelScheduledPushInTx(tx, push, "frozen");
       return;
     }
 
     if (!(await hasActiveRelationship(tx, push.creatorParentId, push.studentId))) {
-      await tx
-        .update(familyPushes)
-        .set({ status: "cancelled", updatedAt: new Date() })
-        .where(eq(familyPushes.id, push.id));
+      await cancelScheduledPushInTx(tx, push, "relationship_inactive");
       return;
     }
 
@@ -78,6 +114,20 @@ async function handlePublishRequestedV1(db: Database, event: ClaimedOutboxEvent)
         updatedAt: publishedAt,
       })
       .where(eq(familyPushes.id, push.id));
+
+    await appendAuditEvent(tx, {
+      actorId: null,
+      action: "family_push.published",
+      resourceType: "family_push",
+      resourceId: push.id,
+      idempotencyKey: `audit:family-push-worker-publish:${push.id}`,
+      metadata: {
+        studentId: push.studentId,
+        fromStatus: "scheduled",
+        toStatus: "published",
+        reason: "scheduled_publish",
+      },
+    });
 
     await appendOutboxEvent(tx, {
       aggregateType: "family_push",

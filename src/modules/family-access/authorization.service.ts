@@ -85,3 +85,15 @@ export async function countActiveRelationshipsForStudent(
 
   return rows.length;
 }
+
+/** Active parent ids for a student — Family Access owns relationships reads. */
+export async function listActiveParentIdsForStudent(
+  db: Database,
+  studentId: string,
+): Promise<string[]> {
+  const rows = await db
+    .select({ parentId: relationships.parentId })
+    .from(relationships)
+    .where(and(eq(relationships.studentId, studentId), eq(relationships.status, "active")));
+  return rows.map((row) => row.parentId);
+}

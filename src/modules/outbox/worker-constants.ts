@@ -34,6 +34,7 @@ export const SUPPORTED_NOOP_EVENTS: ReadonlyMap<string, ReadonlySet<number>> = n
   ["point_redemption.cancelled", new Set([1])],
   ["point_redemption.approved", new Set([1])],
   ["point_redemption.rejected", new Set([1])],
+  ["family_push.cancelled", new Set([1])],
 ]);
 
 export function isSupportedNoopEvent(eventType: string, eventVersion: number): boolean {

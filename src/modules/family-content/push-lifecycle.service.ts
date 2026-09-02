@@ -19,7 +19,8 @@ import {
 } from "@/modules/family-content/constants";
 import { normalizePushContent } from "@/modules/family-content/content";
 import {
-  findAuditReplayResourceId,
+  assertAuditReplayMatch,
+  findAuditReplay,
   loadPushDto,
   toPushDto,
 } from "@/modules/family-content/create-push.service";
@@ -27,6 +28,10 @@ import type { FamilyPushDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
+
+function pushCommandAuditKey(idempotencyKey: string): string {
+  return `audit:family-push-command:${idempotencyKey}`;
+}
 
 export type EditFamilyPushInput = {
   actorId: string;
@@ -45,25 +50,35 @@ export async function editFamilyPush(
 ): Promise<{ push: FamilyPushDto; idempotentReplay: boolean }> {
   const content = normalizePushContent({ body: input.body, linkUrl: input.linkUrl });
   const payloadHash = hashIdempotencyPayload({
+    command: "edit",
     pushId: input.pushId,
     body: content.body,
     linkUrl: content.linkUrl,
     scheduledPublishAt: input.scheduledPublishAt ?? null,
   });
-  const auditKey = `audit:family-push-edit:${input.idempotencyKey}`;
+  const auditKey = pushCommandAuditKey(input.idempotencyKey);
 
-  const replayId = await findAuditReplayResourceId(db, auditKey);
-  if (replayId) {
-    if (replayId !== input.pushId) {
-      throw new FamilyContentError("IDEMPOTENCY_CONFLICT", "Edit idempotency key bound elsewhere");
-    }
-    return { push: await loadPushDto(db, replayId, true), idempotentReplay: true };
+  const replay = await findAuditReplay(db, auditKey);
+  if (replay) {
+    assertAuditReplayMatch({
+      replay,
+      expectedResourceId: input.pushId,
+      payloadHash,
+      conflictMessage: "Edit idempotency payload mismatch",
+    });
+    return { push: await loadPushDto(db, replay.resourceId, true), idempotentReplay: true };
   }
 
   return db.transaction(async (tx) => {
-    const replayInTx = await findAuditReplayResourceId(tx, auditKey);
+    const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
-      return { push: await loadPushDto(tx, replayInTx, true), idempotentReplay: true };
+      assertAuditReplayMatch({
+        replay: replayInTx,
+        expectedResourceId: input.pushId,
+        payloadHash,
+        conflictMessage: "Edit idempotency payload mismatch",
+      });
+      return { push: await loadPushDto(tx, replayInTx.resourceId, true), idempotentReplay: true };
     }
 
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
@@ -160,27 +175,39 @@ export async function transitionFamilyPush(
   db: Database,
   input: TransitionFamilyPushInput,
 ): Promise<{ push: FamilyPushDto; idempotentReplay: boolean }> {
-  const auditKey = `audit:family-push-${input.action}:${input.idempotencyKey}`;
-  const replayId = await findAuditReplayResourceId(db, auditKey);
-  if (replayId) {
-    if (replayId !== input.pushId) {
-      throw new FamilyContentError(
-        "IDEMPOTENCY_CONFLICT",
-        "Transition idempotency key bound elsewhere",
-      );
-    }
-    const canEdit = input.action !== "delete";
+  const payloadHash = hashIdempotencyPayload({
+    command: "transition",
+    action: input.action,
+    pushId: input.pushId,
+  });
+  const auditKey = pushCommandAuditKey(input.idempotencyKey);
+  const canEdit = input.action !== "delete";
+
+  const replay = await findAuditReplay(db, auditKey);
+  if (replay) {
+    assertAuditReplayMatch({
+      replay,
+      expectedResourceId: input.pushId,
+      payloadHash,
+      conflictMessage: "Transition idempotency payload mismatch",
+    });
     return {
-      push: await loadPushDto(db, replayId, canEdit),
+      push: await loadPushDto(db, replay.resourceId, canEdit),
       idempotentReplay: true,
     };
   }
 
   return db.transaction(async (tx) => {
-    const replayInTx = await findAuditReplayResourceId(tx, auditKey);
+    const replayInTx = await findAuditReplay(tx, auditKey);
     if (replayInTx) {
+      assertAuditReplayMatch({
+        replay: replayInTx,
+        expectedResourceId: input.pushId,
+        payloadHash,
+        conflictMessage: "Transition idempotency payload mismatch",
+      });
       return {
-        push: await loadPushDto(tx, replayInTx, input.action !== "delete"),
+        push: await loadPushDto(tx, replayInTx.resourceId, canEdit),
         idempotentReplay: true,
       };
     }
@@ -242,6 +269,7 @@ export async function transitionFamilyPush(
         studentId: push.studentId,
         fromStatus: push.status,
         toStatus: nextStatus,
+        payloadHash,
       },
     });
 
@@ -273,7 +301,7 @@ export async function transitionFamilyPush(
       .limit(1);
 
     return {
-      push: toPushDto(updated!, version!, input.action !== "delete"),
+      push: toPushDto(updated!, version!, canEdit),
       idempotentReplay: false,
     };
   });
@@ -327,9 +355,6 @@ export async function listFamilyPushes(
 
   const results: FamilyPushDto[] = [];
   for (const push of pushes) {
-    if (input.actorRole === "parent") {
-      // creator or linked parent already verified via relationship
-    }
     const version = await db
       .select()
       .from(familyPushVersions)
