@@ -141,6 +141,27 @@ pnpm format → exit 1（仅 tests/integration/training/m5-concurrency.test.ts �
 git diff --check → exit 0
 ```
 
+## M5 并发最终复验整改（执行基线 `6a813adb3d93c09442fbf018d07ba37e949ad0a4`；被审 `5bf14b7`）
+
+| 项 | 要点 | 证据 |
+|----|------|------|
+| Codex 复验 | 固定 `5bf14b7` 独立跑一次聚焦文件 | `1 failed / 17 passed`，约 36.28s；失败 `P1-R32: runner client close failure is recorded in cleanup aggregate`；Expected `injected runner client close failure`，Received `Concurrent submit race failed with cleanup error` |
+| C01 根因 | 该用例用即时释放的 `acquireSubmitStyleAdvisoryLock`；gate 解锁后 holding+waiting 观测窗口极窄。调度快时 primary 在观测超时失败，cleanup 仍注入 close failure，`combinePrimaryAndCleanupErrors` 顶层消息变为聚合文案，断言偶发失败 | 与仅 cleanup 单错误成功路径并存 |
+| C01 修复 | 编排改为有界短 hold（250ms）使 post-unlock 竞争可观测；断言始终证明注入 close failure 被保留；若出现 AggregateError 则分类验证 primary 为 gated-lock 观测超时、cleanup 侧含注入消息 | `m5-concurrency.test.ts` |
+| C02 | 全量 `pnpm format` 必须 exit 0；记录保留 `5bf14b7` 的 format exit 1 历史 | 见下方最终命令摘要 |
+| R01 | 两级锁主路径不重开 | — |
+
+最终复验命令摘要（各最多一次）：
+
+```text
+pnpm test -- tests/integration/training/m5-concurrency.test.ts --reporter=verbose
+  → exit 0；Test Files 1 passed (1)；Tests 18 passed (18)；Duration ~36.90s
+pnpm typecheck → exit 0
+pnpm lint → exit 0（6 warnings，0 errors；与既有无关告警一致）
+pnpm format → exit 0（All matched files use Prettier code style）
+git diff --check → exit 0
+```
+
 ## P3 最终测试整改（F03/F04）
 
 | 项 | 要点 | 证据 |
@@ -158,7 +179,8 @@ git diff --check → exit 0
 
 ## Blockers / deferred
 
-- **closed（本轮）**：`m5-concurrency.test.ts` 竞争证据过期导致的聚焦失败已按两级锁顺序整改；见上方「M5 并发验证聚焦整改」。历史“3 项失败/未复核”表述作废，以本轮聚焦命令最终摘要为准。
+- **closed（两级锁）**：`m5-concurrency.test.ts` 竞争证据过期导致的聚焦失败已按两级锁顺序整改；见「M5 并发验证聚焦整改」。
+- **closed（最终复验 C01）**：Codex 于 `5bf14b7` 复验 `17 passed / 1 failed`（R32 runner client close）；已按 C01 消除非确定性，见「M5 并发最终复验整改」。
 - **blocker（本阶段/环境）**：`pnpm test` 全量两次超时无最终结果（约 5m24s / 5m36s 手动中止；第二次含 `--exclude m5-concurrency` 仍无结果）。聚焦/相关测试均通过，排除已知并发用例后的全量未能完成。
 - **blocker（本阶段/环境）**：全量 `pnpm test:e2e` 长时间无最终结果已中止（**未关闭**）。聚焦 M6 lifecycle E2E 已有通过证据：`30eb52f` desktop **10 passed**；本轮 F03/F04 精确覆盖后 desktop/mobile 各 **11 passed**。全量 E2E 仍无最终通过结果。
 - **deferred**：容量档 1,000 / 10,000 未在本机实测。

@@ -63,13 +63,17 @@ async function acquireSubmitStyleAdvisoryLock(db: TestDb, lockKey: string): Prom
   return lockKey;
 }
 
+/** Hold duration that keeps post-unlock holding+waiting observable without blowing R19 bounds. */
+const R32_CLIENT_CLOSE_HOLD_MS = 250;
+
 async function holdSubmitStyleAdvisoryLockForObservation(
   db: TestDb,
   lockKey: string,
+  holdMs = 2000,
 ): Promise<string> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, holdMs));
     return lockKey;
   });
 }
@@ -132,6 +136,43 @@ function expectThrownMessage(reason: unknown, expected: RegExp | string): void {
   } else {
     expect((reason as Error).message).toMatch(expected);
   }
+}
+
+function collectErrorMessages(reason: unknown): string[] {
+  if (reason instanceof AggregateError) {
+    return reason.errors.flatMap((error) => collectErrorMessages(error));
+  }
+  if (reason instanceof Error) {
+    return [reason.message];
+  }
+  if (reason === undefined) {
+    return ["undefined"];
+  }
+  return [String(reason)];
+}
+
+/**
+ * runner_client_close_throw must always preserve the injected close failure.
+ * When the race primary also fails (e.g. missed holding+waiting window), the helper
+ * wraps primary + cleanup into AggregateError — classify both sides explicitly.
+ */
+function expectInjectedRunnerClientCloseRecorded(reason: unknown): void {
+  expect(collectErrorMessages(reason)).toContain(INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE);
+
+  if (reason instanceof AggregateError) {
+    expect(reason.message).toBe("Concurrent submit race failed with cleanup error");
+    expect(reason.errors.length).toBeGreaterThanOrEqual(2);
+    expectThrownMessage(
+      reason.errors[0],
+      /Timed out waiting for (all submit backends waiting on gated advisory lock|one submit backend holding and another waiting on gated advisory lock)/,
+    );
+    expect(collectErrorMessages(reason.errors[1])).toContain(
+      INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE,
+    );
+    return;
+  }
+
+  expectThrownMessage(reason, INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE);
 }
 
 function boundedRaceOptions(
@@ -707,9 +748,14 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
       () =>
         runConcurrentSubmitsWithContentionEvidence(
           lockKey,
+          // Instant-release acquires can finish before holding+waiting is observed,
+          // producing a flaky primary timeout wrapped with cleanup. Brief hold keeps
+          // the post-unlock contention window observable within R19 bounds.
           [
-            (db) => acquireSubmitStyleAdvisoryLock(db, lockKey),
-            (db) => acquireSubmitStyleAdvisoryLock(db, lockKey),
+            (db) =>
+              holdSubmitStyleAdvisoryLockForObservation(db, lockKey, R32_CLIENT_CLOSE_HOLD_MS),
+            (db) =>
+              holdSubmitStyleAdvisoryLockForObservation(db, lockKey, R32_CLIENT_CLOSE_HOLD_MS),
           ],
           boundedRaceOptions({ injectCleanupFailure: "runner_client_close_throw" }),
         ),
@@ -717,7 +763,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
         lockKeys: [lockKey],
         assertOutcome: ({ reason, elapsedMs, rejected }) => {
           expect(rejected).toBe(true);
-          expectThrownMessage(reason, INJECTED_RUNNER_CLIENT_CLOSE_FAILURE_MESSAGE);
+          expectInjectedRunnerClientCloseRecorded(reason);
           expectBoundedElapsed(elapsedMs);
         },
       },
