@@ -181,3 +181,26 @@ Closed final Vitest and dual-viewport E2E gates, signed off M6 while retaining p
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: Complete M7 family push pilot
+
+**Date**: 2026-09-03
+**Task**: Complete M7 family push pilot
+**Branch**: `main`
+
+### Summary
+
+Signed AC-M7-09 after isolated-database migration, full test, typecheck, lint, format, build, and serial desktop/mobile E2E verification; documented migration-lineage handling; fast-forwarded and pushed M7 to main.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6a15eab9adabf4c0c47f91322ad2b48f22ede108` | (see git log) |
+| `cdcf42ff8b1c07c3eacd1a9bc3aa77ccec2b0789` | (see git log) |
+| `287068b29ebb8fe2c444f4371d6fbb1d9fcc09c8` | (see git log) |
+
+### Status
+
+[OK] **Completed**
