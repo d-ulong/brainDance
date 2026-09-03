@@ -4,7 +4,7 @@
 
 - Active task：`09-04-credential-training-access`
 - 分支：`main`
-- 基线提交：`P1_BASELINE_SHA`（由 Codex 在本指令提交后填写）
+- 实现差异基线：`70472aa0116287e55e8bb20a5487feaa706e31a8`
 - 允许一次实现提交；完成后仅可声明“已交审核”。不得启动 P2/P3。
 
 ## 本阶段目标
