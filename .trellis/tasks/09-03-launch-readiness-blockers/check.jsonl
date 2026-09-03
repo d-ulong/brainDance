@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/architecture.md","reason":"Checks sensitive-read and emergency-access boundaries against the architecture."}
+{"file":"docs/data-model.md","reason":"Checks consent, audit, deletion, retention, and recovery facts."}
+{"file":"docs/product-scope.md","reason":"Checks that planning does not introduce out-of-scope product behavior."}
+{"file":".trellis/tasks/09-03-launch-readiness-blockers/prd.md","reason":"Requirements and acceptance criteria for the planning deliverable."}
