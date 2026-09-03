@@ -35,6 +35,7 @@ P2 验证：migration、媒体安全、删除/恢复、全量 test、typecheck�
 - 唯一恢复路径为 `research/p2-architecture-rework-directive.md`：重建 purge 不确定性、未发布 migration gate、测试 seam 与不可空跑证据。
 - 架构返工只审核一次；若仍有 P1 阻断项，则终止 M7 媒体范围并回退至 P1 可交付边界，不继续追加整改轮次。
 - 架构返工提交 `4b0421c0b925f4a6253f5bf86a3f99edbc1a0975` 终审 NO-GO；已触发终止条件。唯一后续为 `research/p2-scope-rollback-directive.md`，完成后 M7 交付范围收敛至已签署 P1。
+- 用户随后撤销范围回退决定；`p2-scope-rollback-directive.md` 作废且不得执行。P2 保留，唯一后续改为 `research/p2-seal-correction-directive.md` 的三个封板缺口；完成后直接进入里程碑门禁。
 
 ## 审核与回滚点
 
