@@ -59,7 +59,7 @@
 - [ ] AC-M7-06：删除/离关联立即撤权，90 天孤儿清理幂等；账户删除、tombstone 重放和恢复后已删 M7 正文/媒体不可读。
 - [ ] AC-M7-07：预约 Worker 重试/dead replay 不重复发布或通知；站内通知仅含通用文案且系统级渠道未启用。
 - [ ] AC-M7-08：desktop Chromium 与 mobile-360 完成联合主路径和关键失败路径，无横向滚动。
-- [ ] AC-M7-09：migration、相关并发/授权/媒体测试、全量 test、typecheck、lint、format、build 和双视口 E2E 串行通过。
+- [x] AC-M7-09：migration、相关并发/授权/媒体测试、全量 test、typecheck、lint、format、build 和双视口 E2E 串行通过。
 
 ## Out of Scope
 
