@@ -49,3 +49,14 @@
 - 每份 Prompt 指向唯一仓库指令，包含 branch、完整 baseline SHA、允许范围、禁止事项、验证和回报格式。
 - 并发/连接/事务任务先写资源控制流：`acquire → guard → initialize → use → cleanup`，逐步标注所有者与异常出口。
 - 审核若发现设计级问题，停止补丁链；先新增阶段指令，再下发一次合并后的实现。
+
+## 本机封闭试点登录排查
+
+症状：`localhost:3002` 可访问，但新建隔离试点库中的管理员登录返回 `Invalid credentials`。
+
+检查顺序：
+
+1. 用 `netstat -ano | Select-String ':3002'` 找到实际监听 PID；不要只依据 `pnpm dev` 父进程是否存在。
+2. 用真实 `POST /api/auth/login` 构造最小复现；隔离库中单独验证账号密码 hash、状态和锁定状态，输出不得含密码。
+3. 若隔离库验证通过而 HTTP 失败，停止已识别的旧开发服务，再用 `scripts/start-closed-pilot.ps1` 启动；随后重跑同一 HTTP 登录请求。
+4. 只在服务连接目标隔离库且 HTTP 返回 200 后才发放或使用邀请码；不要通过重置密码掩盖数据库错连。
