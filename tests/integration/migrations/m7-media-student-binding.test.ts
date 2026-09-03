@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -9,6 +10,15 @@ import { describe, expect, it } from "vitest";
 import postgres from "postgres";
 
 import * as schema from "@/db/schema";
+import {
+  assertMediaMigrationCompatibility,
+  expectedHashForTag,
+  findJournalEntry,
+  findMigrationHashMismatches,
+  hashMigrationSql,
+  MediaMigrationCompatibilityError,
+  M7_MEDIA_PRE_RELEASE_TAGS,
+} from "@/db/media-migration-gate";
 import {
   adminDatabaseUrl,
   closeIsolatedM2Database,
@@ -24,6 +34,16 @@ config({ path: ".env" });
 
 const hasDb = process.env.SKIP_DB_TESTS !== "true" && Boolean(process.env.DATABASE_URL);
 const migrationsRoot = path.resolve("./src/db/migrations");
+const repoRoot = path.resolve(".");
+
+/** Old in-place 0030 from dd7b350 — silently deleted unbackfillable rows. */
+function loadOld0030SqlFromGit(): string {
+  return execFileSync(
+    "git",
+    ["show", "dd7b350899b9039ab06d7e1f492b2f6a69ab85fe:src/db/migrations/0030_m7_media_student_binding.sql"],
+    { cwd: repoRoot, encoding: "utf8" },
+  );
+}
 
 function readMigrationSql(name: string): string {
   return readFileSync(path.join(migrationsRoot, name), "utf8");
@@ -73,6 +93,16 @@ async function migrateThroughTag(connectionString: string, tagInclusive: string)
   }
 }
 
+async function migrateFullFolder(connectionString: string): Promise<void> {
+  const client = postgres(connectionString, { max: 1 });
+  const db = drizzle(client);
+  try {
+    await migrate(db, { migrationsFolder: migrationsRoot });
+  } finally {
+    await client.end({ timeout: 5 });
+  }
+}
+
 function toExecutableSql(migrationSql: string): string {
   return migrationSql
     .split("--> statement-breakpoint")
@@ -114,6 +144,42 @@ async function withDbThrough0029<T>(
     await disposeIsolatedM2DatabaseResources({ admin, dbName, client });
   }
 }
+
+describe("m7 media migration publish boundary (git evidence)", () => {
+  it("0029–0031 are absent from main and from release tags", () => {
+    for (const tag of M7_MEDIA_PRE_RELEASE_TAGS) {
+      const onMain = execFileSync(
+        "git",
+        ["ls-tree", "-r", "main", "--name-only", `src/db/migrations/${tag}.sql`],
+        { cwd: repoRoot, encoding: "utf8" },
+      ).trim();
+      expect(onMain).toBe("");
+    }
+
+    const tags = execFileSync("git", ["tag", "-l"], { cwd: repoRoot, encoding: "utf8" })
+      .split(/\r?\n/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    for (const releaseTag of tags) {
+      for (const migrationTag of M7_MEDIA_PRE_RELEASE_TAGS) {
+        const listed = execFileSync(
+          "git",
+          ["ls-tree", "-r", releaseTag, "--name-only", `src/db/migrations/${migrationTag}.sql`],
+          { cwd: repoRoot, encoding: "utf8" },
+        ).trim();
+        expect(listed).toBe("");
+      }
+    }
+
+    const mainJournal = execFileSync("git", ["show", "main:src/db/migrations/meta/_journal.json"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    expect(mainJournal).not.toContain("0029_m7_family_media");
+    expect(mainJournal).not.toContain("0030_m7_media_student_binding");
+    expect(mainJournal).not.toContain("0031_m7_media_purge_fencing");
+  });
+});
 
 describe.skipIf(!hasDb)("m7 media student binding migration (0030)", () => {
   it("0030 SQL refuses silent delete of unbackfillable media facts", () => {
@@ -282,8 +348,100 @@ describe.skipIf(!hasDb)("m7 media student binding migration (0030)", () => {
         WHERE table_name = 'media_purge_intents' AND column_name = 'owned_generation'
       `;
       expect(intentCols).toHaveLength(1);
+      await assertMediaMigrationCompatibility(isolated.client);
     } finally {
       await closeIsolatedM2Database(isolated);
+    }
+  }, 180_000);
+
+  it("main migration state upgrades once to branch final schema", async () => {
+    const rootUrl = process.env.DATABASE_URL!;
+    const dbName = `bd_m7_mainup_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
+    const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
+    let client: ReturnType<typeof postgres> | undefined;
+    try {
+      await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+      const databaseUrl = databaseUrlForName(rootUrl, dbName);
+      await migrateThroughTag(databaseUrl, "0027_m6_deletion_capabilities");
+      await migrateFullFolder(databaseUrl);
+      client = postgres(databaseUrl, { max: 1 });
+
+      const cols = await client`
+        SELECT column_name, is_nullable
+        FROM information_schema.columns
+        WHERE table_name = 'media_objects'
+          AND column_name IN ('student_id', 'purge_generation')
+      `;
+      expect(cols).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ column_name: "purge_generation", is_nullable: "NO" }),
+          expect.objectContaining({ column_name: "student_id", is_nullable: "NO" }),
+        ]),
+      );
+      const intentCols = await client`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'media_purge_intents' AND column_name = 'owned_generation'
+      `;
+      expect(intentCols).toHaveLength(1);
+      await assertMediaMigrationCompatibility(client);
+    } finally {
+      await disposeIsolatedM2DatabaseResources({ admin, dbName, client });
+    }
+  }, 180_000);
+
+  it("recorded old 0030 checksum fails compatibility gate without re-executing revised SQL", async () => {
+    const rootUrl = process.env.DATABASE_URL!;
+    const dbName = `bd_m7_old30_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
+    const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
+    let client: ReturnType<typeof postgres> | undefined;
+    try {
+      await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+      const databaseUrl = databaseUrlForName(rootUrl, dbName);
+      await migrateThroughTag(databaseUrl, "0029_m7_family_media");
+      client = postgres(databaseUrl, { max: 1 });
+
+      await client.unsafe(toExecutableSql(loadOld0030SqlFromGit()));
+      const oldHash = hashMigrationSql(loadOld0030SqlFromGit());
+      const currentHash = expectedHashForTag("0030_m7_media_student_binding");
+      expect(oldHash).not.toBe(currentHash);
+      expect(loadOld0030SqlFromGit()).toMatch(/DELETE\s+FROM\s+"media_objects"/i);
+      expect(readMigrationSql("0030_m7_media_student_binding.sql")).toMatch(/RAISE EXCEPTION/i);
+
+      const entry = findJournalEntry("0030_m7_media_student_binding");
+      await client`
+        INSERT INTO drizzle.__drizzle_migrations ("hash", "created_at")
+        VALUES (${oldHash}, ${entry.when})
+      `;
+
+      const mismatches = findMigrationHashMismatches(
+        await client`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at ASC`,
+      );
+      expect(mismatches).toEqual([
+        expect.objectContaining({
+          tag: "0030_m7_media_student_binding",
+          recordedHash: oldHash,
+          expectedHash: currentHash,
+        }),
+      ]);
+
+      await expect(assertMediaMigrationCompatibility(client)).rejects.toBeInstanceOf(
+        MediaMigrationCompatibilityError,
+      );
+      await expect(assertMediaMigrationCompatibility(client)).rejects.toThrow(
+        /Rebuild this non-production development database/i,
+      );
+
+      // Drizzle would skip revised 0030 by created_at — gate must not pretend it re-ran.
+      const beforeMigrate = await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
+      expect(beforeMigrate[0]?.hash).toBe(oldHash);
+      await migrateFullFolder(databaseUrl);
+      const afterMigrate = await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
+      expect(afterMigrate[0]?.hash).toBe(oldHash);
+      await expect(assertMediaMigrationCompatibility(client)).rejects.toBeInstanceOf(
+        MediaMigrationCompatibilityError,
+      );
+    } finally {
+      await disposeIsolatedM2DatabaseResources({ admin, dbName, client });
     }
   }, 180_000);
 });

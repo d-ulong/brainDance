@@ -46,17 +46,6 @@ export type UploadMediaInput = {
   scanner: MediaScanner;
 };
 
-type FinalizeFailureHook = (mediaId: string) => Promise<void> | void;
-
-/** TEST ONLY — injects a throw inside the finalize TX after promote. */
-let finalizeFailureHookForTest: FinalizeFailureHook | null = null;
-
-export function setMediaUploadFinalizeFailureHookForTest(
-  hook: FinalizeFailureHook | null,
-): void {
-  finalizeFailureHookForTest = hook;
-}
-
 function toMediaDto(row: typeof mediaObjects.$inferSelect): MediaObjectDto {
   return {
     mediaId: row.id,
@@ -201,10 +190,6 @@ async function finalizeReadyInShortTx(
 
     if (current.status !== "staging" && current.status !== "processing") {
       throw new FamilyContentError("MEDIA_REJECTED", "Media is not recoverable for finalize");
-    }
-
-    if (finalizeFailureHookForTest) {
-      await finalizeFailureHookForTest(input.mediaId);
     }
 
     const [ready] = await tx

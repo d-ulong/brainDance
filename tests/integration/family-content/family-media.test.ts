@@ -1,5 +1,5 @@
 import { config } from "dotenv";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import sharp from "sharp";
@@ -36,7 +36,6 @@ import { submitPushAnswer } from "@/modules/family-content/answer.service";
 import {
   assertFamilyContentDeletionCanary,
   purgeFamilyContentBodiesForStudent,
-  setFamilyContentDeletionTxFailureHookForTest,
 } from "@/modules/family-content/account-deletion.service";
 import { MAX_IMAGE_DIMENSION } from "@/modules/family-content/constants";
 import { createFamilyPush } from "@/modules/family-content/create-push.service";
@@ -51,10 +50,7 @@ import {
 } from "@/modules/family-content/media-scanner";
 import { handleMediaPurgeRequestedV1 } from "@/modules/family-content/media-purge.service";
 import { attachReadyMediaToResource } from "@/modules/family-content/media-reference.service";
-import {
-  setMediaUploadFinalizeFailureHookForTest,
-  uploadFamilyMedia,
-} from "@/modules/family-content/media-upload.service";
+import { uploadFamilyMedia } from "@/modules/family-content/media-upload.service";
 import { createMemoryMediaStore } from "@/modules/family-content/private-media-store";
 import { transitionFamilyPush } from "@/modules/family-content/push-lifecycle.service";
 import {
@@ -154,6 +150,108 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function errorChainText(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let i = 0; i < 6 && current; i += 1) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = current.cause;
+      continue;
+    }
+    parts.push(String(current));
+    break;
+  }
+  return parts.join("\n");
+}
+
+function postgresErrorCode(error: unknown): string | null {
+  let current: unknown = error;
+  for (let i = 0; i < 6 && current; i += 1) {
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      "code" in current &&
+      typeof (current as { code?: unknown }).code === "string"
+    ) {
+      const code = (current as { code: string }).code;
+      if (/^[0-9A-Z]{5}$/.test(code)) {
+        return code;
+      }
+    }
+    current = current instanceof Error ? current.cause : null;
+  }
+  return null;
+}
+
+/** Inject a real DB failure inside the finalize TX (status→ready) without production hooks. */
+async function withMediaFinalizeTxFailureTrigger<T>(
+  db: TestDb,
+  run: () => Promise<T>,
+): Promise<T> {
+  await db.execute(sql`
+    CREATE OR REPLACE FUNCTION test_inject_media_finalize_fail()
+    RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'injected finalize tx fail';
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await db.execute(sql`
+    DROP TRIGGER IF EXISTS test_inject_media_finalize_fail_trg ON media_objects
+  `);
+  await db.execute(sql`
+    CREATE TRIGGER test_inject_media_finalize_fail_trg
+    BEFORE UPDATE OF status ON media_objects
+    FOR EACH ROW
+    WHEN (NEW.status = 'ready' AND OLD.status IS DISTINCT FROM 'ready')
+    EXECUTE FUNCTION test_inject_media_finalize_fail()
+  `);
+  try {
+    return await run();
+  } finally {
+    await db.execute(sql`
+      DROP TRIGGER IF EXISTS test_inject_media_finalize_fail_trg ON media_objects
+    `);
+    await db.execute(sql`DROP FUNCTION IF EXISTS test_inject_media_finalize_fail()`);
+  }
+}
+
+/** Inject a real DB failure before family_content.purged audit commits. */
+async function withFamilyContentDeletionTxFailureTrigger<T>(
+  db: TestDb,
+  run: () => Promise<T>,
+): Promise<T> {
+  await db.execute(sql`
+    CREATE OR REPLACE FUNCTION test_inject_family_content_purge_fail()
+    RETURNS trigger AS $$
+    BEGIN
+      IF NEW.action = 'family_content.purged' THEN
+        RAISE EXCEPTION 'injected deletion tx fail';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await db.execute(sql`
+    DROP TRIGGER IF EXISTS test_inject_family_content_purge_fail_trg ON audit_events
+  `);
+  await db.execute(sql`
+    CREATE TRIGGER test_inject_family_content_purge_fail_trg
+    BEFORE INSERT ON audit_events
+    FOR EACH ROW
+    EXECUTE FUNCTION test_inject_family_content_purge_fail()
+  `);
+  try {
+    return await run();
+  } finally {
+    await db.execute(sql`
+      DROP TRIGGER IF EXISTS test_inject_family_content_purge_fail_trg ON audit_events
+    `);
+    await db.execute(sql`DROP FUNCTION IF EXISTS test_inject_family_content_purge_fail()`);
+  }
+}
+
 describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
   const db = getTestDb();
   const mediaStore = createMemoryMediaStore();
@@ -165,21 +263,23 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
   });
 
   beforeEach(async () => {
-    setMediaUploadFinalizeFailureHookForTest(null);
-    setFamilyContentDeletionTxFailureHookForTest(null);
     await resetIdentityTables(db);
     setRouteMediaStoreForTest(mediaStore);
     setRouteMediaScannerForTest(scanner);
   });
 
-  afterEach(() => {
-    setMediaUploadFinalizeFailureHookForTest(null);
-    setFamilyContentDeletionTxFailureHookForTest(null);
+  afterEach(async () => {
+    await db.execute(sql`
+      DROP TRIGGER IF EXISTS test_inject_media_finalize_fail_trg ON media_objects
+    `);
+    await db.execute(sql`DROP FUNCTION IF EXISTS test_inject_media_finalize_fail()`);
+    await db.execute(sql`
+      DROP TRIGGER IF EXISTS test_inject_family_content_purge_fail_trg ON audit_events
+    `);
+    await db.execute(sql`DROP FUNCTION IF EXISTS test_inject_family_content_purge_fail()`);
   });
 
   afterAll(async () => {
-    setMediaUploadFinalizeFailureHookForTest(null);
-    setFamilyContentDeletionTxFailureHookForTest(null);
     setRouteMediaStoreForTest(null);
     setRouteMediaScannerForTest(null);
     await closeTestDb();
@@ -440,38 +540,42 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       }),
     ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
 
-    // Pixel bomb: width exceeds MAX_IMAGE_DIMENSION
-    let pixelBomb: Buffer | null = null;
-    try {
-      pixelBomb = await sharp({
-        create: {
-          width: MAX_IMAGE_DIMENSION + 1,
-          height: 10,
-          channels: 3,
-          background: { r: 10, g: 20, b: 30 },
-        },
-      })
-        .png()
-        .toBuffer();
-    } catch {
-      // sharp refused oversized create — still evidence of rejection-path guard
-      pixelBomb = null;
-    }
-    if (pixelBomb) {
-      await expect(
-        uploadFamilyMedia(db, {
-          actorId: parentId,
-          studentId,
-          declaredMime: "image/png",
-          bytes: pixelBomb,
-          idempotencyKey: `pxbomb-${crypto.randomUUID()}`,
-          mediaStore,
-          scanner,
-        }),
-      ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
-    } else {
-      expect(pixelBomb).toBeNull();
-    }
+    // Pixel bomb: width exceeds MAX_IMAGE_DIMENSION — fixture creation failure fails the test.
+    const pixelBomb = await sharp({
+      create: {
+        width: MAX_IMAGE_DIMENSION + 1,
+        height: 10,
+        channels: 3,
+        background: { r: 10, g: 20, b: 30 },
+      },
+    })
+      .png()
+      .toBuffer();
+    expect(pixelBomb.length).toBeGreaterThan(0);
+    const pixelBombKey = `pxbomb-${crypto.randomUUID()}`;
+    await expect(
+      uploadFamilyMedia(db, {
+        actorId: parentId,
+        studentId,
+        declaredMime: "image/png",
+        bytes: pixelBomb,
+        idempotencyKey: pixelBombKey,
+        mediaStore,
+        scanner,
+      }),
+    ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
+    const [pixelBombRow] = await db
+      .select()
+      .from(mediaObjects)
+      .where(
+        and(
+          eq(mediaObjects.uploaderId, parentId),
+          eq(mediaObjects.createIdempotencyKey, pixelBombKey),
+        ),
+      )
+      .limit(1);
+    expect(pixelBombRow?.status).toBe("rejected");
+    expect(pixelBombRow?.scanErrorCategory).toBe("reencode_failed");
 
     const audits = await db.select().from(auditEvents);
     for (const audit of audits) {
@@ -701,26 +805,22 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
     expect(promoteResumed.media.status).toBe("ready");
     expect(promoteResumed.media.mediaId).toBe(promoteFailed!.id);
 
-    // 4) Real finalize TX inject after promote
+    // 4) Real finalize TX failure via temporary DB trigger after promote
     const finalizeKey = `fin-fail-${crypto.randomUUID()}`;
     const finalizeStore = createMemoryMediaStore();
-    let finalizeHookFired = false;
-    setMediaUploadFinalizeFailureHookForTest(() => {
-      finalizeHookFired = true;
-      throw new Error("injected finalize tx fail");
-    });
     await expect(
-      uploadFamilyMedia(db, {
-        actorId: parentId,
-        studentId,
-        declaredMime: "image/png",
-        bytes: png,
-        idempotencyKey: finalizeKey,
-        mediaStore: finalizeStore,
-        scanner,
-      }),
+      withMediaFinalizeTxFailureTrigger(db, () =>
+        uploadFamilyMedia(db, {
+          actorId: parentId,
+          studentId,
+          declaredMime: "image/png",
+          bytes: png,
+          idempotencyKey: finalizeKey,
+          mediaStore: finalizeStore,
+          scanner,
+        }),
+      ),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
-    expect(finalizeHookFired).toBe(true);
     const finalizeFailed = await findUploadByKey(parentId, finalizeKey);
     expect(finalizeFailed?.status).toBe("processing");
     expect(finalizeFailed?.status).not.toBe("ready");
@@ -735,7 +835,6 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       );
     expect(auditsBeforeRetry).toHaveLength(0);
 
-    setMediaUploadFinalizeFailureHookForTest(null);
     const finalizeResumed = await uploadFamilyMedia(db, {
       actorId: parentId,
       studentId,
@@ -936,7 +1035,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       );
     expect(purgedAudits).toHaveLength(1);
 
-    // Partial physical failure → retryable intent
+    // Partial physical failure → keep ownership (fail closed); same generation retries
     const png2 = await makePng(22);
     const up2 = await uploadFamilyMedia(db, {
       actorId: parentId,
@@ -962,22 +1061,295 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `df-${crypto.randomUUID()}`,
     });
     await makePurgeDue(up2.media.mediaId);
-    const boomStore = {
+    const [up2Before] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up2.media.mediaId))
+      .limit(1);
+    const up2SafeKey = up2Before!.safeObjectKey!;
+
+    // throw-before-delete: no store mutation; ownership held
+    const throwBeforeDelete = {
       ...mediaStore,
       async purgeSafe() {
-        throw new Error("s3 down");
+        throw new Error("s3 down before delete");
       },
     };
     await expect(
-      handleMediaPurgeRequestedV1(db, purgeEvent(up2.media.mediaId), boomStore),
+      handleMediaPurgeRequestedV1(db, purgeEvent(up2.media.mediaId), throwBeforeDelete),
     ).rejects.toThrow(/safe purge failed/);
-    const [intent] = await db
+    const [ownedAfterThrowBefore] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up2.media.mediaId))
+      .limit(1);
+    const [intentThrowBefore] = await db
       .select()
       .from(mediaPurgeIntents)
       .where(eq(mediaPurgeIntents.mediaId, up2.media.mediaId))
       .limit(1);
-    expect(intent?.status).toBe("pending");
-    expect(intent?.lastErrorCategory).toBe("safe_purge_failed");
+    expect(ownedAfterThrowBefore?.status).toBe("purging");
+    expect(intentThrowBefore?.status).toBe("prepared");
+    expect(intentThrowBefore?.ownedGeneration).toBe(ownedAfterThrowBefore?.purgeGeneration);
+    expect(intentThrowBefore?.lastErrorCategory).toBe("safe_purge_failed");
+    expect(mediaStore.hasSafe(up2SafeKey)).toBe(true);
+    await expect(
+      createFamilyPush(db, {
+        actorId: parentId,
+        studentId,
+        body: "attach while owned after throw-before-delete",
+        mediaIds: [up2.media.mediaId],
+        publishMode: "immediate",
+        idempotencyKey: `own-attach-1-${crypto.randomUUID()}`,
+      }),
+    ).rejects.toBeInstanceOf(FamilyContentError);
+
+    // delete-before-throw: bytes may already be gone; still fail closed
+    const deleteBeforeThrow = {
+      ...createMemoryMediaStore(),
+      async purgeSafe(key: string) {
+        await mediaStore.purgeSafe(key);
+        throw new Error("s3 ack lost after delete");
+      },
+      async purgeStaging(key: string) {
+        return mediaStore.purgeStaging(key);
+      },
+      hasSafe(key: string) {
+        return mediaStore.hasSafe(key);
+      },
+    };
+    await expect(
+      handleMediaPurgeRequestedV1(db, purgeEvent(up2.media.mediaId), deleteBeforeThrow),
+    ).rejects.toThrow(/safe purge failed/);
+    expect(mediaStore.hasSafe(up2SafeKey)).toBe(false);
+    const [ownedAfterDeleteBefore] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up2.media.mediaId))
+      .limit(1);
+    const [intentDeleteBefore] = await db
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, up2.media.mediaId))
+      .limit(1);
+    expect(ownedAfterDeleteBefore?.status).toBe("purging");
+    expect(intentDeleteBefore?.status).toBe("prepared");
+    expect(intentDeleteBefore?.ownedGeneration).toBe(ownedAfterDeleteBefore?.purgeGeneration);
+    await expect(
+      createFamilyPush(db, {
+        actorId: parentId,
+        studentId,
+        body: "attach while owned after delete-before-throw",
+        mediaIds: [up2.media.mediaId],
+        publishMode: "immediate",
+        idempotencyKey: `own-attach-2-${crypto.randomUUID()}`,
+      }),
+    ).rejects.toBeInstanceOf(FamilyContentError);
+
+    // Same generation retry converges to purged + single audit
+    await handleMediaPurgeRequestedV1(db, purgeEvent(up2.media.mediaId), mediaStore);
+    const [afterRetry] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up2.media.mediaId))
+      .limit(1);
+    const [intentDone] = await db
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, up2.media.mediaId))
+      .limit(1);
+    expect(afterRetry?.status).toBe("purged");
+    expect(intentDone?.status).toBe("completed");
+    const up2PurgeAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        and(eq(auditEvents.action, "media.purged"), eq(auditEvents.resourceId, up2.media.mediaId)),
+      );
+    expect(up2PurgeAudits).toHaveLength(1);
+    const activeRefsUp2 = await db
+      .select()
+      .from(mediaReferences)
+      .where(
+        and(eq(mediaReferences.mediaId, up2.media.mediaId), isNull(mediaReferences.revokedAt)),
+      );
+    expect(activeRefsUp2).toHaveLength(0);
+
+    // safe ok / staging fail → ownership retained; retry finalizes
+    const png3 = await makePng(18);
+    const up3 = await uploadFamilyMedia(db, {
+      actorId: parentId,
+      studentId,
+      declaredMime: "image/png",
+      bytes: png3,
+      idempotencyKey: `stagefail-${crypto.randomUUID()}`,
+      mediaStore,
+      scanner,
+    });
+    const push3 = await createFamilyPush(db, {
+      actorId: parentId,
+      studentId,
+      body: "stagefail",
+      mediaIds: [up3.media.mediaId],
+      publishMode: "immediate",
+      idempotencyKey: `ps3-${crypto.randomUUID()}`,
+    });
+    await transitionFamilyPush(db, {
+      actorId: parentId,
+      pushId: push3.push.pushId,
+      action: "delete",
+      idempotencyKey: `ds3-${crypto.randomUUID()}`,
+    });
+    await makePurgeDue(up3.media.mediaId);
+    const [up3Before] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up3.media.mediaId))
+      .limit(1);
+    const stagingFailStore = {
+      ...mediaStore,
+      async purgeSafe(key: string) {
+        return mediaStore.purgeSafe(key);
+      },
+      async purgeStaging() {
+        throw new Error("staging delete failed");
+      },
+    };
+    await expect(
+      handleMediaPurgeRequestedV1(db, purgeEvent(up3.media.mediaId), stagingFailStore),
+    ).rejects.toThrow(/staging purge failed/);
+    const [up3Owned] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up3.media.mediaId))
+      .limit(1);
+    const [intent3] = await db
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, up3.media.mediaId))
+      .limit(1);
+    expect(up3Owned?.status).toBe("purging");
+    expect(intent3?.status).toBe("prepared");
+    expect(intent3?.lastErrorCategory).toBe("staging_purge_failed");
+    expect(mediaStore.hasSafe(up3Before!.safeObjectKey!)).toBe(false);
+    await expect(
+      createFamilyPush(db, {
+        actorId: parentId,
+        studentId,
+        body: "attach after staging fail",
+        mediaIds: [up3.media.mediaId],
+        publishMode: "immediate",
+        idempotencyKey: `own-attach-3-${crypto.randomUUID()}`,
+      }),
+    ).rejects.toBeInstanceOf(FamilyContentError);
+    await handleMediaPurgeRequestedV1(db, purgeEvent(up3.media.mediaId), mediaStore);
+    const [up3Done] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up3.media.mediaId))
+      .limit(1);
+    expect(up3Done?.status).toBe("purged");
+
+    // physical ok / finalize fail → ownership retained; retry finalizes once
+    const png4 = await makePng(16);
+    const up4 = await uploadFamilyMedia(db, {
+      actorId: parentId,
+      studentId,
+      declaredMime: "image/png",
+      bytes: png4,
+      idempotencyKey: `finpurge-${crypto.randomUUID()}`,
+      mediaStore,
+      scanner,
+    });
+    const push4 = await createFamilyPush(db, {
+      actorId: parentId,
+      studentId,
+      body: "finpurge",
+      mediaIds: [up4.media.mediaId],
+      publishMode: "immediate",
+      idempotencyKey: `pf4-${crypto.randomUUID()}`,
+    });
+    await transitionFamilyPush(db, {
+      actorId: parentId,
+      pushId: push4.push.pushId,
+      action: "delete",
+      idempotencyKey: `df4-${crypto.randomUUID()}`,
+    });
+    await makePurgeDue(up4.media.mediaId);
+    const [up4Before] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up4.media.mediaId))
+      .limit(1);
+    await db.execute(sql`
+      CREATE OR REPLACE FUNCTION test_inject_media_purge_finalize_fail()
+      RETURNS trigger AS $$
+      BEGIN
+        IF NEW.status = 'purged' AND OLD.status IS DISTINCT FROM 'purged' THEN
+          RAISE EXCEPTION 'injected purge finalize fail';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await db.execute(sql`
+      DROP TRIGGER IF EXISTS test_inject_media_purge_finalize_fail_trg ON media_objects
+    `);
+    await db.execute(sql`
+      CREATE TRIGGER test_inject_media_purge_finalize_fail_trg
+      BEFORE UPDATE OF status ON media_objects
+      FOR EACH ROW
+      EXECUTE FUNCTION test_inject_media_purge_finalize_fail()
+    `);
+    try {
+      await handleMediaPurgeRequestedV1(db, purgeEvent(up4.media.mediaId), mediaStore);
+      expect.unreachable("finalize trigger should abort purge finalize");
+    } catch (error) {
+      expect(errorChainText(error)).toMatch(/injected purge finalize fail/);
+    } finally {
+      await db.execute(sql`
+        DROP TRIGGER IF EXISTS test_inject_media_purge_finalize_fail_trg ON media_objects
+      `);
+      await db.execute(sql`DROP FUNCTION IF EXISTS test_inject_media_purge_finalize_fail()`);
+    }
+    expect(mediaStore.hasSafe(up4Before!.safeObjectKey!)).toBe(false);
+    const [up4Owned] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up4.media.mediaId))
+      .limit(1);
+    const [intent4] = await db
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, up4.media.mediaId))
+      .limit(1);
+    expect(up4Owned?.status).toBe("purging");
+    expect(intent4?.status).toBe("prepared");
+    expect(intent4?.lastErrorCategory).toBe("finalize_failed");
+    await expect(
+      createFamilyPush(db, {
+        actorId: parentId,
+        studentId,
+        body: "attach after finalize fail",
+        mediaIds: [up4.media.mediaId],
+        publishMode: "immediate",
+        idempotencyKey: `own-attach-4-${crypto.randomUUID()}`,
+      }),
+    ).rejects.toBeInstanceOf(FamilyContentError);
+    await handleMediaPurgeRequestedV1(db, purgeEvent(up4.media.mediaId), mediaStore);
+    const [up4Done] = await db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, up4.media.mediaId))
+      .limit(1);
+    expect(up4Done?.status).toBe("purged");
+    const up4Audits = await db
+      .select()
+      .from(auditEvents)
+      .where(
+        and(eq(auditEvents.action, "media.purged"), eq(auditEvents.resourceId, up4.media.mediaId)),
+      );
+    expect(up4Audits).toHaveLength(1);
   });
 
   it("P2-F03/F06: prepare vs attach races — attach-first keeps object; prepare-first blocks attach", async () => {
@@ -1412,19 +1784,20 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       referenceId: refId,
     });
 
-    // Inject deletion TX failure mid-TX (before audit) → full rollback
-    setFamilyContentDeletionTxFailureHookForTest(() => {
-      throw new Error("injected deletion tx fail");
-    });
-    await expect(
-      db.transaction(async (tx) => {
-        await purgeFamilyContentBodiesForStudent(tx, {
-          studentId,
-          now: new Date(),
-        });
-      }),
-    ).rejects.toThrow(/injected deletion tx fail/);
-    setFamilyContentDeletionTxFailureHookForTest(null);
+    // Inject deletion TX failure mid-TX (before audit commit) → full rollback
+    try {
+      await withFamilyContentDeletionTxFailureTrigger(db, () =>
+        db.transaction(async (tx) => {
+          await purgeFamilyContentBodiesForStudent(tx, {
+            studentId,
+            now: new Date(),
+          });
+        }),
+      );
+      expect.unreachable("deletion trigger should abort family content purge TX");
+    } catch (error) {
+      expect(errorChainText(error)).toMatch(/injected deletion tx fail/);
+    }
 
     const [pushVersion] = await db
       .select()
@@ -1654,11 +2027,20 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       })(),
     ]);
 
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
-    const mediaIds = new Set(
-      fulfilled.map((r) => (r as PromiseFulfilledResult<{ media: { mediaId: string } }>).value.media.mediaId),
+    const fulfilled = results.filter(
+      (r): r is PromiseFulfilledResult<{ media: { mediaId: string }; idempotentReplay: boolean }> =>
+        r.status === "fulfilled",
     );
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled.length + rejected.length).toBe(2);
+    expect(fulfilled.length).toBeGreaterThanOrEqual(1);
+    for (const failure of rejected) {
+      expect(failure.reason).toBeInstanceOf(FamilyContentError);
+      expect((failure.reason as FamilyContentError).code).toMatch(
+        /^(IDEMPOTENCY_CONFLICT|MEDIA_UNAVAILABLE|MEDIA_REJECTED)$/,
+      );
+    }
+    const mediaIds = new Set(fulfilled.map((r) => r.value.media.mediaId));
     expect(mediaIds.size).toBe(1);
     const readyRows = await db
       .select()
@@ -1667,10 +2049,61 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         and(
           eq(mediaObjects.uploaderId, parentId),
           eq(mediaObjects.createIdempotencyKey, key),
-          eq(mediaObjects.status, "ready"),
         ),
       );
     expect(readyRows).toHaveLength(1);
+    expect(readyRows[0]?.status).toBe("ready");
+
+    // Different payload + same key → one authority, definite conflict
+    const conflictKey = `idem-conflict-${crypto.randomUUID()}`;
+    const conflictBarrier = createConcurrentBarrier(2);
+    const otherPng = await makePng(36);
+    const conflictResults = await Promise.allSettled([
+      (async () => {
+        await conflictBarrier.wait();
+        return uploadFamilyMedia(db, {
+          actorId: parentId,
+          studentId,
+          declaredMime: "image/png",
+          bytes: png,
+          idempotencyKey: conflictKey,
+          mediaStore,
+          scanner,
+        });
+      })(),
+      (async () => {
+        await conflictBarrier.wait();
+        return uploadFamilyMedia(db, {
+          actorId: parentId,
+          studentId,
+          declaredMime: "image/png",
+          bytes: otherPng,
+          idempotencyKey: conflictKey,
+          mediaStore,
+          scanner,
+        });
+      })(),
+    ]);
+    const conflictOk = conflictResults.filter((r) => r.status === "fulfilled");
+    const conflictFail = conflictResults.filter((r) => r.status === "rejected");
+    expect(conflictOk).toHaveLength(1);
+    expect(conflictFail).toHaveLength(1);
+    expect(conflictFail[0]!.status).toBe("rejected");
+    if (conflictFail[0]!.status === "rejected") {
+      expect(conflictFail[0].reason).toBeInstanceOf(FamilyContentError);
+      expect((conflictFail[0].reason as FamilyContentError).code).toBe("IDEMPOTENCY_CONFLICT");
+    }
+    const conflictRows = await db
+      .select()
+      .from(mediaObjects)
+      .where(
+        and(
+          eq(mediaObjects.uploaderId, parentId),
+          eq(mediaObjects.createIdempotencyKey, conflictKey),
+        ),
+      );
+    expect(conflictRows).toHaveLength(1);
+    expect(conflictRows[0]?.status).toBe("ready");
 
     // Concurrent duplicate attach to SAME push version purpose via independent connections
     const attachMedia = await uploadFamilyMedia(db, {
@@ -1726,6 +2159,23 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
     const attachFail = attachResults.filter((r) => r.status === "rejected");
     expect(attachOk).toHaveLength(1);
     expect(attachFail).toHaveLength(1);
+    expect(attachFail[0]!.status).toBe("rejected");
+    if (attachFail[0]!.status === "rejected") {
+      const reason = attachFail[0].reason;
+      const isFamilyError = reason instanceof FamilyContentError;
+      const uniqueCode = postgresErrorCode(reason);
+      const text = errorChainText(reason);
+      expect(
+        isFamilyError ||
+          uniqueCode === "23505" ||
+          /unique|duplicate key|23505/i.test(text),
+      ).toBe(true);
+      if (isFamilyError) {
+        expect(reason.code).toMatch(
+          /^(STATE_CONFLICT|VALIDATION_ERROR|FORBIDDEN|NOT_FOUND|IDEMPOTENCY_CONFLICT)$/,
+        );
+      }
+    }
 
     const [mediaAfterAttach] = await db
       .select()

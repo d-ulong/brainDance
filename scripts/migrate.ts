@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
+import { assertMediaMigrationCompatibility } from "../src/db/media-migration-gate";
 import { requireDatabaseUrl } from "../src/lib/env";
 
 config({ path: ".env.local" });
@@ -16,6 +17,10 @@ async function main() {
   console.log("Running migrations...");
   await migrate(db, { migrationsFolder: "./src/db/migrations" });
   console.log("Migrations complete.");
+
+  // Detect in-place revised pre-release media migrations that drizzle will not re-run.
+  await assertMediaMigrationCompatibility(sql);
+  console.log("Media migration compatibility check passed.");
 
   await sql.end({ timeout: 5 });
 }

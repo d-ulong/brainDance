@@ -34,44 +34,23 @@ async function completeIntent(
     .where(eq(mediaPurgeIntents.mediaId, mediaId));
 }
 
-async function releasePurgeOwnership(
+/**
+ * After prepare takes ownership, any external/finalize uncertainty stays fail-closed:
+ * keep purging + prepared + owned_generation so the same generation can retry.
+ */
+async function recordOwnedPurgeFailure(
   db: Database,
   mediaId: string,
   category: string,
   now: Date,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
-    const [media] = await tx
-      .select()
-      .from(mediaObjects)
-      .where(eq(mediaObjects.id, mediaId))
-      .limit(1);
-    if (!media || media.status === "purged") {
-      return;
-    }
-
-    if (media.status === "purging") {
-      await tx
-        .update(mediaObjects)
-        .set({
-          status: media.revokedAt ? "revoked" : "ready",
-          updatedAt: now,
-        })
-        .where(eq(mediaObjects.id, mediaId));
-    }
-
-    await tx
-      .update(mediaPurgeIntents)
-      .set({
-        status: "pending",
-        lastErrorCategory: category,
-        updatedAt: now,
-        completedAt: null,
-        ownedGeneration: null,
-      })
-      .where(eq(mediaPurgeIntents.mediaId, mediaId));
-  });
+  await db
+    .update(mediaPurgeIntents)
+    .set({
+      lastErrorCategory: category,
+      updatedAt: now,
+    })
+    .where(eq(mediaPurgeIntents.mediaId, mediaId));
 }
 
 /**
@@ -80,6 +59,7 @@ async function releasePurgeOwnership(
  *
  * prepare takes durable purge ownership (status=purging + owned_generation).
  * Attach may only cancel pending intents before ownership; prepared blocks attach.
+ * Once owned, purgeSafe/purgeStaging/finalize errors never restore ready/attach.
  */
 async function prepareMediaPurge(
   db: Database,
@@ -116,17 +96,35 @@ async function prepareMediaPurge(
       };
     }
 
-    if (media.referenceCount > 0) {
-      await completeIntent(tx, mediaId, now, "still_referenced");
-      if (media.status === "purging") {
-        await tx
-          .update(mediaObjects)
-          .set({
-            status: media.revokedAt ? "revoked" : "ready",
-            updatedAt: now,
-          })
-          .where(eq(mediaObjects.id, media.id));
+    const [intent] = await tx
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, mediaId))
+      .limit(1);
+
+    // Already owns cleanup — re-enter physical/finalize path with same generation.
+    // Do this before still-referenced handling so owned rows never restore ready.
+    if (
+      media.status === "purging" &&
+      intent?.status === "prepared" &&
+      intent.ownedGeneration != null &&
+      intent.ownedGeneration === media.purgeGeneration
+    ) {
+      if (media.referenceCount > 0) {
+        throw new Error("media purge prepare saw active references under ownership");
       }
+      return {
+        kind: "purge",
+        mediaId: media.id,
+        safeObjectKey: media.safeObjectKey,
+        stagingObjectKey: media.stagingObjectKey,
+        ownedGeneration: intent.ownedGeneration,
+      };
+    }
+
+    if (media.referenceCount > 0) {
+      // Physical purge has not started — cancel pending intent only.
+      await completeIntent(tx, mediaId, now, "still_referenced");
       return {
         kind: "noop",
         mediaId,
@@ -135,12 +133,6 @@ async function prepareMediaPurge(
         ownedGeneration: null,
       };
     }
-
-    const [intent] = await tx
-      .select()
-      .from(mediaPurgeIntents)
-      .where(eq(mediaPurgeIntents.mediaId, mediaId))
-      .limit(1);
 
     if (intent?.status === "completed") {
       return {
@@ -149,22 +141,6 @@ async function prepareMediaPurge(
         safeObjectKey: null,
         stagingObjectKey: null,
         ownedGeneration: null,
-      };
-    }
-
-    // Already owns cleanup — re-enter physical/finalize path with same generation.
-    if (
-      media.status === "purging" &&
-      intent?.status === "prepared" &&
-      intent.ownedGeneration != null &&
-      intent.ownedGeneration === media.purgeGeneration
-    ) {
-      return {
-        kind: "purge",
-        mediaId: media.id,
-        safeObjectKey: media.safeObjectKey,
-        stagingObjectKey: media.stagingObjectKey,
-        ownedGeneration: intent.ownedGeneration,
       };
     }
 
@@ -246,19 +222,7 @@ async function finalizeMediaPurge(
       intent.ownedGeneration !== ownedGeneration ||
       media.purgeGeneration !== ownedGeneration
     ) {
-      // Ownership lost or never held — do not mark purged from a stale worker.
-      if (media.referenceCount > 0) {
-        await completeIntent(tx, mediaId, now, "still_referenced");
-        if (media.status === "purging") {
-          await tx
-            .update(mediaObjects)
-            .set({
-              status: media.revokedAt ? "revoked" : "ready",
-              updatedAt: now,
-            })
-            .where(eq(mediaObjects.id, media.id));
-        }
-      }
+      // Stale worker without ownership — fail closed; never restore readable state.
       return;
     }
 
@@ -295,8 +259,8 @@ async function finalizeMediaPurge(
 
 /**
  * Worker handler: prepare (short TX) → physical purge (outside TX) → finalize (short TX).
- * Idempotent on replay / lease expiry / dead replay. Physical delete success + finalize
- * failure keeps purging/prepared ownership so attach cannot re-open deleted bytes.
+ * Idempotent on replay / lease expiry / dead replay. Any post-prepare failure keeps
+ * purging/prepared ownership so attach cannot re-open deleted or uncertain bytes.
  */
 export async function handleMediaPurgeRequestedV1(
   db: Database,
@@ -322,7 +286,7 @@ export async function handleMediaPurgeRequestedV1(
       await mediaStore.purgeSafe(prepared.safeObjectKey);
     }
   } catch {
-    await releasePurgeOwnership(db, mediaId, "safe_purge_failed", new Date());
+    await recordOwnedPurgeFailure(db, mediaId, "safe_purge_failed", new Date());
     throw new Error("media safe purge failed");
   }
 
@@ -331,29 +295,14 @@ export async function handleMediaPurgeRequestedV1(
       await mediaStore.purgeStaging(prepared.stagingObjectKey);
     }
   } catch {
-    // Safe object may already be gone; keep ownership so attach cannot revive.
-    await db
-      .update(mediaPurgeIntents)
-      .set({
-        lastErrorCategory: "staging_purge_failed",
-        updatedAt: new Date(),
-      })
-      .where(eq(mediaPurgeIntents.mediaId, mediaId));
+    await recordOwnedPurgeFailure(db, mediaId, "staging_purge_failed", new Date());
     throw new Error("media staging purge failed");
   }
 
   try {
     await finalizeMediaPurge(db, mediaId, prepared.ownedGeneration, new Date());
   } catch (error) {
-    // Objects already deleted; keep prepared + purging so replay finalizes without
-    // restoring readable state or allowing re-attach.
-    await db
-      .update(mediaPurgeIntents)
-      .set({
-        lastErrorCategory: "finalize_failed",
-        updatedAt: new Date(),
-      })
-      .where(eq(mediaPurgeIntents.mediaId, mediaId));
+    await recordOwnedPurgeFailure(db, mediaId, "finalize_failed", new Date());
     throw error;
   }
 }

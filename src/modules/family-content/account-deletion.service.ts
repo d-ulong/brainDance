@@ -16,17 +16,6 @@ import {
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { revokeAllMediaForStudentInTx } from "@/modules/family-content/media-reference.service";
 
-type DeletionTxFailureHook = () => Promise<void> | void;
-
-/** TEST ONLY — throws inside the deletion business TX to prove full rollback. */
-let deletionTxFailureHookForTest: DeletionTxFailureHook | null = null;
-
-export function setFamilyContentDeletionTxFailureHookForTest(
-  hook: DeletionTxFailureHook | null,
-): void {
-  deletionTxFailureHookForTest = hook;
-}
-
 /**
  * Cancel unpublished scheduled pushes for a student during account deletion.
  */
@@ -151,10 +140,6 @@ export async function purgeFamilyContentBodiesForStudent(
   }
 
   const mediaRefsRevoked = await revokeAllMediaForStudentInTx(tx, input.studentId, input.now);
-
-  if (deletionTxFailureHookForTest) {
-    await deletionTxFailureHookForTest();
-  }
 
   await appendAuditEvent(tx, {
     actorId: null,
