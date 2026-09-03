@@ -76,6 +76,8 @@ BrainDance 是面向 5–18 岁学生及其家庭的学习计划、认知训练�
 - **禁止补丁链**：审核发现设计级缺陷（即修复需要改变模块 interface、事务/连接所有权、状态机、迁移策略或并发模型）时，当前阶段立即停止；Codex 必须先提交一份替代设计指令，合并全部已知阻断项后才允许一次新的实现。不得把设计级缺陷拆成连续的“再修一个” Prompt。
 - **轮次上限与终局**：同一冻结验收线最多允许一份初始实现 Prompt 和一份集中修正 Prompt；集中修正后的复验只给 GO 或终局 NO-GO。终局 NO-GO 后若用户决定继续，必须创建/冻结新的返工阶段及新的验收线，而非延续原阶段的补丁轮次。
 - **Prompt 完整性**：任何 Cursor Prompt 必须同时写明禁止事项、唯一数据/连接 authority、资源占用上限、事务内外边界、失败后的可恢复或 fail-closed 状态、并发输入矩阵和确定性断言。缺少其中任一项的 Prompt 不得下发给 Cursor。
+- **资源生命周期门禁**：凡 acquire/reserve/open/lease/lock 后还要执行 adapter、ORM、解析或配置初始化，Prompt 和测试必须把资源获取后的**第一条可抛出语句**置于 `try/finally` 覆盖内；不得在 cleanup guard 建立前做任何可抛出初始化。验收至少注入一次“获取成功、初始化失败”，断言 release/unlock/lease cleanup 均发生，且后续请求可重新取得资源。
+- **设计审阅清单**：Codex 在下发并发/连接/事务类 Prompt 前，必须写出 acquire → guard established → initialize → use → cleanup 的控制流，并逐步标注异常出口和资源所有者；Cursor 按此清单实现，审核首先核对清单而非仅依赖主路径测试通过。
 - **高风险操作**：非快进归并、冲突处理、历史改写、force-push、部署、数据破坏及权限/密钥操作必须先询问。已签署里程碑默认由 Codex 仅快进归并并普通推送。
 
 ### 4.1 Claude Code 调用
