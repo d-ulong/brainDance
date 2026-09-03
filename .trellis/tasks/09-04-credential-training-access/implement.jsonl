@@ -1,0 +1,4 @@
+{"file":"CONTEXT.md","reason":"Canonical role, student, parent, training, fact, and family-boundary terminology."}
+{"file":"docs/data-model.md","reason":"Training session/projection, user, audit and immutable-fact ownership constraints."}
+{"file":"docs/architecture.md","reason":"Module, authorization, audit and cross-module authority constraints."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Expand/deploy/contract migration and PostgreSQL invariant conventions."}

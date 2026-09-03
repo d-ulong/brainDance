@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Focused test, migration and verification requirements."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Domain error and fail-closed Route mapping conventions."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Route and reusable UI placement conventions."}
+{"file":".trellis/tasks/09-04-credential-training-access/prd.md","reason":"Frozen requirements and acceptance criteria."}
