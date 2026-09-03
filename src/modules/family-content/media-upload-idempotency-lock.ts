@@ -108,20 +108,42 @@ function attachDrizzleSessionSupport(
 }
 
 /**
+ * Builds lockedDb on a reserved session (same authority; no second client/pool).
+ * Injectable for tests that force initialize failure after reserve.
+ */
+export type LockedDbFactory = (
+  reserved: ReservedSql,
+  poolSql: PostgresSql,
+) => Database;
+
+function createLockedDbFromReserved(
+  reserved: ReservedSql,
+  poolSql: PostgresSql,
+): Database {
+  attachDrizzleSessionSupport(reserved, poolSql);
+  return drizzle(reserved, { schema }) as Database;
+}
+
+/**
  * Adapter over an existing postgres.js pool/client (no connection creation).
  * Reserves one session that carries both the advisory lock and all lock-held DB work.
  * Scan/reencode/object I/O stay outside DB transactions but may run while the lock is held.
+ *
+ * Control flow: reserve → try/finally guard → initialize → lock → callback → unlock → release.
+ * Any initialize / lock / callback failure still releases the reserved session;
+ * unlock runs only after lock acquisition succeeds.
  */
 export function createPostgresMediaUploadIdempotencyLock(
   sql: PostgresSql,
+  options?: { createLockedDb?: LockedDbFactory },
 ): MediaUploadIdempotencyLock {
+  const createLockedDb = options?.createLockedDb ?? createLockedDbFromReserved;
   return {
     async withLock(uploaderId, idempotencyKey, run) {
       const reserved = await sql.reserve();
-      attachDrizzleSessionSupport(reserved, sql);
-      const lockedDb = drizzle(reserved, { schema }) as Database;
       const lockName = `media.upload:${uploaderId}:${idempotencyKey}`;
       try {
+        const lockedDb = createLockedDb(reserved, sql);
         await reserved`SELECT pg_advisory_lock(hashtext(${lockName}))`;
         try {
           return await run(lockedDb);

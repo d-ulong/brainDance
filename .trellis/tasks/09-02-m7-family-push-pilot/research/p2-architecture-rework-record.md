@@ -214,3 +214,58 @@ Nested `finally` guarantees unlock + release on callback throw and on lock-path 
 - E2E
 - Milestone gate
 - purge / migration / capability implementation or test changes
+
+---
+
+## Reserved session cleanup (micro rework)
+
+- Directive: `research/p2-reserved-session-cleanup-directive.md`
+- Execution baseline SHA: `4de91d2edea670de4f46e1b3125c08b7dea51571`
+- Scope: ensure adapter/ORM initialize after `reserve()` cannot leak the reserved session. Does **not** change upload idempotency, connection authority, migration, purge, capability, or UI.
+
+### Required control flow
+
+```text
+reserve
+→ outer try/finally guard established immediately
+→ adapter/ORM initialize (createLockedDb / attach + drizzle)
+→ pg_advisory_lock
+→ callback(lockedDb)
+→ pg_advisory_unlock   // only if lock acquired
+→ reserved.release()   // always in outer finally
+```
+
+### Exception-exit evidence (acquire → guard → initialize → use → cleanup)
+
+| Exit point | Path | Cleanup | Evidence |
+|------------|------|---------|----------|
+| Initialize throws after reserve | factory seam throws before lock | outer `finally` → `release()`; no unlock | max=1 test: init boom → same pool re-reserves / queries / same-key lock within timeout |
+| Lock acquisition throws | after successful initialize | outer `finally` → `release()`; unlock not entered | nested try: unlock only inside post-lock `finally` |
+| Callback throws | lock held | inner `finally` unlock → outer `finally` release | existing callback-error reacquire test |
+| Success | full path | unlock → release | same-key serial / different-key parallel / max=2 saturation |
+
+### Test seam
+
+- Optional `createLockedDb?: LockedDbFactory` on `createPostgresMediaUploadIdempotencyLock(sql, options?)`.
+- Default remains `attachDrizzleSessionSupport` + `drizzle(reserved, { schema })` on the reserved session.
+- No process-level hooks, no new client/pool in production path.
+
+### Verification command log (this stage)
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/family-content/media-upload-idempotency-lock.test.ts` | exit 0 — **5/5 passed** |
+| `git diff --check` | clean |
+
+### Changed files (this stage)
+
+- `src/modules/family-content/media-upload-idempotency-lock.ts`
+- `tests/integration/family-content/media-upload-idempotency-lock.test.ts`
+- `research/p2-architecture-rework-record.md` (append only)
+
+### Not run (per reserved-session-cleanup directive)
+
+- Migration tests / full test suite / family-media.test.ts
+- typecheck / lint / format / build
+- E2E
+- Milestone gate

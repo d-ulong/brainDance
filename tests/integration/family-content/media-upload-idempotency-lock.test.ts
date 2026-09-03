@@ -156,4 +156,38 @@ describe.skipIf(!hasDb)("media upload idempotency lock adapter", () => {
       ),
     ).resolves.toBe("reacquired");
   });
+
+  it("releases reserved session when lockedDb initialize throws (max=1 pool)", async () => {
+    const pool = postgres(requireDatabaseUrl(), {
+      max: 1,
+      idle_timeout: 5,
+      connect_timeout: 10,
+    });
+    try {
+      const boom = new Error("lockedDb-init-boom");
+      const failingLock = createPostgresMediaUploadIdempotencyLock(pool, {
+        createLockedDb: () => {
+          throw boom;
+        },
+      });
+
+      await expect(
+        failingLock.withLock("actor-init", "key-init", async () => "never"),
+      ).rejects.toThrow("lockedDb-init-boom");
+
+      const okLock = createPostgresMediaUploadIdempotencyLock(pool);
+      await expect(
+        withTimeout(
+          okLock.withLock("actor-init", "key-init", async (lockedDb) => {
+            await lockedDb.execute(sql`SELECT 1 AS after_init_release`);
+            return "recovered";
+          }),
+          5_000,
+          "reserve-after-init-failure",
+        ),
+      ).resolves.toBe("recovered");
+    } finally {
+      await pool.end({ timeout: 5 });
+    }
+  });
 });
