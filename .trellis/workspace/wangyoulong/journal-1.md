@@ -204,3 +204,25 @@ Signed AC-M7-09 after isolated-database migration, full test, typecheck, lint, f
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: Define launch readiness gates
+
+**Date**: 2026-09-03
+**Task**: Define launch readiness gates
+**Branch**: `main`
+
+### Summary
+
+Created and completed a planning-only launch-readiness task: evidence register, synthetic recovery and capacity runbook, and external review handoff. Preserved all legal, supplier, and production blockers as unresolved.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd76ac4` | (see git log) |
+| `e50d5ef` | (see git log) |
+
+### Status
+
+[OK] **Completed**
