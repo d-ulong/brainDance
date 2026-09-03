@@ -25,16 +25,10 @@ type ReservedSql = Awaited<ReturnType<PostgresSql["reserve"]>>;
  * shared pool `options` for parsers/serializers, and `begin` for `db.transaction()`.
  * Graft onto the reserved session only — never open a second client/pool.
  */
-function attachDrizzleSessionSupport(
-  reserved: ReservedSql,
-  poolSql: PostgresSql,
-): void {
+function attachDrizzleSessionSupport(reserved: ReservedSql, poolSql: PostgresSql): void {
   const target = reserved as ReservedSql & {
     options?: unknown;
-    begin?: (
-      optionsOrFn: unknown,
-      maybeFn?: unknown,
-    ) => Promise<unknown>;
+    begin?: (optionsOrFn: unknown, maybeFn?: unknown) => Promise<unknown>;
   };
 
   if (!target.options) {
@@ -54,9 +48,7 @@ function attachDrizzleSessionSupport(
         beginOptions = "";
       }
 
-      await reserved.unsafe(
-        "begin " + String(beginOptions).replace(/[^a-z ]/gi, ""),
-      );
+      await reserved.unsafe("begin " + String(beginOptions).replace(/[^a-z ]/gi, ""));
 
       let savepoints = 0;
       const txSql = Object.assign(
@@ -111,15 +103,9 @@ function attachDrizzleSessionSupport(
  * Builds lockedDb on a reserved session (same authority; no second client/pool).
  * Injectable for tests that force initialize failure after reserve.
  */
-export type LockedDbFactory = (
-  reserved: ReservedSql,
-  poolSql: PostgresSql,
-) => Database;
+export type LockedDbFactory = (reserved: ReservedSql, poolSql: PostgresSql) => Database;
 
-function createLockedDbFromReserved(
-  reserved: ReservedSql,
-  poolSql: PostgresSql,
-): Database {
+function createLockedDbFromReserved(reserved: ReservedSql, poolSql: PostgresSql): Database {
   attachDrizzleSessionSupport(reserved, poolSql);
   return drizzle(reserved, { schema }) as Database;
 }

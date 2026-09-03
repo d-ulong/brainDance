@@ -5,12 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createPostgresMediaUploadIdempotencyLock } from "@/modules/family-content/media-upload-idempotency-lock";
 import { requireDatabaseUrl } from "@/lib/env";
-import {
-  closeTestDb,
-  getTestDb,
-  getTestSqlClient,
-  migrateTestDb,
-} from "../../helpers/db";
+import { closeTestDb, getTestDb, getTestSqlClient, migrateTestDb } from "../../helpers/db";
 
 config({ path: ".env.local" });
 config({ path: ".env" });

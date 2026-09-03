@@ -117,7 +117,11 @@ describe.skipIf(!hasDb)("outbox claimOutboxEventById lease rules", () => {
     });
     expect(processStolen.processed).toBe(false);
 
-    const [after] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, eventId)).limit(1);
+    const [after] = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.id, eventId))
+      .limit(1);
     expect(after?.status).toBe("leased");
     expect(after?.leaseOwner).toBe("owner-worker");
     expect(after?.leaseToken).toBe(original!.leaseToken);
@@ -172,8 +176,8 @@ describe.skipIf(!hasDb)("outbox claimOutboxEventById lease rules", () => {
       .from(workerAttempts)
       .where(eq(workerAttempts.outboxEventId, eventId));
     expect(attempts.length).toBeGreaterThanOrEqual(2);
-    expect(attempts.some((a) => a.leaseToken === reclaimed!.leaseToken && a.outcome === "leased")).toBe(
-      true,
-    );
+    expect(
+      attempts.some((a) => a.leaseToken === reclaimed!.leaseToken && a.outcome === "leased"),
+    ).toBe(true);
   });
 });

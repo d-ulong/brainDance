@@ -197,10 +197,7 @@ function postgresErrorCode(error: unknown): string | null {
 }
 
 /** Inject a real DB failure inside the finalize TX (status→ready) without production hooks. */
-async function withMediaFinalizeTxFailureTrigger<T>(
-  db: TestDb,
-  run: () => Promise<T>,
-): Promise<T> {
+async function withMediaFinalizeTxFailureTrigger<T>(db: TestDb, run: () => Promise<T>): Promise<T> {
   await db.execute(sql`
     CREATE OR REPLACE FUNCTION test_inject_media_finalize_fail()
     RETURNS trigger AS $$
@@ -1666,8 +1663,12 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       referenceId: refId,
     });
     expect(
-      (await readMediaWithCapability(db, { capabilityToken: creatorIssued.capabilityToken, mediaStore }))
-        .bytes.length,
+      (
+        await readMediaWithCapability(db, {
+          capabilityToken: creatorIssued.capabilityToken,
+          mediaStore,
+        })
+      ).bytes.length,
     ).toBeGreaterThan(0);
 
     // Student actor can issue for their push
@@ -1676,8 +1677,12 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       referenceId: refId,
     });
     expect(
-      (await readMediaWithCapability(db, { capabilityToken: studentIssued.capabilityToken, mediaStore }))
-        .bytes.length,
+      (
+        await readMediaWithCapability(db, {
+          capabilityToken: studentIssued.capabilityToken,
+          mediaStore,
+        })
+      ).bytes.length,
     ).toBeGreaterThan(0);
 
     // Other linked parent OK
@@ -1686,8 +1691,12 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       referenceId: refId,
     });
     expect(
-      (await readMediaWithCapability(db, { capabilityToken: linkedIssued.capabilityToken, mediaStore }))
-        .bytes.length,
+      (
+        await readMediaWithCapability(db, {
+          capabilityToken: linkedIssued.capabilityToken,
+          mediaStore,
+        })
+      ).bytes.length,
     ).toBeGreaterThan(0);
 
     // Unrelated / stranger: FORBIDDEN (role resolved via Identity — forged role impossible).
@@ -1827,8 +1836,12 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       referenceId: freshRef,
     });
     expect(
-      (await readMediaWithCapability(db, { capabilityToken: afterEpoch.capabilityToken, mediaStore }))
-        .bytes.length,
+      (
+        await readMediaWithCapability(db, {
+          capabilityToken: afterEpoch.capabilityToken,
+          mediaStore,
+        })
+      ).bytes.length,
     ).toBeGreaterThan(0);
 
     // Delete push → revoke refs; old token fails
@@ -1940,10 +1953,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       .select()
       .from(mediaReadCapabilities)
       .where(
-        and(
-          eq(mediaReadCapabilities.referenceId, refId),
-          isNull(mediaReadCapabilities.revokedAt),
-        ),
+        and(eq(mediaReadCapabilities.referenceId, refId), isNull(mediaReadCapabilities.revokedAt)),
       )
       .limit(1);
     expect(liveCap).toBeTruthy();
@@ -2024,10 +2034,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         scanResult: "clean",
       })
       .where(eq(mediaObjects.id, uploaded.media.mediaId));
-    await db
-      .update(mediaReferences)
-      .set({ revokedAt: null })
-      .where(eq(mediaReferences.id, refId));
+    await db.update(mediaReferences).set({ revokedAt: null }).where(eq(mediaReferences.id, refId));
     await db
       .update(mediaReadCapabilities)
       .set({ revokedAt: null })
@@ -2155,10 +2162,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       .select()
       .from(mediaObjects)
       .where(
-        and(
-          eq(mediaObjects.uploaderId, parentId),
-          eq(mediaObjects.createIdempotencyKey, key),
-        ),
+        and(eq(mediaObjects.uploaderId, parentId), eq(mediaObjects.createIdempotencyKey, key)),
       );
     expect(readyRows).toHaveLength(1);
     expect(readyRows[0]?.status).toBe("ready");
@@ -2290,9 +2294,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       const uniqueCode = postgresErrorCode(reason);
       const text = errorChainText(reason);
       expect(
-        isFamilyError ||
-          uniqueCode === "23505" ||
-          /unique|duplicate key|23505/i.test(text),
+        isFamilyError || uniqueCode === "23505" || /unique|duplicate key|23505/i.test(text),
       ).toBe(true);
       if (isFamilyError) {
         expect(reason.code).toMatch(

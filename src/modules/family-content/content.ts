@@ -18,7 +18,9 @@ export function normalizePushContent(input: {
   const body = (input.body ?? "").trim();
   const rawLink = (input.linkUrl ?? "").trim();
   const linkUrl = rawLink.length > 0 ? rawLink : null;
-  const mediaIds = [...new Set((input.mediaIds ?? []).filter((id) => typeof id === "string" && id.length > 0))];
+  const mediaIds = [
+    ...new Set((input.mediaIds ?? []).filter((id) => typeof id === "string" && id.length > 0)),
+  ];
 
   if (body.length === 0 && !linkUrl && mediaIds.length === 0) {
     throw new FamilyContentError("VALIDATION_ERROR", "Push requires text, a link URL, or an image");
@@ -65,7 +67,10 @@ export function normalizeAnswerContent(input: {
     throw new FamilyContentError("VALIDATION_ERROR", "Answer body is too long");
   }
   if (mediaIds.length > 1 || handwritingMediaIds.length > 1) {
-    throw new FamilyContentError("VALIDATION_ERROR", "Only one image per answer purpose is allowed");
+    throw new FamilyContentError(
+      "VALIDATION_ERROR",
+      "Only one image per answer purpose is allowed",
+    );
   }
 
   return { body, mediaIds, handwritingMediaIds };

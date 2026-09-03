@@ -26,9 +26,7 @@ export async function cancelScheduledPushesForStudentDeletion(
   const scheduled = await tx
     .select({ id: familyPushes.id })
     .from(familyPushes)
-    .where(
-      and(eq(familyPushes.studentId, input.studentId), eq(familyPushes.status, "scheduled")),
-    );
+    .where(and(eq(familyPushes.studentId, input.studentId), eq(familyPushes.status, "scheduled")));
 
   for (const push of scheduled) {
     await tx
@@ -97,10 +95,7 @@ export async function purgeFamilyContentBodiesForStudent(
       .update(familyPushes)
       .set({ status: "deleted", updatedAt: input.now })
       .where(
-        and(
-          eq(familyPushes.studentId, input.studentId),
-          sql`${familyPushes.status} <> 'deleted'`,
-        ),
+        and(eq(familyPushes.studentId, input.studentId), sql`${familyPushes.status} <> 'deleted'`),
       );
 
     const answers = await tx
@@ -174,10 +169,7 @@ export async function replayFamilyContentTombstoneForStudent(
     now: input.purgedAt,
   });
   return (
-    result.pushesCleared +
-    result.answersCleared +
-    result.commentsCleared +
-    result.mediaRefsRevoked
+    result.pushesCleared + result.answersCleared + result.commentsCleared + result.mediaRefsRevoked
   );
 }
 
@@ -210,10 +202,7 @@ export async function assertFamilyContentDeletionCanary(
     .from(pushAnswerVersions)
     .innerJoin(pushAnswers, eq(pushAnswerVersions.answerId, pushAnswers.id))
     .where(
-      and(
-        eq(pushAnswers.studentId, studentId),
-        sql`length(trim(${pushAnswerVersions.body})) > 0`,
-      ),
+      and(eq(pushAnswers.studentId, studentId), sql`length(trim(${pushAnswerVersions.body})) > 0`),
     )
     .limit(1);
 
@@ -289,9 +278,7 @@ export async function assertFamilyContentDeletionCanary(
       .limit(1);
     if (
       !intent ||
-      (intent.status !== "pending" &&
-        intent.status !== "prepared" &&
-        intent.status !== "completed")
+      (intent.status !== "pending" && intent.status !== "prepared" && intent.status !== "completed")
     ) {
       throw new Error("Family content canary failed: missing media purge intent");
     }

@@ -163,12 +163,7 @@ export async function attachReadyMediaToResource(
       lastErrorCategory: "cancelled_rereferenced",
       ownedGeneration: null,
     })
-    .where(
-      and(
-        eq(mediaPurgeIntents.mediaId, media.id),
-        eq(mediaPurgeIntents.status, "pending"),
-      ),
-    );
+    .where(and(eq(mediaPurgeIntents.mediaId, media.id), eq(mediaPurgeIntents.status, "pending")));
 
   return ref!;
 }
@@ -255,10 +250,7 @@ export async function revokeMediaReferenceInTx(
     return;
   }
 
-  await tx
-    .update(mediaReferences)
-    .set({ revokedAt: now })
-    .where(eq(mediaReferences.id, ref.id));
+  await tx.update(mediaReferences).set({ revokedAt: now }).where(eq(mediaReferences.id, ref.id));
 
   // Ordinary revoke: capabilities + refs only. Physical objects stay until +90d purge.
   await revokeCapabilitiesForReferenceInTx(tx, ref.id, now);
@@ -438,10 +430,7 @@ export async function revokeAllMediaForStudentInTx(
       and(eq(mediaReadCapabilities.studentId, studentId), isNull(mediaReadCapabilities.revokedAt)),
     );
 
-  const medias = await tx
-    .select()
-    .from(mediaObjects)
-    .where(eq(mediaObjects.studentId, studentId));
+  const medias = await tx.select().from(mediaObjects).where(eq(mediaObjects.studentId, studentId));
 
   for (const media of medias) {
     if (media.status === "purged") {
@@ -473,10 +462,7 @@ export async function revokeAllMediaForStudentInTx(
   return refs.length;
 }
 
-export async function findAnswerIdForPush(
-  db: Database,
-  pushId: string,
-): Promise<string | null> {
+export async function findAnswerIdForPush(db: Database, pushId: string): Promise<string | null> {
   const [answer] = await db
     .select({ id: pushAnswers.id })
     .from(pushAnswers)

@@ -271,9 +271,7 @@ export async function revokeCapabilitiesForMediaInTx(
   const result = await tx
     .update(mediaReadCapabilities)
     .set({ revokedAt: now })
-    .where(
-      and(eq(mediaReadCapabilities.mediaId, mediaId), isNull(mediaReadCapabilities.revokedAt)),
-    )
+    .where(and(eq(mediaReadCapabilities.mediaId, mediaId), isNull(mediaReadCapabilities.revokedAt)))
     .returning({ id: mediaReadCapabilities.id });
   return result.length;
 }

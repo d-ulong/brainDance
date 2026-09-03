@@ -71,14 +71,14 @@ export function readMigrationSqlFile(
   return readFileSync(path.join(migrationsRoot, `${tag}.sql`), "utf8");
 }
 
-export function expectedHashForTag(
-  tag: string,
-  migrationsRoot = defaultMigrationsRoot(),
-): string {
+export function expectedHashForTag(tag: string, migrationsRoot = defaultMigrationsRoot()): string {
   return hashMigrationSql(readMigrationSqlFile(tag, migrationsRoot));
 }
 
-export function findJournalEntry(tag: string, migrationsRoot = defaultMigrationsRoot()): JournalEntry {
+export function findJournalEntry(
+  tag: string,
+  migrationsRoot = defaultMigrationsRoot(),
+): JournalEntry {
   const entry = readMigrationsJournal(migrationsRoot).entries.find((e) => e.tag === tag);
   if (!entry) {
     throw new Error(`migration journal missing tag: ${tag}`);

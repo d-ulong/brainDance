@@ -33,9 +33,19 @@
 
 共享数据库测试须串行；日常审核不重复全量 test/E2E/build，除非里程碑或风险证据不足。
 
+## Migration lineage 不兼容时的门禁验证
+
+症状：`pnpm db:migrate` 在现有本地库的 `drizzle.__drizzle_migrations` 中发现历史 SQL checksum 与当前 migration 文件不一致，并在写入前 fail closed。
+
+处理顺序：
+
+1. 保留原库和 ledger，不执行 reset、删除 migration 行或手工改 hash。
+2. 新建仅用于验证的本地 PostgreSQL 数据库，并只将 `DATABASE_URL` 的数据库名替换为该隔离库。
+3. 从空白账本运行一次 `pnpm db:migrate`；之后在同一隔离库执行需要数据库的 test/E2E。
+4. 在任务实施记录中分别标注“既有库因 lineage 不兼容被 gate 阻断”和“隔离库验证结果”；隔离库保留到复核结束，清理需另行授权。
+
 ## Cursor 交接检查
 
 - 每份 Prompt 指向唯一仓库指令，包含 branch、完整 baseline SHA、允许范围、禁止事项、验证和回报格式。
 - 并发/连接/事务任务先写资源控制流：`acquire → guard → initialize → use → cleanup`，逐步标注所有者与异常出口。
 - 审核若发现设计级问题，停止补丁链；先新增阶段指令，再下发一次合并后的实现。
-

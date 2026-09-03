@@ -350,11 +350,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       return rows.length >= 3;
     });
 
-    const [push] = await db
-      .select()
-      .from(familyPushes)
-      .where(eq(familyPushes.id, pushId))
-      .limit(1);
+    const [push] = await db.select().from(familyPushes).where(eq(familyPushes.id, pushId)).limit(1);
     expect(push?.status).toBe("published");
 
     const notifs = await db.select().from(notifications);
@@ -1125,7 +1121,9 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
     });
 
     expect(await assertPushStatus(freezeId, "scheduled")).toBe(true);
-    await processTargetOutboxUntil(freezeRequestedKey, () => assertPushStatus(freezeId, "cancelled"));
+    await processTargetOutboxUntil(freezeRequestedKey, () =>
+      assertPushStatus(freezeId, "cancelled"),
+    );
 
     const freezeAudits = await db
       .select()
@@ -1155,10 +1153,16 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
 
     const freezeNotifBeforeReplay = (await db.select().from(notifications)).length;
     await replayDeadOnce(freezeRequestedKey, freezeParent.parentId, `freeze-${suffix}`);
-    await processTargetOutboxUntil(freezeRequestedKey, () => assertPushStatus(freezeId, "cancelled"));
+    await processTargetOutboxUntil(freezeRequestedKey, () =>
+      assertPushStatus(freezeId, "cancelled"),
+    );
     expect(
-      (await db.select().from(auditEvents).where(eq(auditEvents.idempotencyKey, freezeCancelAuditKey)))
-        .length,
+      (
+        await db
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.idempotencyKey, freezeCancelAuditKey))
+      ).length,
     ).toBe(1);
     expect(
       (await db.select().from(outboxEvents).where(eq(outboxEvents.dedupeKey, freezeCancelledKey)))

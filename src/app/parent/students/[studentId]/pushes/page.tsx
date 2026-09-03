@@ -65,8 +65,7 @@ export default function ParentPushesPage({ params }: { params: Promise<{ student
       let mediaIds: string[] | undefined;
       if (imageFile) {
         setUploadStatus("uploading");
-        const mime =
-          imageFile.type === "image/jpg" ? "image/jpeg" : imageFile.type || "image/jpeg";
+        const mime = imageFile.type === "image/jpg" ? "image/jpeg" : imageFile.type || "image/jpeg";
         const uploaded = await uploadMedia(studentId, imageFile, mime);
         if (uploaded.status !== "ready") {
           setUploadStatus("failed");

@@ -81,10 +81,7 @@ async function findExistingUpload(
   return existing ?? null;
 }
 
-function assertPayloadHash(
-  existing: typeof mediaObjects.$inferSelect,
-  payloadHash: string,
-): void {
+function assertPayloadHash(existing: typeof mediaObjects.$inferSelect, payloadHash: string): void {
   if (existing.createIdempotencyPayloadHash !== payloadHash) {
     throw new FamilyContentError(
       "IDEMPOTENCY_CONFLICT",
@@ -178,10 +175,7 @@ async function markRecoverableFailure(
       updatedAt: now,
     })
     .where(
-      and(
-        eq(mediaObjects.id, mediaId),
-        sql`${mediaObjects.status} IN ('staging', 'processing')`,
-      ),
+      and(eq(mediaObjects.id, mediaId), sql`${mediaObjects.status} IN ('staging', 'processing')`),
     );
 }
 
@@ -207,7 +201,9 @@ async function finalizeReadyInShortTx(
   },
 ): Promise<typeof mediaObjects.$inferSelect> {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${input.mediaId}::uuid FOR UPDATE`);
+    await tx.execute(
+      sql`SELECT id FROM media_objects WHERE id = ${input.mediaId}::uuid FOR UPDATE`,
+    );
     const [current] = await tx
       .select()
       .from(mediaObjects)
@@ -280,13 +276,7 @@ async function runUploadPipeline(
   try {
     await input.mediaStore.putStaging(stagingKey, input.bytes);
   } catch {
-    await markRecoverableFailure(
-      db,
-      media.id,
-      "staging",
-      "staging_write_failed",
-      new Date(),
-    );
+    await markRecoverableFailure(db, media.id, "staging", "staging_write_failed", new Date());
     throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to store staging object");
   }
 
@@ -294,10 +284,7 @@ async function runUploadPipeline(
     .update(mediaObjects)
     .set({ status: "processing", updatedAt: new Date(), scanErrorCategory: null })
     .where(
-      and(
-        eq(mediaObjects.id, media.id),
-        sql`${mediaObjects.status} IN ('staging', 'processing')`,
-      ),
+      and(eq(mediaObjects.id, media.id), sql`${mediaObjects.status} IN ('staging', 'processing')`),
     );
 
   const scan = await input.scanner.scan(input.bytes, declaredMime);
@@ -314,13 +301,7 @@ async function runUploadPipeline(
     throw new FamilyContentError("MEDIA_REJECTED", "Media scan rejected upload");
   }
   if (scan.outcome === "error") {
-    await markRecoverableFailure(
-      db,
-      media.id,
-      "processing",
-      scan.category,
-      new Date(),
-    );
+    await markRecoverableFailure(db, media.id, "processing", scan.category, new Date());
     throw new FamilyContentError("MEDIA_UNAVAILABLE", "Media scan temporarily unavailable");
   }
 
@@ -406,103 +387,85 @@ export async function uploadFamilyMedia(
   }
   assertDeclaredMatchesDetected(declaredMime, detected);
 
-  return input.idempotencyLock.withLock(
-    input.actorId,
-    input.idempotencyKey,
-    async (lockedDb) => {
-      await assertUploaderMayUploadForStudent(
-        lockedDb,
-        input.actorId,
-        input.studentId,
-      );
+  return input.idempotencyLock.withLock(input.actorId, input.idempotencyKey, async (lockedDb) => {
+    await assertUploaderMayUploadForStudent(lockedDb, input.actorId, input.studentId);
 
-      const existing = await findExistingUpload(
-        lockedDb,
-        input.actorId,
-        input.idempotencyKey,
-      );
-      if (existing) {
-        return continueFromExistingUploadRow(
-          lockedDb,
-          input,
-          existing,
-          payloadHash,
-          declaredMime,
-          detected,
-        );
-      }
-
-      const now = input.now ?? new Date();
-      const mediaId = randomUUID();
-      const stagingKey = `staging/${input.studentId}/${mediaId}`;
-
-      const inserted = await lockedDb.transaction(async (tx) => {
-        const raced = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
-        if (raced) {
-          assertPayloadHash(raced, payloadHash);
-          return { kind: "existing" as const, row: raced };
-        }
-
-        await assertUploaderMayUploadForStudent(tx, input.actorId, input.studentId);
-
-        const [row] = await tx
-          .insert(mediaObjects)
-          .values({
-            id: mediaId,
-            studentId: input.studentId,
-            uploaderId: input.actorId,
-            status: "staging",
-            declaredMime,
-            detectedMime: detected,
-            byteSize: input.bytes.length,
-            stagingObjectKey: stagingKey,
-            scanResult: "pending",
-            createIdempotencyKey: input.idempotencyKey,
-            createIdempotencyPayloadHash: payloadHash,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .onConflictDoNothing({
-            target: [mediaObjects.uploaderId, mediaObjects.createIdempotencyKey],
-          })
-          .returning();
-
-        if (!row) {
-          const again = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
-          if (again) {
-            assertPayloadHash(again, payloadHash);
-            return { kind: "existing" as const, row: again };
-          }
-          throw new FamilyContentError(
-            "IDEMPOTENCY_CONFLICT",
-            "Media upload idempotency payload mismatch",
-          );
-        }
-
-        return { kind: "created" as const, row };
-      });
-
-      if (inserted.kind === "existing") {
-        return continueFromExistingUploadRow(
-          lockedDb,
-          input,
-          inserted.row,
-          payloadHash,
-          declaredMime,
-          detected,
-        );
-      }
-
-      const ready = await runUploadPipeline(
+    const existing = await findExistingUpload(lockedDb, input.actorId, input.idempotencyKey);
+    if (existing) {
+      return continueFromExistingUploadRow(
         lockedDb,
         input,
-        inserted.row,
+        existing,
+        payloadHash,
         declaredMime,
         detected,
       );
-      return { media: ready, idempotentReplay: false };
-    },
-  );
+    }
+
+    const now = input.now ?? new Date();
+    const mediaId = randomUUID();
+    const stagingKey = `staging/${input.studentId}/${mediaId}`;
+
+    const inserted = await lockedDb.transaction(async (tx) => {
+      const raced = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
+      if (raced) {
+        assertPayloadHash(raced, payloadHash);
+        return { kind: "existing" as const, row: raced };
+      }
+
+      await assertUploaderMayUploadForStudent(tx, input.actorId, input.studentId);
+
+      const [row] = await tx
+        .insert(mediaObjects)
+        .values({
+          id: mediaId,
+          studentId: input.studentId,
+          uploaderId: input.actorId,
+          status: "staging",
+          declaredMime,
+          detectedMime: detected,
+          byteSize: input.bytes.length,
+          stagingObjectKey: stagingKey,
+          scanResult: "pending",
+          createIdempotencyKey: input.idempotencyKey,
+          createIdempotencyPayloadHash: payloadHash,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing({
+          target: [mediaObjects.uploaderId, mediaObjects.createIdempotencyKey],
+        })
+        .returning();
+
+      if (!row) {
+        const again = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
+        if (again) {
+          assertPayloadHash(again, payloadHash);
+          return { kind: "existing" as const, row: again };
+        }
+        throw new FamilyContentError(
+          "IDEMPOTENCY_CONFLICT",
+          "Media upload idempotency payload mismatch",
+        );
+      }
+
+      return { kind: "created" as const, row };
+    });
+
+    if (inserted.kind === "existing") {
+      return continueFromExistingUploadRow(
+        lockedDb,
+        input,
+        inserted.row,
+        payloadHash,
+        declaredMime,
+        detected,
+      );
+    }
+
+    const ready = await runUploadPipeline(lockedDb, input, inserted.row, declaredMime, detected);
+    return { media: ready, idempotentReplay: false };
+  });
 }
 
 export async function assertMediaReadyForAttach(

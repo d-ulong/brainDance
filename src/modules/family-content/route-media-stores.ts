@@ -8,10 +8,7 @@ import {
   createMemoryMediaStore,
   type PrivateMediaStore,
 } from "@/modules/family-content/private-media-store";
-import {
-  resolveMediaScanner,
-  type MediaScanner,
-} from "@/modules/family-content/media-scanner";
+import { resolveMediaScanner, type MediaScanner } from "@/modules/family-content/media-scanner";
 
 let cachedStore: PrivateMediaStore | null = null;
 let cachedScanner: MediaScanner | null = null;

@@ -41,7 +41,10 @@ const repoRoot = path.resolve(".");
 function loadOld0030SqlFromGit(): string {
   return execFileSync(
     "git",
-    ["show", "dd7b350899b9039ab06d7e1f492b2f6a69ab85fe:src/db/migrations/0030_m7_media_student_binding.sql"],
+    [
+      "show",
+      "dd7b350899b9039ab06d7e1f492b2f6a69ab85fe:src/db/migrations/0030_m7_media_student_binding.sql",
+    ],
     { cwd: repoRoot, encoding: "utf8" },
   );
 }
@@ -56,7 +59,13 @@ function buildJournalThrough(tagInclusive: string): string {
   ) as {
     version: string;
     dialect: string;
-    entries: Array<{ idx: number; version: string; when: number; tag: string; breakpoints: boolean }>;
+    entries: Array<{
+      idx: number;
+      version: string;
+      when: number;
+      tag: string;
+      breakpoints: boolean;
+    }>;
   };
   const endIdx = journal.entries.findIndex((e) => e.tag === tagInclusive);
   if (endIdx < 0) {
@@ -248,7 +257,9 @@ describe.skipIf(!hasDb)("m7 media student binding migration (0030)", () => {
       ).rejects.toThrow(/cannot be uniquely backfilled|m7_media_student_binding/i);
 
       expect((await client`SELECT id FROM media_objects WHERE id = ${badId}::uuid`).length).toBe(1);
-      expect((await client`SELECT id FROM media_objects WHERE id = ${goodId}::uuid`).length).toBe(1);
+      expect((await client`SELECT id FROM media_objects WHERE id = ${goodId}::uuid`).length).toBe(
+        1,
+      );
       expect((await client`SELECT id FROM media_references WHERE id = ${refId}::uuid`).length).toBe(
         1,
       );
@@ -433,10 +444,12 @@ describe.skipIf(!hasDb)("m7 media student binding migration (0030)", () => {
       );
 
       // Drizzle would skip revised 0030 by created_at — gate must not pretend it re-ran.
-      const beforeMigrate = await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
+      const beforeMigrate =
+        await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
       expect(beforeMigrate[0]?.hash).toBe(oldHash);
       await migrateFullFolder(databaseUrl);
-      const afterMigrate = await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
+      const afterMigrate =
+        await client`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${entry.when}`;
       expect(afterMigrate[0]?.hash).toBe(oldHash);
       await expect(assertMediaMigrationCompatibility(client)).rejects.toBeInstanceOf(
         MediaMigrationCompatibilityError,

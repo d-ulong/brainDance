@@ -61,11 +61,7 @@ async function recordOwnedPurgeFailure(
  * Attach may only cancel pending intents before ownership; prepared blocks attach.
  * Once owned, purgeSafe/purgeStaging/finalize errors never restore ready/attach.
  */
-async function prepareMediaPurge(
-  db: Database,
-  mediaId: string,
-  now: Date,
-): Promise<PreparedPurge> {
+async function prepareMediaPurge(db: Database, mediaId: string, now: Date): Promise<PreparedPurge> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
     const [media] = await tx

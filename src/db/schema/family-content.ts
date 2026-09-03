@@ -372,9 +372,6 @@ export const mediaReadCapabilities = pgTable(
   },
   (table) => [
     unique("media_read_capabilities_token_hash_unique").on(table.tokenHash),
-    index("media_read_capabilities_token_hash_expires_at_idx").on(
-      table.tokenHash,
-      table.expiresAt,
-    ),
+    index("media_read_capabilities_token_hash_expires_at_idx").on(table.tokenHash, table.expiresAt),
   ],
 );
