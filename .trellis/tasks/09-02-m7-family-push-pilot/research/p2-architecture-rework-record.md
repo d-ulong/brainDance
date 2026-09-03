@@ -143,3 +143,74 @@ Tests still call the same production module entrypoints (`uploadFamilyMedia`, `h
 - typecheck / lint / format / build
 - E2E
 - Milestone gate
+
+---
+
+## Upload connection ownership rework (new stage)
+
+- Directive: `research/p2-upload-connection-ownership-directive.md`
+- Execution baseline SHA: `0562cf4dec8c73649ac8f1f58c26dd63f5ae8a8e`
+- Scope: same-key single-flight connection ownership + pool forward progress under saturation. Does **not** change P2 product range, purge, migration gate, or capability behavior. Does **not** rewrite prior seal conclusions above.
+
+### Connection ownership
+
+1. `MediaUploadIdempotencyLock.withLock` callback receives `lockedDb: Database`.
+2. `createPostgresMediaUploadIdempotencyLock(sharedSql)` calls `sharedSql.reserve()` once; grafts drizzle session support (`options` + `begin`/`savepoint`) onto that reserved session; builds `lockedDb = drizzle(reserved, { schema })`; acquires `pg_advisory_lock` on the same session; passes `lockedDb` to the callback.
+3. `uploadFamilyMedia` lock-held path uses **only** `lockedDb` for replay lookup, authorization, insert TX, pipeline status updates, ready/audit TX, and recovery. Outer `db` is unused inside the lock (callers still pass the authority-bound Database for API stability).
+4. Domain module does not read `DATABASE_URL`, create client/pool, or implicitly fetch a global db. Route binds `getSharedSqlClient()`; tests bind `getTestSqlClient()` or an isolated `max=2` pool for the saturation case.
+
+### Session lifecycle
+
+```text
+reserve → attachDrizzleSessionSupport → drizzle(reserved) → pg_advisory_lock
+  → run(lockedDb)  // may include scan/reencode/object I/O outside DB TX
+  → finally pg_advisory_unlock
+→ finally reserved.release()
+```
+
+Nested `finally` guarantees unlock + release on callback throw and on lock-path failure after acquire.
+
+### Capacity boundary
+
+- One upload holds at most **one** shared postgres.js session while locked.
+- Different keys may queue when the pool is full, but must not deadlock by holding a reserved lock session while waiting for a second query connection.
+- Saturation proof: isolated pool `max=2`; two different keys enter lock callbacks concurrently; each callback runs real SQL on `lockedDb` and waits on a barrier; both complete under a finite timeout.
+
+### Failure cleanup
+
+- Callback throw propagates after unlock + release.
+- Same `(uploaderId, key)` can reacquire afterward (regression asserts finite-timeout reacquire).
+
+### Invariant evidence matrix
+
+| # | Invariant | Evidence |
+|---|-----------|----------|
+| 1 | Same key → one created + replay, one media, one uploaded audit | `family-media.test.ts` concurrent same-key/same-payload block |
+| 2 | Different keys concurrent; pool saturation still advances | lock tests: different-keys + max=2 saturation |
+| 3 | One reserved session carries lock + all DB work | lock adapter + `uploadFamilyMedia` lockedDb-only path |
+| 4 | Scan/reencode/object I/O outside DB TX, may hold lock | unchanged pipeline structure; TX only around insert/finalize |
+| 5 | Adapters bind injected SQL authority; no domain pool/URL | `createPostgresMediaUploadIdempotencyLock(sql)` + route/test wiring |
+| 6 | acquire/unlock/release cleaned in nested finally | lock implementation + callback-error reacquire test |
+
+### Verification command log (this stage)
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/family-content/media-upload-idempotency-lock.test.ts` | exit 0 — **4/4 passed** |
+| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **12/12 passed** |
+| `git diff --check` | clean |
+
+### Changed files (this stage)
+
+- `src/modules/family-content/media-upload-idempotency-lock.ts`
+- `src/modules/family-content/media-upload.service.ts`
+- `tests/integration/family-content/media-upload-idempotency-lock.test.ts`
+- `research/p2-architecture-rework-record.md` (append only)
+
+### Not run (per connection-ownership directive)
+
+- Migration tests / full test suite
+- typecheck / lint / format / build
+- E2E
+- Milestone gate
+- purge / migration / capability implementation or test changes
