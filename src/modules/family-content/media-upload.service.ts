@@ -18,11 +18,13 @@ import {
   detectImageMimeFromMagic,
   normalizeDeclaredMime,
 } from "@/modules/family-content/media-validate";
+import type { AllowedMediaMime } from "@/modules/family-content/constants";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { hasActiveRelationship } from "@/modules/family-access/authorization.service";
 
 export type MediaObjectDto = {
   mediaId: string;
+  studentId: string;
   status: string;
   declaredMime: string;
   detectedMime: string | null;
@@ -47,6 +49,7 @@ export type UploadMediaInput = {
 function toMediaDto(row: typeof mediaObjects.$inferSelect): MediaObjectDto {
   return {
     mediaId: row.id,
+    studentId: row.studentId,
     status: row.status,
     declaredMime: row.declaredMime,
     detectedMime: row.detectedMime,
@@ -57,12 +60,11 @@ function toMediaDto(row: typeof mediaObjects.$inferSelect): MediaObjectDto {
   };
 }
 
-async function findUploadReplay(
+async function findExistingUpload(
   db: Database,
   uploaderId: string,
   idempotencyKey: string,
-  payloadHash: string,
-): Promise<{ media: MediaObjectDto; idempotentReplay: boolean } | null> {
+): Promise<typeof mediaObjects.$inferSelect | null> {
   const [existing] = await db
     .select()
     .from(mediaObjects)
@@ -73,17 +75,19 @@ async function findUploadReplay(
       ),
     )
     .limit(1);
+  return existing ?? null;
+}
 
-  if (!existing) {
-    return null;
-  }
+function assertPayloadHash(
+  existing: typeof mediaObjects.$inferSelect,
+  payloadHash: string,
+): void {
   if (existing.createIdempotencyPayloadHash !== payloadHash) {
     throw new FamilyContentError(
       "IDEMPOTENCY_CONFLICT",
       "Media upload idempotency payload mismatch",
     );
   }
-  return { media: toMediaDto(existing), idempotentReplay: true };
 }
 
 async function assertUploaderMayUploadForStudent(
@@ -123,6 +127,197 @@ async function markRejected(
   }
 }
 
+async function finalizeReadyInShortTx(
+  db: Database,
+  input: {
+    mediaId: string;
+    actorId: string;
+    studentId: string;
+    idempotencyKey: string;
+    requestId?: string;
+    declaredMime: string;
+    reencoded: {
+      mime: string;
+      sha256: string;
+      bytes: Buffer;
+      width: number;
+      height: number;
+    };
+    safeKey: string;
+    byteSize: number;
+    now: Date;
+  },
+): Promise<typeof mediaObjects.$inferSelect> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${input.mediaId}::uuid FOR UPDATE`);
+    const [current] = await tx
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, input.mediaId))
+      .limit(1);
+
+    if (!current) {
+      throw new FamilyContentError("MEDIA_UNAVAILABLE", "Media object missing during finalize");
+    }
+
+    if (current.status === "ready") {
+      return current;
+    }
+
+    if (current.status !== "staging" && current.status !== "processing") {
+      throw new FamilyContentError("MEDIA_REJECTED", "Media is not recoverable for finalize");
+    }
+
+    const [ready] = await tx
+      .update(mediaObjects)
+      .set({
+        status: "ready",
+        scanResult: "clean",
+        scanErrorCategory: null,
+        detectedMime: input.reencoded.mime,
+        contentSha256: input.reencoded.sha256,
+        safeByteSize: input.reencoded.bytes.length,
+        width: input.reencoded.width,
+        height: input.reencoded.height,
+        safeObjectKey: input.safeKey,
+        readyAt: input.now,
+        updatedAt: input.now,
+      })
+      .where(eq(mediaObjects.id, input.mediaId))
+      .returning();
+
+    await appendAuditEvent(tx, {
+      actorId: input.actorId,
+      action: "media.uploaded",
+      resourceType: "media_object",
+      resourceId: input.mediaId,
+      requestId: input.requestId ?? null,
+      idempotencyKey: `audit:media-upload:${input.idempotencyKey}`,
+      metadata: {
+        studentId: input.studentId,
+        status: "ready",
+        declaredMime: input.declaredMime,
+        detectedMime: input.reencoded.mime,
+        byteSize: input.byteSize,
+        safeByteSize: input.reencoded.bytes.length,
+        width: input.reencoded.width,
+        height: input.reencoded.height,
+      },
+    });
+
+    return ready!;
+  });
+}
+
+async function runUploadPipeline(
+  db: Database,
+  input: UploadMediaInput,
+  media: typeof mediaObjects.$inferSelect,
+  declaredMime: AllowedMediaMime,
+  detected: AllowedMediaMime,
+): Promise<MediaObjectDto> {
+  const stagingKey = media.stagingObjectKey;
+  const safeKey = `safe/${input.studentId}/${media.id}`;
+
+  try {
+    await input.mediaStore.putStaging(stagingKey, input.bytes);
+  } catch {
+    await markRejected(
+      db,
+      input.mediaStore,
+      media.id,
+      stagingKey,
+      "error",
+      "staging_write_failed",
+      new Date(),
+    );
+    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to store staging object");
+  }
+
+  await db
+    .update(mediaObjects)
+    .set({ status: "processing", updatedAt: new Date() })
+    .where(
+      and(
+        eq(mediaObjects.id, media.id),
+        sql`${mediaObjects.status} IN ('staging', 'processing')`,
+      ),
+    );
+
+  const scan = await input.scanner.scan(input.bytes, declaredMime);
+  if (scan.outcome !== "clean") {
+    await markRejected(
+      db,
+      input.mediaStore,
+      media.id,
+      stagingKey,
+      scan.outcome === "rejected" ? "rejected" : "error",
+      scan.category,
+      new Date(),
+    );
+    throw new FamilyContentError("MEDIA_REJECTED", "Media scan rejected upload");
+  }
+
+  let reencoded;
+  try {
+    reencoded = await reencodeSafeImage(input.bytes, detected);
+  } catch (error) {
+    await markRejected(
+      db,
+      input.mediaStore,
+      media.id,
+      stagingKey,
+      "rejected",
+      "reencode_failed",
+      new Date(),
+    );
+    if (error instanceof FamilyContentError) {
+      throw error;
+    }
+    throw new FamilyContentError("MEDIA_REJECTED", "Image re-encode failed");
+  }
+
+  try {
+    await input.mediaStore.promoteSafe(stagingKey, safeKey, reencoded.bytes);
+  } catch {
+    await markRejected(
+      db,
+      input.mediaStore,
+      media.id,
+      stagingKey,
+      "error",
+      "promote_failed",
+      new Date(),
+    );
+    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to promote safe object");
+  }
+
+  // Promote succeeded: finalize must converge via short TX (ready + audit). On failure,
+  // identical key+payload retries re-enter processing and re-finalize without leaving
+  // an untracked safe object (promote is idempotent overwrite).
+  try {
+    const ready = await finalizeReadyInShortTx(db, {
+      mediaId: media.id,
+      actorId: input.actorId,
+      studentId: input.studentId,
+      idempotencyKey: input.idempotencyKey,
+      requestId: input.requestId,
+      declaredMime,
+      reencoded,
+      safeKey,
+      byteSize: input.bytes.length,
+      now: new Date(),
+    });
+    return toMediaDto(ready);
+  } catch (error) {
+    // Leave status as processing so idempotent replay can compensate finalize.
+    if (error instanceof FamilyContentError) {
+      throw error;
+    }
+    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to finalize ready media");
+  }
+}
+
 export async function getMediaObjectDto(
   db: Database,
   mediaId: string,
@@ -135,7 +330,6 @@ export async function uploadFamilyMedia(
   db: Database,
   input: UploadMediaInput,
 ): Promise<{ media: MediaObjectDto; idempotentReplay: boolean }> {
-  const now = input.now ?? new Date();
   assertUploadSize(input.bytes.length);
   const declaredMime = normalizeDeclaredMime(input.declaredMime);
   const contentSha = createHash("sha256").update(input.bytes).digest("hex");
@@ -146,11 +340,6 @@ export async function uploadFamilyMedia(
     byteSize: input.bytes.length,
   });
 
-  const replay = await findUploadReplay(db, input.actorId, input.idempotencyKey, payloadHash);
-  if (replay) {
-    return replay;
-  }
-
   await assertUploaderMayUploadForStudent(db, input.actorId, input.studentId);
 
   const detected = detectImageMimeFromMagic(input.bytes);
@@ -159,19 +348,39 @@ export async function uploadFamilyMedia(
   }
   assertDeclaredMatchesDetected(declaredMime, detected);
 
+  const existing = await findExistingUpload(db, input.actorId, input.idempotencyKey);
+  if (existing) {
+    assertPayloadHash(existing, payloadHash);
+    if (existing.studentId !== input.studentId) {
+      throw new FamilyContentError(
+        "IDEMPOTENCY_CONFLICT",
+        "Media upload idempotency payload mismatch",
+      );
+    }
+    if (existing.status === "ready") {
+      return { media: toMediaDto(existing), idempotentReplay: true };
+    }
+    if (
+      existing.status === "rejected" ||
+      existing.status === "revoked" ||
+      existing.status === "purged"
+    ) {
+      throw new FamilyContentError("MEDIA_REJECTED", "Media upload previously rejected");
+    }
+    // staging | processing — resume; never treat as successful replay.
+    const resumed = await runUploadPipeline(db, input, existing, declaredMime, detected);
+    return { media: resumed, idempotentReplay: false };
+  }
+
+  const now = input.now ?? new Date();
   const mediaId = randomUUID();
   const stagingKey = `staging/${input.studentId}/${mediaId}`;
-  const safeKey = `safe/${input.studentId}/${mediaId}`;
 
   const inserted = await db.transaction(async (tx) => {
-    const replayInTx = await findUploadReplay(
-      tx,
-      input.actorId,
-      input.idempotencyKey,
-      payloadHash,
-    );
-    if (replayInTx) {
-      return { kind: "replay" as const, result: replayInTx };
+    const raced = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
+    if (raced) {
+      assertPayloadHash(raced, payloadHash);
+      return { kind: "existing" as const, row: raced };
     }
 
     await assertUploaderMayUploadForStudent(tx, input.actorId, input.studentId);
@@ -180,6 +389,7 @@ export async function uploadFamilyMedia(
       .insert(mediaObjects)
       .values({
         id: mediaId,
+        studentId: input.studentId,
         uploaderId: input.actorId,
         status: "staging",
         declaredMime,
@@ -198,9 +408,10 @@ export async function uploadFamilyMedia(
       .returning();
 
     if (!row) {
-      const raced = await findUploadReplay(tx, input.actorId, input.idempotencyKey, payloadHash);
-      if (raced) {
-        return { kind: "replay" as const, result: raced };
+      const again = await findExistingUpload(tx, input.actorId, input.idempotencyKey);
+      if (again) {
+        assertPayloadHash(again, payloadHash);
+        return { kind: "existing" as const, row: again };
       }
       throw new FamilyContentError(
         "IDEMPOTENCY_CONFLICT",
@@ -211,117 +422,23 @@ export async function uploadFamilyMedia(
     return { kind: "created" as const, row };
   });
 
-  if (inserted.kind === "replay") {
-    return inserted.result;
-  }
-
-  try {
-    await input.mediaStore.putStaging(stagingKey, input.bytes);
-  } catch {
-    await db
-      .update(mediaObjects)
-      .set({
-        status: "rejected",
-        scanResult: "error",
-        scanErrorCategory: "staging_write_failed",
-        updatedAt: new Date(),
-      })
-      .where(eq(mediaObjects.id, mediaId));
-    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to store staging object");
-  }
-
-  await db
-    .update(mediaObjects)
-    .set({ status: "processing", updatedAt: new Date() })
-    .where(eq(mediaObjects.id, mediaId));
-
-  const scan = await input.scanner.scan(input.bytes, declaredMime);
-  if (scan.outcome !== "clean") {
-    await markRejected(
-      db,
-      input.mediaStore,
-      mediaId,
-      stagingKey,
-      scan.outcome === "rejected" ? "rejected" : "error",
-      scan.category,
-      new Date(),
-    );
-    throw new FamilyContentError("MEDIA_REJECTED", "Media scan rejected upload");
-  }
-
-  let reencoded;
-  try {
-    reencoded = await reencodeSafeImage(input.bytes, detected);
-  } catch (error) {
-    await markRejected(
-      db,
-      input.mediaStore,
-      mediaId,
-      stagingKey,
-      "rejected",
-      "reencode_failed",
-      new Date(),
-    );
-    if (error instanceof FamilyContentError) {
-      throw error;
+  if (inserted.kind === "existing") {
+    if (inserted.row.status === "ready") {
+      return { media: toMediaDto(inserted.row), idempotentReplay: true };
     }
-    throw new FamilyContentError("MEDIA_REJECTED", "Image re-encode failed");
+    if (
+      inserted.row.status === "rejected" ||
+      inserted.row.status === "revoked" ||
+      inserted.row.status === "purged"
+    ) {
+      throw new FamilyContentError("MEDIA_REJECTED", "Media upload previously rejected");
+    }
+    const resumed = await runUploadPipeline(db, input, inserted.row, declaredMime, detected);
+    return { media: resumed, idempotentReplay: false };
   }
 
-  try {
-    await input.mediaStore.promoteSafe(stagingKey, safeKey, reencoded.bytes);
-  } catch {
-    await markRejected(
-      db,
-      input.mediaStore,
-      mediaId,
-      stagingKey,
-      "error",
-      "promote_failed",
-      new Date(),
-    );
-    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to promote safe object");
-  }
-
-  const readyAt = new Date();
-  const [ready] = await db
-    .update(mediaObjects)
-    .set({
-      status: "ready",
-      scanResult: "clean",
-      scanErrorCategory: null,
-      detectedMime: reencoded.mime,
-      contentSha256: reencoded.sha256,
-      safeByteSize: reencoded.bytes.length,
-      width: reencoded.width,
-      height: reencoded.height,
-      safeObjectKey: safeKey,
-      readyAt,
-      updatedAt: readyAt,
-    })
-    .where(eq(mediaObjects.id, mediaId))
-    .returning();
-
-  await appendAuditEvent(db, {
-    actorId: input.actorId,
-    action: "media.uploaded",
-    resourceType: "media_object",
-    resourceId: mediaId,
-    requestId: input.requestId ?? null,
-    idempotencyKey: `audit:media-upload:${input.idempotencyKey}`,
-    metadata: {
-      studentId: input.studentId,
-      status: "ready",
-      declaredMime,
-      detectedMime: reencoded.mime,
-      byteSize: input.bytes.length,
-      safeByteSize: reencoded.bytes.length,
-      width: reencoded.width,
-      height: reencoded.height,
-    },
-  });
-
-  return { media: toMediaDto(ready!), idempotentReplay: false };
+  const ready = await runUploadPipeline(db, input, inserted.row, declaredMime, detected);
+  return { media: ready, idempotentReplay: false };
 }
 
 export async function assertMediaReadyForAttach(
@@ -331,11 +448,9 @@ export async function assertMediaReadyForAttach(
 ): Promise<typeof mediaObjects.$inferSelect> {
   await db.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
   const [media] = await db.select().from(mediaObjects).where(eq(mediaObjects.id, mediaId)).limit(1);
-  if (!media || media.status !== "ready") {
+  if (!media || media.status !== "ready" || media.revokedAt) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
-  // Uploader or linked parent/student already checked at upload; attach requires ready only.
-  // Keep actor check loose: media must exist and be ready; resource auth is separate.
   void actorId;
   return media;
 }
@@ -348,7 +463,9 @@ export async function assertActorCanUseReadyMedia(
 ): Promise<typeof mediaObjects.$inferSelect> {
   const media = await assertMediaReadyForAttach(db, mediaId, actorId);
   if (media.uploaderId !== actorId) {
-    // Allow student to use media they uploaded; parent only their own uploads for attach.
+    throw new FamilyContentError("FORBIDDEN", "Access denied");
+  }
+  if (media.studentId !== studentId) {
     throw new FamilyContentError("FORBIDDEN", "Access denied");
   }
   if (actorId !== studentId) {

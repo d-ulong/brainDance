@@ -1,10 +1,11 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import {
   familyPushes,
   familyPushVersions,
   mediaObjects,
+  mediaPurgeIntents,
   mediaReadCapabilities,
   mediaReferences,
   pushAnswerVersions,
@@ -51,6 +52,7 @@ export async function cancelScheduledPushesForStudentDeletion(
 /**
  * Clear M7 readable bodies, revoke media refs/capabilities, mark pushes deleted.
  * Called from Data Lifecycle PURGE_BODIES via explicit interface.
+ * Produces stable-idempotent audit + purge intents/outbox in the same TX.
  */
 export async function purgeFamilyContentBodiesForStudent(
   tx: Database,
@@ -144,7 +146,8 @@ export async function purgeFamilyContentBodiesForStudent(
     action: "family_content.purged",
     resourceType: "student_account",
     resourceId: input.studentId,
-    idempotencyKey: `audit:family-content-purge:${input.studentId}:${input.now.toISOString()}`,
+    // Stable key — must not include wall-clock so tombstone replay does not duplicate audits.
+    idempotencyKey: `audit:family-content-purge:${input.studentId}`,
     metadata: {
       pushesTouched: pushIds.length,
       answersCleared,
@@ -179,7 +182,8 @@ export async function replayFamilyContentTombstoneForStudent(
 }
 
 /**
- * Restore canary: deleted bodies empty, no active media refs, no live capabilities.
+ * Restore canary: deleted bodies empty, no active media refs, no live capability,
+ * and student media objects are revoked/rejected/purged with cleanup intent.
  */
 export async function assertFamilyContentDeletionCanary(
   db: Database,
@@ -239,6 +243,51 @@ export async function assertFamilyContentDeletionCanary(
     throw new Error("Family content canary failed: live media capability remains");
   }
 
-  // Ready objects for this student scope should not remain family-readable via refs.
-  void mediaObjects;
+  const readableMedia = await db
+    .select({ id: mediaObjects.id })
+    .from(mediaObjects)
+    .where(and(eq(mediaObjects.studentId, studentId), eq(mediaObjects.status, "ready")))
+    .limit(1);
+
+  if (readableMedia.length > 0) {
+    throw new Error("Family content canary failed: ready media remains after deletion");
+  }
+
+  const uncleared = await db
+    .select({ id: mediaObjects.id, status: mediaObjects.status })
+    .from(mediaObjects)
+    .where(
+      and(
+        eq(mediaObjects.studentId, studentId),
+        ne(mediaObjects.status, "purged"),
+        ne(mediaObjects.status, "revoked"),
+        ne(mediaObjects.status, "rejected"),
+      ),
+    )
+    .limit(1);
+
+  if (uncleared.length > 0) {
+    throw new Error("Family content canary failed: media not in revoke/cleanup state");
+  }
+
+  const mediasNeedingIntent = await db
+    .select({ id: mediaObjects.id })
+    .from(mediaObjects)
+    .where(
+      and(
+        eq(mediaObjects.studentId, studentId),
+        sql`${mediaObjects.status} IN ('revoked', 'rejected')`,
+      ),
+    );
+
+  for (const media of mediasNeedingIntent) {
+    const [intent] = await db
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, media.id))
+      .limit(1);
+    if (!intent || (intent.status !== "pending" && intent.status !== "prepared" && intent.status !== "completed")) {
+      throw new Error("Family content canary failed: missing media purge intent");
+    }
+  }
 }

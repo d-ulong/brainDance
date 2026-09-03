@@ -29,6 +29,14 @@ async function writeTempPng(): Promise<string> {
   return filePath;
 }
 
+async function assertImageReadable(page: Page, listTestId: string) {
+  await expect(page.getByTestId(listTestId)).toBeVisible({ timeout: 20_000 });
+  const img = page.getByTestId(listTestId).locator("img").first();
+  await expect(img).toBeVisible({ timeout: 20_000 });
+  const naturalWidth = await img.evaluate((el: HTMLImageElement) => el.naturalWidth);
+  expect(naturalWidth).toBeGreaterThan(0);
+}
+
 test.describe("M7 family push P2 AC-M7-05 media matrix", () => {
   test("image push + image answer + reject bad file + delete unreadability", async ({
     page,
@@ -38,63 +46,70 @@ test.describe("M7 family push P2 AC-M7-05 media matrix", () => {
     const badPath = path.join(os.tmpdir(), `m7-p2-bad-${crypto.randomUUID()}.txt`);
     fs.writeFileSync(badPath, "not-an-image");
 
-    await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
-    await page.goto(`/parent/students/${fixture.studentId}/pushes`);
-    await expect(page.getByTestId("push-create-form")).toBeVisible();
+    try {
+      await loginViaUi(page, fixture.parentEmail, fixture.parentPassword);
+      await page.goto(`/parent/students/${fixture.studentId}/pushes`);
+      await expect(page.getByTestId("push-create-form")).toBeVisible();
 
-    const body = `P2 image push ${testInfo.project.name} ${Date.now()}`;
-    await page.getByTestId("push-body-input").fill(body);
-    await page.getByTestId("push-image-input").setInputFiles(pngPath);
-    await page.getByTestId("push-mode-immediate").check();
-    await page.getByTestId("push-create-submit").click();
-    await expect(page.getByTestId("push-list")).toContainText(body, { timeout: 30_000 });
+      const body = `P2 image push ${testInfo.project.name} ${Date.now()}`;
+      await page.getByTestId("push-body-input").fill(body);
+      await page.getByTestId("push-image-input").setInputFiles(pngPath);
+      await page.getByTestId("push-mode-immediate").check();
+      await page.getByTestId("push-create-submit").click();
+      await expect(page.getByTestId("push-list")).toContainText(body, { timeout: 30_000 });
 
-    const openLink = page.locator('[data-testid^="push-open-"]').filter({ hasText: "查看详情" }).first();
-    // Prefer the row that contains our body text
-    const row = page.locator("li").filter({ hasText: body }).first();
-    await row.getByText("查看详情").click();
-    await expect(page.getByTestId("push-detail")).toBeVisible();
-    await expect(page.getByTestId("push-detail-media-list")).toBeVisible({ timeout: 20_000 });
-    await assertNoHorizontalScroll(page);
-    const detailUrl = page.url();
+      const row = page.locator("li").filter({ hasText: body }).first();
+      await row.getByText("查看详情").click();
+      await expect(page.getByTestId("push-detail")).toBeVisible();
+      await assertImageReadable(page, "push-detail-media-list");
+      await assertNoHorizontalScroll(page);
+      const detailUrl = page.url();
 
-    await switchAccount(page, fixture.studentUsername, fixture.studentPassword);
-    await page.goto(detailUrl.replace(/\/parent\/students\/[^/]+/, "/student"));
-    // student detail path is /student/pushes/[pushId]
-    const pushId = detailUrl.split("/pushes/")[1]?.split(/[?#]/)[0];
-    expect(pushId).toBeTruthy();
-    await page.goto(`/student/pushes/${pushId}`);
-    await expect(page.getByTestId("student-push-detail")).toBeVisible();
-    await expect(page.getByTestId("student-push-media-list")).toBeVisible({ timeout: 20_000 });
+      await switchAccount(page, fixture.studentUsername, fixture.studentPassword);
+      const pushId = detailUrl.split("/pushes/")[1]?.split(/[?#]/)[0];
+      expect(pushId).toBeTruthy();
+      await page.goto(`/student/pushes/${pushId}`);
+      await expect(page.getByTestId("student-push-detail")).toBeVisible();
+      await assertImageReadable(page, "student-push-media-list");
 
-    await page.getByTestId("student-answer-image-input").setInputFiles(pngPath);
-    await page.getByTestId("student-answer-submit").click();
-    await expect(page.getByTestId("student-answer-current")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("student-answer-media-list")).toBeVisible({ timeout: 20_000 });
-    await assertNoHorizontalScroll(page);
+      await page.getByTestId("student-answer-image-input").setInputFiles(pngPath);
+      await page.getByTestId("student-answer-submit").click();
+      await expect(page.getByTestId("student-answer-current")).toBeVisible({ timeout: 30_000 });
+      await assertImageReadable(page, "student-answer-media-list");
+      await assertNoHorizontalScroll(page);
 
-    // Reject bad file on parent create
-    await switchAccount(page, fixture.parentEmail, fixture.parentPassword);
-    await page.goto(`/parent/students/${fixture.studentId}/pushes`);
-    await page.getByTestId("push-body-input").fill("should fail upload");
-    await page.getByTestId("push-image-input").setInputFiles(badPath);
-    await page.getByTestId("push-create-submit").click();
-    await expect(page.getByTestId("push-error")).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId("push-image-status")).toContainText(/失败|重试/);
+      // Reject bad file on parent create — recoverable error state
+      await switchAccount(page, fixture.parentEmail, fixture.parentPassword);
+      await page.goto(`/parent/students/${fixture.studentId}/pushes`);
+      await page.getByTestId("push-body-input").fill("should fail upload");
+      await page.getByTestId("push-image-input").setInputFiles(badPath);
+      await page.getByTestId("push-create-submit").click();
+      await expect(page.getByTestId("push-error")).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId("push-image-status")).toContainText(/失败|重试/);
+      await assertNoHorizontalScroll(page);
 
-    // Delete original push → ordinary read unavailable
-    await page.goto(`/parent/students/${fixture.studentId}/pushes/${pushId}`);
-    await expect(page.getByTestId("push-detail")).toBeVisible();
-    await page.getByTestId("push-delete").click();
-    await page.getByTestId("push-delete").click();
-    await expect(page).toHaveURL(new RegExp(`/parent/students/${fixture.studentId}/pushes$`));
+      // Delete original push → ordinary read unavailable; prior media capability unreadable
+      await page.goto(`/parent/students/${fixture.studentId}/pushes/${pushId}`);
+      await expect(page.getByTestId("push-detail")).toBeVisible();
+      await page.getByTestId("push-delete").click();
+      await page.getByTestId("push-delete").click();
+      await expect(page).toHaveURL(new RegExp(`/parent/students/${fixture.studentId}/pushes$`));
 
-    await page.goto(`/parent/students/${fixture.studentId}/pushes/${pushId}`);
-    await expect(page.getByTestId("push-detail-error")).toBeVisible();
-    await assertNoHorizontalScroll(page);
-
-    void openLink;
-    fs.unlinkSync(pngPath);
-    fs.unlinkSync(badPath);
+      await page.goto(`/parent/students/${fixture.studentId}/pushes/${pushId}`);
+      await expect(page.getByTestId("push-detail-error")).toBeVisible();
+      await expect(page.getByTestId("push-detail-media-list")).toHaveCount(0);
+      await assertNoHorizontalScroll(page);
+    } finally {
+      try {
+        fs.unlinkSync(pngPath);
+      } catch {
+        // already cleaned
+      }
+      try {
+        fs.unlinkSync(badPath);
+      } catch {
+        // already cleaned
+      }
+    }
   });
 });

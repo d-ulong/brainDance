@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import {
+  familyPushes,
   familyPushVersions,
   mediaObjects,
   mediaPurgeIntents,
@@ -17,6 +18,7 @@ import {
   type MediaPurpose,
   type MediaResourceType,
 } from "@/modules/family-content/constants";
+import { FamilyContentError } from "@/modules/family-content/errors";
 import { assertActorCanUseReadyMedia } from "@/modules/family-content/media-upload.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 
@@ -34,6 +36,67 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
+async function assertResourceChainMatches(
+  tx: Database,
+  input: {
+    resourceType: MediaResourceType;
+    resourceId: string;
+    purpose: MediaPurpose;
+    studentId: string;
+  },
+): Promise<void> {
+  if (input.resourceType === "family_push_version") {
+    if (input.purpose !== "push_image") {
+      throw new FamilyContentError("VALIDATION_ERROR", "Invalid media purpose for push");
+    }
+    const [version] = await tx
+      .select()
+      .from(familyPushVersions)
+      .where(eq(familyPushVersions.id, input.resourceId))
+      .limit(1);
+    if (!version) {
+      throw new FamilyContentError("NOT_FOUND", "Media resource not found");
+    }
+    const [push] = await tx
+      .select()
+      .from(familyPushes)
+      .where(eq(familyPushes.id, version.pushId))
+      .limit(1);
+    if (!push || push.studentId !== input.studentId) {
+      throw new FamilyContentError("FORBIDDEN", "Access denied");
+    }
+    return;
+  }
+
+  if (input.purpose !== "answer_image" && input.purpose !== "handwriting_image") {
+    throw new FamilyContentError("VALIDATION_ERROR", "Invalid media purpose for answer");
+  }
+  const [version] = await tx
+    .select()
+    .from(pushAnswerVersions)
+    .where(eq(pushAnswerVersions.id, input.resourceId))
+    .limit(1);
+  if (!version) {
+    throw new FamilyContentError("NOT_FOUND", "Media resource not found");
+  }
+  const [answer] = await tx
+    .select()
+    .from(pushAnswers)
+    .where(eq(pushAnswers.id, version.answerId))
+    .limit(1);
+  if (!answer || answer.studentId !== input.studentId) {
+    throw new FamilyContentError("FORBIDDEN", "Access denied");
+  }
+  const [push] = await tx
+    .select()
+    .from(familyPushes)
+    .where(eq(familyPushes.id, answer.pushId))
+    .limit(1);
+  if (!push || push.studentId !== input.studentId) {
+    throw new FamilyContentError("FORBIDDEN", "Access denied");
+  }
+}
+
 export async function attachReadyMediaToResource(
   tx: Database,
   input: {
@@ -47,12 +110,24 @@ export async function attachReadyMediaToResource(
   },
 ): Promise<typeof mediaReferences.$inferSelect> {
   const now = input.now ?? new Date();
+
+  await assertResourceChainMatches(tx, {
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    purpose: input.purpose,
+    studentId: input.studentId,
+  });
+
   const media = await assertActorCanUseReadyMedia(
     tx,
     input.mediaId,
     input.actorId,
     input.studentId,
   );
+
+  if (media.studentId !== input.studentId) {
+    throw new FamilyContentError("FORBIDDEN", "Access denied");
+  }
 
   const [ref] = await tx
     .insert(mediaReferences)
@@ -77,7 +152,7 @@ export async function attachReadyMediaToResource(
     })
     .where(eq(mediaObjects.id, media.id));
 
-  // Cancel pending purge intent when re-referenced.
+  // Cancel pending/prepared purge intent when re-referenced.
   await tx
     .update(mediaPurgeIntents)
     .set({
@@ -87,7 +162,10 @@ export async function attachReadyMediaToResource(
       lastErrorCategory: "cancelled_rereferenced",
     })
     .where(
-      and(eq(mediaPurgeIntents.mediaId, media.id), eq(mediaPurgeIntents.status, "pending")),
+      and(
+        eq(mediaPurgeIntents.mediaId, media.id),
+        sql`${mediaPurgeIntents.status} IN ('pending', 'prepared')`,
+      ),
     );
 
   return ref!;
@@ -109,6 +187,47 @@ export async function revokeCapabilitiesForReferenceInTx(
     )
     .returning({ id: mediaReadCapabilities.id });
   return result.length;
+}
+
+export async function scheduleMediaPhysicalPurgeInTx(
+  tx: Database,
+  input: {
+    mediaId: string;
+    purgeAfter: Date;
+    now: Date;
+  },
+): Promise<void> {
+  await tx
+    .insert(mediaPurgeIntents)
+    .values({
+      mediaId: input.mediaId,
+      status: "pending",
+      purgeAfter: input.purgeAfter,
+      createdAt: input.now,
+      updatedAt: input.now,
+    })
+    .onConflictDoUpdate({
+      target: [mediaPurgeIntents.mediaId],
+      set: {
+        status: "pending",
+        purgeAfter: input.purgeAfter,
+        completedAt: null,
+        lastErrorCategory: null,
+        updatedAt: input.now,
+      },
+    });
+
+  await appendOutboxEvent(tx, {
+    aggregateType: "media_object",
+    aggregateId: input.mediaId,
+    eventType: FAMILY_CONTENT_EVENT_TYPES.MEDIA_PURGE_REQUESTED,
+    dedupeKey: `family_media.purge_requested:${input.mediaId}:${input.purgeAfter.toISOString()}`,
+    availableAt: input.purgeAfter,
+    payload: {
+      mediaId: input.mediaId,
+      purgeAfter: input.purgeAfter.toISOString(),
+    },
+  });
 }
 
 export async function revokeMediaReferenceInTx(
@@ -138,6 +257,7 @@ export async function revokeMediaReferenceInTx(
     .set({ revokedAt: now })
     .where(eq(mediaReferences.id, ref.id));
 
+  // Ordinary revoke: capabilities + refs only. Physical objects stay until +90d purge.
   await revokeCapabilitiesForReferenceInTx(tx, ref.id, now);
 
   await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${ref.mediaId}::uuid FOR UPDATE`);
@@ -165,36 +285,10 @@ export async function revokeMediaReferenceInTx(
     .where(eq(mediaObjects.id, media.id));
 
   if (nextCount === 0 && purgeAfter) {
-    await tx
-      .insert(mediaPurgeIntents)
-      .values({
-        mediaId: media.id,
-        status: "pending",
-        purgeAfter,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [mediaPurgeIntents.mediaId],
-        set: {
-          status: "pending",
-          purgeAfter,
-          completedAt: null,
-          lastErrorCategory: null,
-          updatedAt: now,
-        },
-      });
-
-    await appendOutboxEvent(tx, {
-      aggregateType: "media_object",
-      aggregateId: media.id,
-      eventType: FAMILY_CONTENT_EVENT_TYPES.MEDIA_PURGE_REQUESTED,
-      dedupeKey: `family_media.purge_requested:${media.id}:${purgeAfter.toISOString()}`,
-      availableAt: purgeAfter,
-      payload: {
-        mediaId: media.id,
-        purgeAfter: purgeAfter.toISOString(),
-      },
+    await scheduleMediaPhysicalPurgeInTx(tx, {
+      mediaId: media.id,
+      purgeAfter,
+      now,
     });
   }
 
@@ -204,7 +298,7 @@ export async function revokeMediaReferenceInTx(
     resourceType: "media_reference",
     resourceId: ref.id,
     requestId: input.requestId ?? null,
-    idempotencyKey: `audit:media-ref-revoke:${ref.id}:${now.toISOString()}`,
+    idempotencyKey: `audit:media-ref-revoke:${ref.id}`,
     metadata: {
       mediaId: ref.mediaId,
       resourceType: ref.resourceType,
@@ -316,6 +410,10 @@ export async function revokeAllReferencesForAnswerInTx(
   return refs.length;
 }
 
+/**
+ * Account deletion / tombstone: revoke all refs+caps for student, mark media revoked,
+ * and schedule +90d physical purge intents/outbox in the same business TX.
+ */
 export async function revokeAllMediaForStudentInTx(
   tx: Database,
   studentId: string,
@@ -336,6 +434,38 @@ export async function revokeAllMediaForStudentInTx(
     .where(
       and(eq(mediaReadCapabilities.studentId, studentId), isNull(mediaReadCapabilities.revokedAt)),
     );
+
+  const medias = await tx
+    .select()
+    .from(mediaObjects)
+    .where(eq(mediaObjects.studentId, studentId));
+
+  for (const media of medias) {
+    if (media.status === "purged") {
+      continue;
+    }
+
+    const unreferencedAt = media.unreferencedAt ?? now;
+    const purgeAfter = media.purgeAfter ?? addDays(unreferencedAt, MEDIA_PURGE_DAYS);
+
+    await tx
+      .update(mediaObjects)
+      .set({
+        status: media.status === "rejected" ? "rejected" : "revoked",
+        revokedAt: media.revokedAt ?? now,
+        referenceCount: 0,
+        unreferencedAt,
+        purgeAfter,
+        updatedAt: now,
+      })
+      .where(eq(mediaObjects.id, media.id));
+
+    await scheduleMediaPhysicalPurgeInTx(tx, {
+      mediaId: media.id,
+      purgeAfter,
+      now,
+    });
+  }
 
   return refs.length;
 }

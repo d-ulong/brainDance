@@ -116,9 +116,10 @@ export function createMemoryMediaStore(): PrivateMediaStore & {
       const content = safe.get(key);
       return content ? Buffer.from(content) : null;
     },
-    async revokeSafe(key) {
-      assertSafeMediaKey(key);
-      safe.delete(key);
+    async revokeSafe(_key) {
+      // Ordinary revoke is DB-side (refs/capabilities/status). Physical objects
+      // remain until the +90 day purge lifecycle; never treat revoke as delete.
+      assertSafeMediaKey(_key);
     },
     async purgeSafe(key) {
       assertSafeMediaKey(key);
@@ -222,8 +223,8 @@ export function createFilesystemMediaStore(rootDir: string): PrivateMediaStore {
       return readIfFile(filePath);
     },
     async revokeSafe(key) {
-      const filePath = await resolvePath(key);
-      await deleteIfPresent(filePath);
+      // Ordinary revoke must not physically delete; lifecycle purge owns deletion.
+      assertSafeMediaKey(key);
     },
     async purgeSafe(key) {
       const filePath = await resolvePath(key);

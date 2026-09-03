@@ -181,6 +181,9 @@ export const mediaObjects = pgTable(
   "media_objects",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    studentId: uuid("student_id")
+      .notNull()
+      .references(() => users.id),
     uploaderId: uuid("uploader_id")
       .notNull()
       .references(() => users.id),
@@ -268,6 +271,7 @@ export const mediaObjects = pgTable(
     ),
     index("media_objects_status_purge_after_idx").on(table.status, table.purgeAfter),
     index("media_objects_uploader_id_idx").on(table.uploaderId),
+    index("media_objects_student_id_idx").on(table.studentId),
   ],
 );
 
@@ -329,7 +333,7 @@ export const mediaPurgeIntents = pgTable(
     unique("media_purge_intents_media_id_unique").on(table.mediaId),
     check(
       "media_purge_intents_status_check",
-      sql`${table.status} IN ('pending', 'completed', 'dead')`,
+      sql`${table.status} IN ('pending', 'prepared', 'completed', 'dead')`,
     ),
     check(
       "media_purge_intents_completed_check",

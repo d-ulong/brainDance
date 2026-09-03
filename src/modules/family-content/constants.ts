@@ -41,7 +41,7 @@ export type MediaResourceType = (typeof MEDIA_RESOURCE_TYPES)[number];
 export const MEDIA_PURPOSES = ["push_image", "answer_image", "handwriting_image"] as const;
 export type MediaPurpose = (typeof MEDIA_PURPOSES)[number];
 
-export const MEDIA_PURGE_INTENT_STATUSES = ["pending", "completed", "dead"] as const;
+export const MEDIA_PURGE_INTENT_STATUSES = ["pending", "prepared", "completed", "dead"] as const;
 export type MediaPurgeIntentStatus = (typeof MEDIA_PURGE_INTENT_STATUSES)[number];
 
 export const ALLOWED_MIMES = ["image/jpeg", "image/png", "image/webp"] as const;

@@ -4,6 +4,8 @@
 
 - Branch: `feat/m7-family-push-pilot`
 - Execution baseline SHA: `87b2b387dd629751257fa5c1b96af955e9cb410e`
+- Reviewed implementation SHA: `61926b4d8d37e27b7a4c247db9e2a31abfc10541`
+- Remediation baseline SHA: `1fe141cbac5b01b8d76c122c05124edb3758a417`
 - Scope: P2 only (controlled images + delete/restore); R-M7-05～06, AC-M7-05～06; evidence toward AC-M7-09
 - P1 state machine / text-link semantics: unchanged
 
@@ -11,87 +13,90 @@
 
 | P2-R | PRD R / AC | Delivery |
 |------|------------|----------|
-| P2-R01 | R-M7-05/06 | `0029_m7_family_media.sql`, `media_objects` / `media_references` / `media_purge_intents` / `media_read_capabilities`, `PrivateMediaStore` |
-| P2-R02 | R-M7-05, AC-M7-05 | magic/MIME/size, `MediaScanner` fail-closed, `sharp` re-encode, staging→promote |
-| P2-R03 | R-M7-05, AC-M7-05 | ready media on push/answer versions; short-TTL capability + real-time re-auth read |
-| P2-R04 | R-M7-06, AC-M7-06 | delete revoke refs/capabilities; zero-ref `purge_after=+90d`; outbox purge worker idempotent |
-| P2-R05 | R-M7-06, AC-M7-06 | `purgeFamilyContentBodiesForStudent` in deletion PURGE_BODIES; tombstone replay + canary |
-| P2-R06 | AC-M7-05/08 | multipart upload + capability/read routes; parent/student image UI; dual-viewport E2E |
+| P2-R01 | R-M7-05/06 | `0029_m7_family_media.sql` + `0030_m7_media_student_binding.sql`, `media_objects.student_id`, refs/intents/capabilities |
+| P2-R02 | R-M7-05, AC-M7-05 | Recoverable upload state machine; Content-Length gate; magic/MIME/size; scanner; sharp re-encode; staging→promote→finalize TX |
+| P2-R03 | R-M7-05, AC-M7-05 | ready media on push/answer; short-TTL capability; Identity epoch/role; full binding re-auth |
+| P2-R04 | R-M7-06, AC-M7-06 | Ordinary revoke = refs/caps only; `revokeSafe` no physical delete; +90d prepare→purge→finalize |
+| P2-R05 | R-M7-06, AC-M7-06 | Deletion revoke + purge intents/outbox; stable `family_content.purged` audit; canary proves no ready/refs/caps |
+| P2-R06 | AC-M7-05/08 | multipart upload + capability/read; dual-viewport E2E with readable images + finally cleanup |
+
+## Concentrated remediation mapping (P2-F01～F06)
+
+| Finding | Fix |
+|---------|-----|
+| **P2-F01** | `media_objects.student_id` FK + index; upload keys/DTO/payload include student; attach locks and verifies ready/uploader/`media.student_id`/resource chain/purpose |
+| **P2-F02** | Recoverable upload: staging/processing resume (never success replay); ready+audit in one short TX; promote-then-finalize compensable by idempotent retry; route `Content-Length` gate before `formData()` |
+| **P2-F03** | Purge `prepare` (short TX) → external idempotent delete → `finalize` (short TX); intent `prepared`/`pending` retry; `revokeSafe` is no-op for bytes |
+| **P2-F04** | Capability uses Identity `getParentOrStudentRole` / `getUserAuthorizationEpoch`; issue/read verify media/reference/student/actor/resource bindings |
+| **P2-F05** | Deletion schedules purge intents/outbox; audit key `audit:family-content-purge:{studentId}` (no wall clock); canary asserts no ready/active refs/live caps + revoke/cleanup state; tombstone replay idempotent |
+| **P2-F06** | Integration covers JPEG/PNG/WebP, malformed/truncated/scan/reencode/staging/promote, shared refs, 90d worker path, dead replay, revoke token, dual-parent/epoch; E2E asserts readable images + finally temp cleanup |
 
 ## Schema / invariants
 
-- `media_objects`: status staging|processing|ready|rejected|revoked|purged; ready requires clean scan + safe key + sha256 + ready_at; byte_size ≤ 10 MiB; `purge_after = unreferenced_at + 90 days`
+- `media_objects`: **`student_id` NOT NULL FK**; status staging|processing|ready|rejected|revoked|purged; ready requires clean scan + safe key + sha256 + ready_at; byte_size ≤ 10 MiB; `purge_after = unreferenced_at + 90 days`
 - `media_references`: unique (resource_type, resource_id, media_id); unique active (resource_type, resource_id, purpose)
-- `media_purge_intents`: unique media_id; pending|completed|dead
+- `media_purge_intents`: unique media_id; **pending|prepared|completed|dead**
 - `media_read_capabilities`: token_hash unique; binds media + reference + actor + student + authorization_epoch + TTL
-- Push/answer version content checks relaxed for media-only bodies (app enforces text|link|media)
 
-## Transaction / lock order
+## Upload & purge state machines / compensation / TX boundaries
 
 ### Upload
-1. Auth (parent linked / target student) + freeze
-2. Insert `media_objects` staging (idempotent uploader+key)
-3. `putStaging` → scan → re-encode → `promoteSafe`
-4. Mark ready + audit (`media.uploaded` metadata only)
+1. Auth + freeze; **reject oversized `Content-Length` before multipart materialization**
+2. Idempotency: ready → success replay; staging/processing → **resume pipeline**; rejected/revoked/purged → not success; payload mismatch → conflict
+3. External: putStaging → scan → reencode → promoteSafe (not inside DB TX)
+4. **Short TX finalize**: status=ready + metadata-only `media.uploaded` audit (same TX). Promote success + finalize failure leaves processing; identical key+payload retries re-promote (idempotent) and finalize
 
-### Attach (create/edit push / submit answer)
-1. Lock push / answer aggregate
-2. Insert version row
-3. Lock media `FOR UPDATE`; require ready + uploader match; insert reference; bump `reference_count`; cancel pending purge intent if re-referenced
-4. Audit/outbox (opaque ids, lengths, counts — never body/keys/tokens)
+### Attach
+1. Lock aggregate; insert version
+2. Lock media `FOR UPDATE`; require ready, not revoked, uploader=actor, **`media.student_id` = resource student**, purpose matches resource type/chain
+3. Insert reference; bump refcount; cancel pending/prepared purge; audit/outbox opaque ids only
 
-### Delete push
-1. Lock push → status deleted
-2. Revoke all push (+ answer) media references in same TX
-3. On refcount 0: set `unreferenced_at`/`purge_after`, upsert purge intent, outbox `family_media.purge_requested` with `availableAt=purge_after`
-4. Immediate capability revoke for those references
+### Ordinary revoke (push delete / ref revoke)
+1. Revoke reference + capabilities in command TX
+2. Zero-ref → set unreferenced_at / purge_after=+90d, upsert pending intent + outbox `availableAt=purge_after`
+3. **No physical delete**; `revokeSafe` does not remove bytes
 
 ### Purge worker
-1. Lock media; no-op success if purged / still referenced / missing
-2. If `purge_after > now` throw (retry until due)
-3. Purge safe+staging keys; status=purged; complete intent; audit `media.purged`
+1. **prepare** short TX: lock; due + zero-ref; revoke caps; intent=`prepared`; return keys
+2. **Outside TX**: idempotent `purgeSafe` / `purgeStaging`; any failure → intent pending + error category + throw (retry)
+3. **finalize** short TX: re-lock; mark purged; intent completed; `media.purged` audit. Finalize failure after physical delete → retryable pending; replay converges without restoring readability
+4. Lease expiry / dead replay / duplicate worker: idempotent no-op when already purged
 
 ### Account deletion / tombstone
-1. Data Lifecycle `PURGE_BODIES` → Family Content `purgeFamilyContentBodiesForStudent` (cancel scheduled, clear bodies, revoke media, mark pushes deleted)
-2. Tombstone replay re-runs same clear **before** projection rebuild
-3. Canary: no readable bodies, no active refs, no live capabilities
+1. Clear bodies; revoke all student refs/caps; mark student media revoked; schedule purge intents/outbox **in same business TX**
+2. Audit idempotency key stable (no `now`); outbox dedupe stable per media+purgeAfter
+3. Canary: empty bodies, no active refs, no live caps, no ready media, remaining objects in revoked/rejected/purged with purge intent
 
 ## Media threat matrix
 
 | Threat | Control |
 |--------|---------|
 | Wrong/declared MIME | magic bytes must match declared allowlist |
-| Oversize | hard 10 MiB before staging |
+| Oversize | Content-Length gate before formData + hard 10 MiB |
 | Truncated / decode bomb | sharp full decode + `limitInputPixels` + dimension caps |
-| Malware / unscanned | injectable `MediaScanner`; production default fail-closed (`scanner_not_configured`) |
+| Malware / unscanned | injectable `MediaScanner`; production default fail-closed |
 | Raw upload readable | staging never capability-readable; only promoted safe object |
+| Cross-student reuse | authoritative `student_id` + attach lock checks |
 | Path traversal | `assertSafeMediaKey` + root-relative resolve |
-| Permanent URL / key leak | DTO returns media/reference ids only; capability short TTL; audit/outbox exclude keys/tokens/filenames/bytes |
-| Stale capability | re-check epoch, freeze, relationship/resource, ref active, media ready on every read |
-| Premature purge | Worker gates on `purge_after`, zero refs; re-reference cancels pending intent |
-
-## Delete order
-
-1. Ordinary read revoke (capabilities + refs) in same command TX as push delete / account purge
-2. Zero-ref → schedule physical purge at +90 days
-3. Worker physical purge after due; idempotent on replay
-4. Account deletion clears M7 bodies then media; tombstone replay repeats clears before rebuild
+| Permanent URL / key leak | DTO ids only; capability TTL; audit/outbox exclude keys/tokens/filenames/bytes |
+| Stale capability | re-check epoch (Identity), freeze, relationship/resource, ref active, media ready+bindings |
+| Premature physical delete | revoke ≠ purge; Worker gates on purge_after + zero refs |
+| TX/object store split-brain | prepare/physical/finalize; compensate finalize failures |
 
 ## Key files
 
-- Migration/schema: `src/db/migrations/0029_m7_family_media.sql`, `src/db/schema/family-content.ts`
-- Store/scanner: `private-media-store.ts`, `media-scanner.ts`, `route-media-stores.ts`
+- Migration/schema: `0029_m7_family_media.sql`, **`0030_m7_media_student_binding.sql`**, `src/db/schema/family-content.ts`
+- Store/scanner: `private-media-store.ts` (`revokeSafe` no physical delete), `media-scanner.ts`, `route-media-stores.ts`
 - Pipeline: `media-validate.ts`, `media-reencode.ts`, `media-upload.service.ts`
 - Refs/capability/purge: `media-reference.service.ts`, `media-capability.service.ts`, `media-purge.service.ts`
-- Deletion: `account-deletion.service.ts` + hooks in `deletion-request.service.ts` / `tombstone-replay.service.ts`
-- Routes: `/api/family/students/[studentId]/media`, `.../references/[referenceId]/capability`, `/api/media/read`
-- UI: parent/student push pages + `MediaPreviewList`
+- Identity boundary: `src/modules/identity/user-role.service.ts` (`getUserAuthorizationEpoch`)
+- Deletion: `account-deletion.service.ts`
+- Routes: media upload (Content-Length gate), capability, `/api/media/read`
 - Tests: `tests/integration/family-content/family-media.test.ts`, `tests/e2e/m7-family-push-media.spec.ts`
 
 ## Dependency
 
-- Added direct dependency **`sharp`** only — required for reliable decode/re-encode; no vendor SDKs.
-- Lockfile: `pnpm-lock.yaml` updated accordingly.
+- Direct dependency **`sharp`** only — no vendor SDKs. Lockfile unchanged in this remediation.
 
 ## Deferred (production blockers — unchanged)
 
@@ -100,14 +105,14 @@
 - Real production media drill / ops runbook
 - Full AC-M7-09 suite (full test/typecheck/lint/format/build/complete dual-viewport) deferred to P2 sign-off / merge gate
 
-## Verification command log
+## Verification command log (remediation)
 
 | Command | Result |
 |---------|--------|
-| `pnpm db:migrate` | exit 0 — Migrations complete (0029 applied) |
-| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **4/4 passed** |
-| `pnpm test -- tests/integration/family-content/family-content.test.ts` | exit 0 — **11/11 passed** (P1 regression) |
-| `pnpm build` | exit 0 — required to run `next start` E2E webServer |
+| `pnpm db:migrate` | exit 0 — Migrations complete (**0030** applied) |
+| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **7/7 passed** |
+| `pnpm build` | exit 0 — prerequisite only for `next start` E2E webServer (not claimed as sign-off evidence) |
 | `pnpm exec playwright test tests/e2e/m7-family-push-media.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — **2/2 passed** |
+| `git diff --check` | clean |
 
 Not run (deferred to sign-off/merge per directive): full test suite, typecheck, lint, format, full dual-viewport E2E beyond P2 media spec.

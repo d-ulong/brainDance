@@ -8,7 +8,6 @@ import {
   mediaReferences,
   pushAnswerVersions,
   pushAnswers,
-  users,
 } from "@/db/schema";
 import { generateMediaCapabilityToken, hashMediaCapabilityToken } from "@/lib/crypto";
 import {
@@ -19,17 +18,21 @@ import {
 import { MEDIA_READ_TTL_MS } from "@/modules/family-content/constants";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import type { PrivateMediaStore } from "@/modules/family-content/private-media-store";
+import {
+  getParentOrStudentRole,
+  getUserAuthorizationEpoch,
+} from "@/modules/identity/user-role.service";
+import { IdentityError } from "@/modules/identity/errors";
 
 async function loadStudentAuthorizationEpoch(db: Database, studentId: string): Promise<number> {
-  const [row] = await db
-    .select({ authorizationEpoch: users.authorizationEpoch })
-    .from(users)
-    .where(eq(users.id, studentId))
-    .limit(1);
-  if (!row) {
-    throw new FamilyContentError("NOT_FOUND", "Media not found");
+  try {
+    return await getUserAuthorizationEpoch(db, studentId);
+  } catch (error) {
+    if (error instanceof IdentityError) {
+      throw new FamilyContentError("NOT_FOUND", "Media not found");
+    }
+    throw error;
   }
-  return row.authorizationEpoch;
 }
 
 async function assertReferenceReadable(
@@ -52,6 +55,9 @@ async function assertReferenceReadable(
       throw new FamilyContentError("NOT_FOUND", "Media not found");
     }
     const push = await loadPushOrThrow(db, version.pushId);
+    if (push.studentId !== input.reference.studentId) {
+      throw new FamilyContentError("NOT_FOUND", "Media not found");
+    }
     await assertCanAccessPush(db, {
       actorId: input.actorId,
       actorRole: input.actorRole,
@@ -73,15 +79,37 @@ async function assertReferenceReadable(
     .from(pushAnswers)
     .where(eq(pushAnswers.id, version.answerId))
     .limit(1);
-  if (!answer) {
+  if (!answer || answer.studentId !== input.reference.studentId) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
   const push = await loadPushOrThrow(db, answer.pushId);
+  if (push.studentId !== input.reference.studentId) {
+    throw new FamilyContentError("NOT_FOUND", "Media not found");
+  }
   await assertCanAccessPush(db, {
     actorId: input.actorId,
     actorRole: input.actorRole,
     push,
   });
+}
+
+function assertCapabilityBindings(input: {
+  capability: typeof mediaReadCapabilities.$inferSelect;
+  reference: typeof mediaReferences.$inferSelect;
+  media: typeof mediaObjects.$inferSelect;
+}): void {
+  const { capability, reference, media } = input;
+  if (
+    capability.mediaId !== reference.mediaId ||
+    capability.referenceId !== reference.id ||
+    capability.studentId !== reference.studentId ||
+    capability.mediaId !== media.id ||
+    reference.mediaId !== media.id ||
+    media.studentId !== reference.studentId ||
+    media.studentId !== capability.studentId
+  ) {
+    throw new FamilyContentError("NOT_FOUND", "Media not found");
+  }
 }
 
 export async function issueMediaReadCapability(
@@ -109,7 +137,13 @@ export async function issueMediaReadCapability(
     .from(mediaObjects)
     .where(eq(mediaObjects.id, reference.mediaId))
     .limit(1);
-  if (!media || media.status !== "ready" || !media.safeObjectKey) {
+  if (
+    !media ||
+    media.status !== "ready" ||
+    !media.safeObjectKey ||
+    media.studentId !== reference.studentId ||
+    media.revokedAt
+  ) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
 
@@ -186,23 +220,25 @@ export async function readMediaWithCapability(
     .from(mediaObjects)
     .where(eq(mediaObjects.id, capability.mediaId))
     .limit(1);
-  if (!media || media.status !== "ready" || !media.safeObjectKey) {
+  if (!media || media.status !== "ready" || !media.safeObjectKey || media.revokedAt) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
 
-  // Re-auth: resolve actor role from users and check resource access.
-  const [actor] = await db
-    .select({ role: users.role })
-    .from(users)
-    .where(eq(users.id, capability.actorId))
-    .limit(1);
-  if (!actor || (actor.role !== "parent" && actor.role !== "student")) {
-    throw new FamilyContentError("NOT_FOUND", "Media not found");
+  assertCapabilityBindings({ capability, reference, media });
+
+  let actorRole: "parent" | "student";
+  try {
+    actorRole = await getParentOrStudentRole(db, capability.actorId);
+  } catch (error) {
+    if (error instanceof IdentityError) {
+      throw new FamilyContentError("NOT_FOUND", "Media not found");
+    }
+    throw error;
   }
 
   await assertReferenceReadable(db, {
     actorId: capability.actorId,
-    actorRole: actor.role,
+    actorRole,
     reference,
   });
 

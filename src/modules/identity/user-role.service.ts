@@ -22,6 +22,19 @@ export async function getParentOrStudentRole(
   return user.role;
 }
 
+/** Read authorization epoch for capability binding / re-auth without exposing users rows. */
+export async function getUserAuthorizationEpoch(db: Database, userId: string): Promise<number> {
+  const [user] = await db
+    .select({ authorizationEpoch: users.authorizationEpoch })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!user) {
+    throw new IdentityError("USER_NOT_FOUND", "User not found");
+  }
+  return user.authorizationEpoch;
+}
+
 /** Serialize concurrent writes that need a stable per-user lock row. */
 export async function lockUserRowForUpdate(db: Database, userId: string): Promise<void> {
   await db.execute(sql`SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`);

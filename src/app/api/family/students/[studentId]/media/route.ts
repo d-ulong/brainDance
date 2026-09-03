@@ -15,9 +15,31 @@ import { ALLOWED_MIMES, MAX_MEDIA_BYTES } from "@/modules/family-content/constan
 
 const declaredMimeSchema = z.enum(ALLOWED_MIMES);
 
+/** Multipart framing overhead above the raw 10 MiB file budget. */
+const MULTIPART_OVERHEAD_BYTES = 256 * 1024;
+
 type RouteContext = {
   params: Promise<{ studentId: string }>;
 };
+
+/**
+ * Enforce request body size before Next.js materializes the full multipart payload.
+ * Content-Length is required so chunked unbounded uploads cannot bypass the limit.
+ * Rejection responses must not echo filename, bytes, or tokens.
+ */
+function assertRequestBodyWithinLimit(request: Request): void {
+  const raw = request.headers.get("content-length");
+  if (raw == null || raw.trim() === "") {
+    throw new FamilyContentError("VALIDATION_ERROR", "Content-Length required");
+  }
+  const length = Number(raw);
+  if (!Number.isFinite(length) || length < 0 || !Number.isInteger(length)) {
+    throw new FamilyContentError("VALIDATION_ERROR", "Invalid Content-Length");
+  }
+  if (length > MAX_MEDIA_BYTES + MULTIPART_OVERHEAD_BYTES) {
+    throw new FamilyContentError("VALIDATION_ERROR", "Media exceeds 10 MiB limit");
+  }
+}
 
 export async function POST(request: Request, context: RouteContext) {
   const idempotency = requireIdempotencyKey(request);
@@ -39,6 +61,8 @@ export async function POST(request: Request, context: RouteContext) {
       throw new FamilyContentError("VALIDATION_ERROR", "Expected multipart upload");
     }
 
+    assertRequestBodyWithinLimit(request);
+
     const form = await request.formData();
     const file = form.get("file");
     const declaredRaw = form.get("declaredMime");
@@ -50,6 +74,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     const declaredMime = declaredMimeSchema.parse(declaredRaw.trim().toLowerCase());
 
+    // Defense in depth after early Content-Length gate.
     if (file.size > MAX_MEDIA_BYTES) {
       throw new FamilyContentError("VALIDATION_ERROR", "Media exceeds 10 MiB limit");
     }
