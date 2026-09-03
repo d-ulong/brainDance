@@ -4,10 +4,12 @@
 
 - Active task: `.trellis/tasks/09-02-m7-family-push-pilot`
 - Directive: `research/p2-architecture-rework-directive.md`
+- Seal correction directive: `research/p2-seal-correction-directive.md`
 - Branch: `feat/m7-family-push-pilot`
-- Execution baseline SHA: `3df50b370e4753dd432c804474c32b602ead660b`
-- Reworked NO-GO commit (context only): `db0e9dbb96af4483a61ff8ff5017f635741c1f08`
-- Scope: rebuild MediaPurge / MediaUpload test seams / MediaMigrationGate evidence only
+- Execution baseline SHA (seal correction): `494fb564945ec7322d450e66aeba5633f3c47053`
+- Corrected implementation SHA (pre-seal): `4b0421c0b925f4a6253f5bf86a3f99edbc1a0975`
+- Prior rework baseline (context only): `3df50b370e4753dd432c804474c32b602ead660b`
+- Scope: MediaPurge fail-closed, MediaUpload single-flight, MediaMigrationGate pre-migrate orchestration, focused evidence corrections
 
 ## AR-01 MediaPurge fail-closed
 
@@ -24,14 +26,14 @@
 3. Attach may cancel only `pending` intents before ownership; prepared/purging blocks attach/capability reopen.
 4. Stale finalize without ownership is a no-op; never restores readable state.
 
-### Failure matrix (tested)
+### Failure matrix (SC-03 — four independent objects)
 
-| Case | Mid-state | After retry |
+| Independent case | Mid-state | After same-generation retry |
 |------|-----------|-------------|
-| throw-before-delete (`purgeSafe`) | purging + prepared + owned_generation; attach rejected | purged; audit=1; zero active refs |
-| delete-before-throw (`purgeSafe`) | bytes may be gone; still purging/prepared; attach rejected | purged; audit=1 |
-| safe ok / staging fail | safe gone; staging error category; ownership held | purged |
-| physical ok / finalize fail (DB trigger) | objects gone; `finalize_failed`; ownership held | purged; audit=1 |
+| `purgeSafe` throw-before-delete | purging + prepared + owned_generation; attach rejected; capabilities unreadable | purged + completed; audit=1; refs=0; live caps=0; objects gone |
+| `purgeSafe` delete-before-throw | bytes may be gone; still purging/prepared; attach rejected | purged + completed; audit=1; replay stable |
+| safe ok / staging fail | safe gone; staging error category; ownership held | purged + completed; audit=1 |
+| physical ok / finalize fail | objects gone; `finalize_failed`; ownership held | purged + completed; audit=1 |
 
 ## AR-02 MediaMigrationGate
 
@@ -52,10 +54,11 @@ Result: `0029`/`0030`/`0031` are **absent** from `main` and from all release tag
 ### Gate interface
 
 - Module: `src/db/media-migration-gate.ts`
+- Orchestration: `src/db/run-migrations-with-media-gate.ts` (production entry via `scripts/migrate.ts`)
 - `assertMediaMigrationCompatibility(client)` compares applied `drizzle.__drizzle_migrations.hash` (by journal `when`) to current SQL SHA-256 (same algorithm as drizzle-orm).
+- **SC-01**: gate runs **before** `migrate()`; optional post-check remains after migrate; `try/finally` always closes the connection.
 - On mismatch: `MediaMigrationCompatibilityError` with explicit “rebuild non-production development database” guidance.
 - Does **not** drop/reset/TRUNCATE user databases; does **not** claim revised SQL re-executed.
-- Wired into `scripts/migrate.ts` after `migrate()`.
 
 ### Upgrade / compatibility tests
 
@@ -64,7 +67,8 @@ Result: `0029`/`0030`/`0031` are **absent** from `main` and from all release tag
 | Git evidence: 0029–0031 absent from main/tags | pass |
 | Fresh install through 0031 | pass |
 | `main` tip (`0027`) → branch final schema once | pass |
-| Recorded old `0030` (dd7b350 DELETE SQL) → checksum mismatch; migrate skips revised SQL; gate fails closed | pass |
+| Recorded old `0030` checksum → gate fails; drizzle skip of revised SQL observed | pass |
+| **SC-01** production orchestration with old `0030` checksum → fails before mutate; `0031` columns/constraints/ledger absent | pass (seal correction) |
 
 ## AR-03 Test seams (no production hooks)
 
@@ -82,20 +86,27 @@ Replacement (tests only, cleaned in `finally` / `afterEach`):
 
 Tests still call the same production module entrypoints (`uploadFamilyMedia`, `handleMediaPurgeRequestedV1`, `purgeFamilyContentBodiesForStudent`).
 
-## AR-04 Non-vacuous evidence
+## AR-04 Non-vacuous evidence (corrected)
 
 - Pixel bomb: fixture creation failure fails the test; upload path runs and leaves `rejected` + `scanErrorCategory=reencode_failed`.
-- Concurrent same-key upload: barrier + assertion of single ready row / single mediaId; rejected side (if any) has definite `FamilyContentError` codes.
+- **SC-02** Concurrent same-key/same-payload upload: independent connections + barrier; both calls return the same ready mediaId; exactly one created + one idempotent replay; one media row; one `media.uploaded` audit. Does **not** accept `MEDIA_UNAVAILABLE` / `MEDIA_REJECTED` / “at least one success”.
 - Concurrent different payload same key: exactly one success + one `IDEMPOTENCY_CONFLICT` + one ready row.
 - Concurrent duplicate attach: independent transactions + barrier; one success, one definite unique/`FamilyContentError`; `referenceCount=1`; one active purpose ref.
+- Upload single-flight: `pg_advisory_lock(hashtext(media.upload:{actor}:{key}))` on a dedicated connection around claim/pipeline so concurrent same-key work converges.
 
-## Changed files
+## Seal correction (SC-01～SC-03)
 
-- `src/modules/family-content/media-purge.service.ts`
-- `src/modules/family-content/media-upload.service.ts`
-- `src/modules/family-content/account-deletion.service.ts`
-- `src/db/media-migration-gate.ts` (new)
+| ID | Change | Evidence |
+|----|--------|----------|
+| SC-01 | `runMigrationsWithMediaCompatibilityGate` gates before `migrate()`; connection closed in `finally` | `src/db/run-migrations-with-media-gate.ts`, `scripts/migrate.ts`, test `SC-01: production migrate orchestration…` |
+| SC-02 | Upload idempotency advisory lock + strict concurrent assertions | `media-upload.service.ts`, concurrent block in `family-media.test.ts` |
+| SC-03 | Four independent purge failure `it`s with mid-state/capability/retry/audit/replay matrix | `SC-03:*` tests in `family-media.test.ts` |
+
+## Changed files (seal correction)
+
+- `src/db/run-migrations-with-media-gate.ts` (new)
 - `scripts/migrate.ts`
+- `src/modules/family-content/media-upload.service.ts`
 - `tests/integration/family-content/family-media.test.ts`
 - `tests/integration/migrations/m7-media-student-binding.test.ts`
 - `research/p2-architecture-rework-record.md` (this file)
@@ -104,18 +115,15 @@ Tests still call the same production module entrypoints (`uploadFamilyMedia`, `h
 
 | Command | Result |
 |---------|--------|
-| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **8/8 passed** |
-| `pnpm test -- tests/integration/migrations/m7-media-student-binding.test.ts` | exit 0 — **7/7 passed** |
-| `pnpm build` | exit 0 — **E2E prerequisite only** (not claimed as sign-off evidence) |
-| `pnpm exec playwright test tests/e2e/m7-family-push-media.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — **2/2 passed** |
+| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **12/12 passed** |
+| `pnpm test -- tests/integration/migrations/m7-media-student-binding.test.ts` | exit 0 — **8/8 passed** (includes SC-01 orchestration) |
 | `git diff --check` | clean |
 
-### Not run (per directive)
+### Not run (per seal-correction directive)
 
 - Full test suite
-- typecheck
-- lint
-- format
-- Full dual-viewport E2E beyond P2 media spec
+- typecheck / lint / format / build
+- P2 E2E (previously green and unaffected)
 - Automatic drop/reset of user databases
 - Migration renumber/merge/delete
+- Milestone gate

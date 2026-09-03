@@ -19,6 +19,7 @@ import {
   MediaMigrationCompatibilityError,
   M7_MEDIA_PRE_RELEASE_TAGS,
 } from "@/db/media-migration-gate";
+import { runMigrationsWithMediaCompatibilityGate } from "@/db/run-migrations-with-media-gate";
 import {
   adminDatabaseUrl,
   closeIsolatedM2Database,
@@ -440,6 +441,79 @@ describe.skipIf(!hasDb)("m7 media student binding migration (0030)", () => {
       await expect(assertMediaMigrationCompatibility(client)).rejects.toBeInstanceOf(
         MediaMigrationCompatibilityError,
       );
+    } finally {
+      await disposeIsolatedM2DatabaseResources({ admin, dbName, client });
+    }
+  }, 180_000);
+
+  it("SC-01: production migrate orchestration gates before migrate and leaves 0031 unapplied", async () => {
+    const rootUrl = process.env.DATABASE_URL!;
+    const dbName = `bd_m7_gateord_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
+    const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
+    let client: ReturnType<typeof postgres> | undefined;
+    try {
+      await admin.unsafe(`CREATE DATABASE "${dbName}"`);
+      const databaseUrl = databaseUrlForName(rootUrl, dbName);
+      await migrateThroughTag(databaseUrl, "0029_m7_family_media");
+      client = postgres(databaseUrl, { max: 1 });
+
+      await client.unsafe(toExecutableSql(loadOld0030SqlFromGit()));
+      const oldHash = hashMigrationSql(loadOld0030SqlFromGit());
+      const entry0030 = findJournalEntry("0030_m7_media_student_binding");
+      const entry0031 = findJournalEntry("0031_m7_media_purge_fencing");
+      await client`
+        INSERT INTO drizzle.__drizzle_migrations ("hash", "created_at")
+        VALUES (${oldHash}, ${entry0030.when})
+      `;
+
+      await expect(
+        runMigrationsWithMediaCompatibilityGate({ connectionString: databaseUrl }),
+      ).rejects.toBeInstanceOf(MediaMigrationCompatibilityError);
+
+      const purgeGenerationCols = await client`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'media_objects' AND column_name = 'purge_generation'
+      `;
+      expect(purgeGenerationCols).toHaveLength(0);
+
+      const ownedGenerationCols = await client`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'media_purge_intents' AND column_name = 'owned_generation'
+      `;
+      expect(ownedGenerationCols).toHaveLength(0);
+
+      const statusCheck = await client`
+        SELECT pg_get_constraintdef(oid) AS def
+        FROM pg_constraint
+        WHERE conname = 'media_objects_status_check'
+      `;
+      // 0031 adds `purging` to the status check; pre-0031 already allows `purged`.
+      expect(String(statusCheck[0]?.def ?? "")).not.toMatch(/purging/);
+      expect(String(statusCheck[0]?.def ?? "")).toMatch(/purged/);
+
+      const ownedGenCheck = await client`
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'media_purge_intents_owned_generation_check'
+      `;
+      expect(ownedGenCheck).toHaveLength(0);
+
+      const ledger0031 = await client`
+        SELECT hash
+        FROM drizzle.__drizzle_migrations
+        WHERE created_at = ${entry0031.when}
+      `;
+      expect(ledger0031).toHaveLength(0);
+
+      const ledger0030 = await client`
+        SELECT hash
+        FROM drizzle.__drizzle_migrations
+        WHERE created_at = ${entry0030.when}
+      `;
+      expect(ledger0030).toHaveLength(1);
+      expect(ledger0030[0]?.hash).toBe(oldHash);
     } finally {
       await disposeIsolatedM2DatabaseResources({ admin, dbName, client });
     }
