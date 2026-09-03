@@ -29,6 +29,12 @@ P1 验证：migration、family-content、family-access、freeze、outbox、audit
 
 P2 验证：migration、媒体安全、删除/恢复、全量 test、typecheck、lint、format、build、完整双视口 E2E。
 
+### P2 终局复验与架构返工
+
+- P2 提交 `db0e9dbb96af4483a61ff8ff5017f635741c1f08` 终局复验为 NO-GO，原 P2 补丁轮次冻结，禁止合入 `main`。
+- 唯一恢复路径为 `research/p2-architecture-rework-directive.md`：重建 purge 不确定性、未发布 migration gate、测试 seam 与不可空跑证据。
+- 架构返工只审核一次；若仍有 P1 阻断项，则终止 M7 媒体范围并回退至 P1 可交付边界，不继续追加整改轮次。
+
 ## 审核与回滚点
 
 - 每个阶段只允许一个聚焦业务提交；Cursor 只能声明“已交审核”。
