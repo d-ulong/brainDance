@@ -152,7 +152,8 @@ export async function attachReadyMediaToResource(
     })
     .where(eq(mediaObjects.id, media.id));
 
-  // Cancel pending/prepared purge intent when re-referenced.
+  // Cancel pending purge intent only when physical purge has not taken ownership.
+  // prepared/purging ownership blocks attach via assertMediaReadyForAttach.
   await tx
     .update(mediaPurgeIntents)
     .set({
@@ -160,11 +161,12 @@ export async function attachReadyMediaToResource(
       completedAt: now,
       updatedAt: now,
       lastErrorCategory: "cancelled_rereferenced",
+      ownedGeneration: null,
     })
     .where(
       and(
         eq(mediaPurgeIntents.mediaId, media.id),
-        sql`${mediaPurgeIntents.status} IN ('pending', 'prepared')`,
+        eq(mediaPurgeIntents.status, "pending"),
       ),
     );
 
@@ -213,6 +215,7 @@ export async function scheduleMediaPhysicalPurgeInTx(
         purgeAfter: input.purgeAfter,
         completedAt: null,
         lastErrorCategory: null,
+        ownedGeneration: null,
         updatedAt: input.now,
       },
     });

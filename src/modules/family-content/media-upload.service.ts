@@ -46,6 +46,17 @@ export type UploadMediaInput = {
   scanner: MediaScanner;
 };
 
+type FinalizeFailureHook = (mediaId: string) => Promise<void> | void;
+
+/** TEST ONLY — injects a throw inside the finalize TX after promote. */
+let finalizeFailureHookForTest: FinalizeFailureHook | null = null;
+
+export function setMediaUploadFinalizeFailureHookForTest(
+  hook: FinalizeFailureHook | null,
+): void {
+  finalizeFailureHookForTest = hook;
+}
+
 function toMediaDto(row: typeof mediaObjects.$inferSelect): MediaObjectDto {
   return {
     mediaId: row.id,
@@ -127,6 +138,30 @@ async function markRejected(
   }
 }
 
+/** Transient infra failures stay recoverable under staging/processing. */
+async function markRecoverableFailure(
+  db: Database,
+  mediaId: string,
+  status: "staging" | "processing",
+  category: string,
+  now: Date,
+): Promise<void> {
+  await db
+    .update(mediaObjects)
+    .set({
+      status,
+      scanResult: "error",
+      scanErrorCategory: category,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(mediaObjects.id, mediaId),
+        sql`${mediaObjects.status} IN ('staging', 'processing')`,
+      ),
+    );
+}
+
 async function finalizeReadyInShortTx(
   db: Database,
   input: {
@@ -166,6 +201,10 @@ async function finalizeReadyInShortTx(
 
     if (current.status !== "staging" && current.status !== "processing") {
       throw new FamilyContentError("MEDIA_REJECTED", "Media is not recoverable for finalize");
+    }
+
+    if (finalizeFailureHookForTest) {
+      await finalizeFailureHookForTest(input.mediaId);
     }
 
     const [ready] = await tx
@@ -222,12 +261,10 @@ async function runUploadPipeline(
   try {
     await input.mediaStore.putStaging(stagingKey, input.bytes);
   } catch {
-    await markRejected(
+    await markRecoverableFailure(
       db,
-      input.mediaStore,
       media.id,
-      stagingKey,
-      "error",
+      "staging",
       "staging_write_failed",
       new Date(),
     );
@@ -236,7 +273,7 @@ async function runUploadPipeline(
 
   await db
     .update(mediaObjects)
-    .set({ status: "processing", updatedAt: new Date() })
+    .set({ status: "processing", updatedAt: new Date(), scanErrorCategory: null })
     .where(
       and(
         eq(mediaObjects.id, media.id),
@@ -245,17 +282,27 @@ async function runUploadPipeline(
     );
 
   const scan = await input.scanner.scan(input.bytes, declaredMime);
-  if (scan.outcome !== "clean") {
+  if (scan.outcome === "rejected") {
     await markRejected(
       db,
       input.mediaStore,
       media.id,
       stagingKey,
-      scan.outcome === "rejected" ? "rejected" : "error",
+      "rejected",
       scan.category,
       new Date(),
     );
     throw new FamilyContentError("MEDIA_REJECTED", "Media scan rejected upload");
+  }
+  if (scan.outcome === "error") {
+    await markRecoverableFailure(
+      db,
+      media.id,
+      "processing",
+      scan.category,
+      new Date(),
+    );
+    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Media scan temporarily unavailable");
   }
 
   let reencoded;
@@ -280,15 +327,7 @@ async function runUploadPipeline(
   try {
     await input.mediaStore.promoteSafe(stagingKey, safeKey, reencoded.bytes);
   } catch {
-    await markRejected(
-      db,
-      input.mediaStore,
-      media.id,
-      stagingKey,
-      "error",
-      "promote_failed",
-      new Date(),
-    );
+    await markRecoverableFailure(db, media.id, "processing", "promote_failed", new Date());
     throw new FamilyContentError("MEDIA_UNAVAILABLE", "Failed to promote safe object");
   }
 
@@ -363,7 +402,8 @@ export async function uploadFamilyMedia(
     if (
       existing.status === "rejected" ||
       existing.status === "revoked" ||
-      existing.status === "purged"
+      existing.status === "purged" ||
+      existing.status === "purging"
     ) {
       throw new FamilyContentError("MEDIA_REJECTED", "Media upload previously rejected");
     }
@@ -429,7 +469,8 @@ export async function uploadFamilyMedia(
     if (
       inserted.row.status === "rejected" ||
       inserted.row.status === "revoked" ||
-      inserted.row.status === "purged"
+      inserted.row.status === "purged" ||
+      inserted.row.status === "purging"
     ) {
       throw new FamilyContentError("MEDIA_REJECTED", "Media upload previously rejected");
     }

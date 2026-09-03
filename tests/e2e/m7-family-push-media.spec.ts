@@ -88,9 +88,27 @@ test.describe("M7 family push P2 AC-M7-05 media matrix", () => {
       await expect(page.getByTestId("push-image-status")).toContainText(/失败|重试/);
       await assertNoHorizontalScroll(page);
 
-      // Delete original push → ordinary read unavailable; prior media capability unreadable
+      // Capture a live capability token before delete, then prove it cannot read after delete
+      const capabilityResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/media/references/") &&
+          response.url().includes("/capability") &&
+          response.request().method() === "POST" &&
+          response.ok(),
+      );
       await page.goto(`/parent/students/${fixture.studentId}/pushes/${pushId}`);
       await expect(page.getByTestId("push-detail")).toBeVisible();
+      await assertImageReadable(page, "push-detail-media-list");
+      const capabilityResponse = await capabilityResponsePromise;
+      const capabilityJson = (await capabilityResponse.json()) as { capabilityToken?: string };
+      expect(capabilityJson.capabilityToken).toBeTruthy();
+      const savedCapabilityToken = capabilityJson.capabilityToken!;
+
+      const preDeleteRead = await page.request.post("/api/media/read", {
+        data: { capabilityToken: savedCapabilityToken },
+      });
+      expect(preDeleteRead.ok()).toBe(true);
+
       await page.getByTestId("push-delete").click();
       await page.getByTestId("push-delete").click();
       await expect(page).toHaveURL(new RegExp(`/parent/students/${fixture.studentId}/pushes$`));
@@ -99,6 +117,12 @@ test.describe("M7 family push P2 AC-M7-05 media matrix", () => {
       await expect(page.getByTestId("push-detail-error")).toBeVisible();
       await expect(page.getByTestId("push-detail-media-list")).toHaveCount(0);
       await assertNoHorizontalScroll(page);
+
+      const postDeleteRead = await page.request.post("/api/media/read", {
+        data: { capabilityToken: savedCapabilityToken },
+      });
+      expect(postDeleteRead.ok()).toBe(false);
+      expect(postDeleteRead.status()).toBeGreaterThanOrEqual(400);
     } finally {
       try {
         fs.unlinkSync(pngPath);

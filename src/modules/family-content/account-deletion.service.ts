@@ -16,6 +16,17 @@ import {
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { revokeAllMediaForStudentInTx } from "@/modules/family-content/media-reference.service";
 
+type DeletionTxFailureHook = () => Promise<void> | void;
+
+/** TEST ONLY — throws inside the deletion business TX to prove full rollback. */
+let deletionTxFailureHookForTest: DeletionTxFailureHook | null = null;
+
+export function setFamilyContentDeletionTxFailureHookForTest(
+  hook: DeletionTxFailureHook | null,
+): void {
+  deletionTxFailureHookForTest = hook;
+}
+
 /**
  * Cancel unpublished scheduled pushes for a student during account deletion.
  */
@@ -141,6 +152,10 @@ export async function purgeFamilyContentBodiesForStudent(
 
   const mediaRefsRevoked = await revokeAllMediaForStudentInTx(tx, input.studentId, input.now);
 
+  if (deletionTxFailureHookForTest) {
+    await deletionTxFailureHookForTest();
+  }
+
   await appendAuditEvent(tx, {
     actorId: null,
     action: "family_content.purged",
@@ -262,6 +277,7 @@ export async function assertFamilyContentDeletionCanary(
         ne(mediaObjects.status, "purged"),
         ne(mediaObjects.status, "revoked"),
         ne(mediaObjects.status, "rejected"),
+        ne(mediaObjects.status, "purging"),
       ),
     )
     .limit(1);
@@ -276,7 +292,7 @@ export async function assertFamilyContentDeletionCanary(
     .where(
       and(
         eq(mediaObjects.studentId, studentId),
-        sql`${mediaObjects.status} IN ('revoked', 'rejected')`,
+        sql`${mediaObjects.status} IN ('revoked', 'rejected', 'purging')`,
       ),
     );
 
@@ -286,7 +302,12 @@ export async function assertFamilyContentDeletionCanary(
       .from(mediaPurgeIntents)
       .where(eq(mediaPurgeIntents.mediaId, media.id))
       .limit(1);
-    if (!intent || (intent.status !== "pending" && intent.status !== "prepared" && intent.status !== "completed")) {
+    if (
+      !intent ||
+      (intent.status !== "pending" &&
+        intent.status !== "prepared" &&
+        intent.status !== "completed")
+    ) {
       throw new Error("Family content canary failed: missing media purge intent");
     }
   }

@@ -116,7 +116,6 @@ export async function issueMediaReadCapability(
   db: Database,
   input: {
     actorId: string;
-    actorRole: "parent" | "student";
     referenceId: string;
     now?: Date;
   },
@@ -147,9 +146,19 @@ export async function issueMediaReadCapability(
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
 
+  let actorRole: "parent" | "student";
+  try {
+    actorRole = await getParentOrStudentRole(db, input.actorId);
+  } catch (error) {
+    if (error instanceof IdentityError) {
+      throw new FamilyContentError("NOT_FOUND", "Media not found");
+    }
+    throw error;
+  }
+
   await assertReferenceReadable(db, {
     actorId: input.actorId,
-    actorRole: input.actorRole,
+    actorRole,
     reference,
   });
 

@@ -202,6 +202,7 @@ export const mediaObjects = pgTable(
     referenceCount: integer("reference_count").notNull().default(0),
     unreferencedAt: timestamp("unreferenced_at", { withTimezone: true }),
     purgeAfter: timestamp("purge_after", { withTimezone: true }),
+    purgeGeneration: integer("purge_generation").notNull().default(0),
     createIdempotencyKey: text("create_idempotency_key").notNull(),
     createIdempotencyPayloadHash: text("create_idempotency_payload_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -213,7 +214,7 @@ export const mediaObjects = pgTable(
   (table) => [
     check(
       "media_objects_status_check",
-      sql`${table.status} IN ('staging', 'processing', 'ready', 'rejected', 'revoked', 'purged')`,
+      sql`${table.status} IN ('staging', 'processing', 'ready', 'rejected', 'revoked', 'purging', 'purged')`,
     ),
     check(
       "media_objects_scan_result_check",
@@ -324,6 +325,7 @@ export const mediaPurgeIntents = pgTable(
     status: text("status").notNull(),
     purgeAfter: timestamp("purge_after", { withTimezone: true }).notNull(),
     attemptCount: integer("attempt_count").notNull().default(0),
+    ownedGeneration: integer("owned_generation"),
     lastErrorCategory: text("last_error_category"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -338,6 +340,10 @@ export const mediaPurgeIntents = pgTable(
     check(
       "media_purge_intents_completed_check",
       sql`(${table.status} <> 'completed') OR (${table.completedAt} IS NOT NULL)`,
+    ),
+    check(
+      "media_purge_intents_owned_generation_check",
+      sql`(${table.status} <> 'prepared') OR (${table.ownedGeneration} IS NOT NULL)`,
     ),
   ],
 );

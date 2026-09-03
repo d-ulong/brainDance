@@ -13,6 +13,7 @@ type PreparedPurge = {
   mediaId: string;
   safeObjectKey: string | null;
   stagingObjectKey: string | null;
+  ownedGeneration: number | null;
 };
 
 async function completeIntent(
@@ -28,30 +29,57 @@ async function completeIntent(
       completedAt: now,
       updatedAt: now,
       lastErrorCategory: category,
+      ownedGeneration: null,
     })
     .where(eq(mediaPurgeIntents.mediaId, mediaId));
 }
 
-async function markIntentRetryable(
+async function releasePurgeOwnership(
   db: Database,
   mediaId: string,
   category: string,
   now: Date,
 ): Promise<void> {
-  await db
-    .update(mediaPurgeIntents)
-    .set({
-      status: "pending",
-      lastErrorCategory: category,
-      updatedAt: now,
-      completedAt: null,
-    })
-    .where(eq(mediaPurgeIntents.mediaId, mediaId));
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
+    const [media] = await tx
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, mediaId))
+      .limit(1);
+    if (!media || media.status === "purged") {
+      return;
+    }
+
+    if (media.status === "purging") {
+      await tx
+        .update(mediaObjects)
+        .set({
+          status: media.revokedAt ? "revoked" : "ready",
+          updatedAt: now,
+        })
+        .where(eq(mediaObjects.id, mediaId));
+    }
+
+    await tx
+      .update(mediaPurgeIntents)
+      .set({
+        status: "pending",
+        lastErrorCategory: category,
+        updatedAt: now,
+        completedAt: null,
+        ownedGeneration: null,
+      })
+      .where(eq(mediaPurgeIntents.mediaId, mediaId));
+  });
 }
 
 /**
  * prepare → external idempotent delete → finalize.
  * Physical object-store I/O never runs inside a DB transaction.
+ *
+ * prepare takes durable purge ownership (status=purging + owned_generation).
+ * Attach may only cancel pending intents before ownership; prepared blocks attach.
  */
 async function prepareMediaPurge(
   db: Database,
@@ -68,17 +96,44 @@ async function prepareMediaPurge(
 
     if (!media) {
       await completeIntent(tx, mediaId, now, "missing_object");
-      return { kind: "noop", mediaId, safeObjectKey: null, stagingObjectKey: null };
+      return {
+        kind: "noop",
+        mediaId,
+        safeObjectKey: null,
+        stagingObjectKey: null,
+        ownedGeneration: null,
+      };
     }
 
     if (media.status === "purged") {
       await completeIntent(tx, mediaId, now, null);
-      return { kind: "noop", mediaId, safeObjectKey: null, stagingObjectKey: null };
+      return {
+        kind: "noop",
+        mediaId,
+        safeObjectKey: null,
+        stagingObjectKey: null,
+        ownedGeneration: null,
+      };
     }
 
     if (media.referenceCount > 0) {
       await completeIntent(tx, mediaId, now, "still_referenced");
-      return { kind: "noop", mediaId, safeObjectKey: null, stagingObjectKey: null };
+      if (media.status === "purging") {
+        await tx
+          .update(mediaObjects)
+          .set({
+            status: media.revokedAt ? "revoked" : "ready",
+            updatedAt: now,
+          })
+          .where(eq(mediaObjects.id, media.id));
+      }
+      return {
+        kind: "noop",
+        mediaId,
+        safeObjectKey: null,
+        stagingObjectKey: null,
+        ownedGeneration: null,
+      };
     }
 
     const [intent] = await tx
@@ -88,19 +143,56 @@ async function prepareMediaPurge(
       .limit(1);
 
     if (intent?.status === "completed") {
-      return { kind: "noop", mediaId, safeObjectKey: null, stagingObjectKey: null };
+      return {
+        kind: "noop",
+        mediaId,
+        safeObjectKey: null,
+        stagingObjectKey: null,
+        ownedGeneration: null,
+      };
+    }
+
+    // Already owns cleanup — re-enter physical/finalize path with same generation.
+    if (
+      media.status === "purging" &&
+      intent?.status === "prepared" &&
+      intent.ownedGeneration != null &&
+      intent.ownedGeneration === media.purgeGeneration
+    ) {
+      return {
+        kind: "purge",
+        mediaId: media.id,
+        safeObjectKey: media.safeObjectKey,
+        stagingObjectKey: media.stagingObjectKey,
+        ownedGeneration: intent.ownedGeneration,
+      };
     }
 
     if (!media.purgeAfter || media.purgeAfter.getTime() > now.getTime()) {
       throw new Error("media purge not due");
     }
 
+    if (media.status !== "ready" && media.status !== "revoked" && media.status !== "rejected") {
+      throw new Error(`media purge blocked for status=${media.status}`);
+    }
+
     await revokeCapabilitiesForMediaInTx(tx, media.id, now);
+
+    const nextGeneration = media.purgeGeneration + 1;
+    await tx
+      .update(mediaObjects)
+      .set({
+        status: "purging",
+        purgeGeneration: nextGeneration,
+        updatedAt: now,
+      })
+      .where(eq(mediaObjects.id, media.id));
 
     await tx
       .update(mediaPurgeIntents)
       .set({
         status: "prepared",
+        ownedGeneration: nextGeneration,
         updatedAt: now,
         lastErrorCategory: null,
         completedAt: null,
@@ -112,6 +204,7 @@ async function prepareMediaPurge(
       mediaId: media.id,
       safeObjectKey: media.safeObjectKey,
       stagingObjectKey: media.stagingObjectKey,
+      ownedGeneration: nextGeneration,
     };
   });
 }
@@ -119,6 +212,7 @@ async function prepareMediaPurge(
 async function finalizeMediaPurge(
   db: Database,
   mediaId: string,
+  ownedGeneration: number,
   now: Date,
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -139,10 +233,38 @@ async function finalizeMediaPurge(
       return;
     }
 
-    if (media.referenceCount > 0) {
-      // Re-referenced after prepare — cancel physical cleanup bookkeeping.
-      await completeIntent(tx, mediaId, now, "still_referenced");
+    const [intent] = await tx
+      .select()
+      .from(mediaPurgeIntents)
+      .where(eq(mediaPurgeIntents.mediaId, mediaId))
+      .limit(1);
+
+    if (
+      media.status !== "purging" ||
+      intent?.status !== "prepared" ||
+      intent.ownedGeneration == null ||
+      intent.ownedGeneration !== ownedGeneration ||
+      media.purgeGeneration !== ownedGeneration
+    ) {
+      // Ownership lost or never held — do not mark purged from a stale worker.
+      if (media.referenceCount > 0) {
+        await completeIntent(tx, mediaId, now, "still_referenced");
+        if (media.status === "purging") {
+          await tx
+            .update(mediaObjects)
+            .set({
+              status: media.revokedAt ? "revoked" : "ready",
+              updatedAt: now,
+            })
+            .where(eq(mediaObjects.id, media.id));
+        }
+      }
       return;
+    }
+
+    if (media.referenceCount > 0) {
+      // Should be unreachable while ownership holds; fail closed without restoring bytes.
+      throw new Error("media purge finalize saw active references under ownership");
     }
 
     await tx
@@ -165,6 +287,7 @@ async function finalizeMediaPurge(
       idempotencyKey: `audit:media-purged:${media.id}`,
       metadata: {
         eventType: FAMILY_CONTENT_EVENT_TYPES.MEDIA_PURGE_REQUESTED,
+        purgeGeneration: ownedGeneration,
       },
     });
   });
@@ -173,7 +296,7 @@ async function finalizeMediaPurge(
 /**
  * Worker handler: prepare (short TX) → physical purge (outside TX) → finalize (short TX).
  * Idempotent on replay / lease expiry / dead replay. Physical delete success + finalize
- * failure converges on retry without restoring readability.
+ * failure keeps purging/prepared ownership so attach cannot re-open deleted bytes.
  */
 export async function handleMediaPurgeRequestedV1(
   db: Database,
@@ -190,13 +313,16 @@ export async function handleMediaPurgeRequestedV1(
   if (prepared.kind === "noop") {
     return;
   }
+  if (prepared.ownedGeneration == null) {
+    throw new Error("purge prepare missing owned generation");
+  }
 
   try {
     if (prepared.safeObjectKey) {
       await mediaStore.purgeSafe(prepared.safeObjectKey);
     }
   } catch {
-    await markIntentRetryable(db, mediaId, "safe_purge_failed", new Date());
+    await releasePurgeOwnership(db, mediaId, "safe_purge_failed", new Date());
     throw new Error("media safe purge failed");
   }
 
@@ -205,16 +331,29 @@ export async function handleMediaPurgeRequestedV1(
       await mediaStore.purgeStaging(prepared.stagingObjectKey);
     }
   } catch {
-    await markIntentRetryable(db, mediaId, "staging_purge_failed", new Date());
+    // Safe object may already be gone; keep ownership so attach cannot revive.
+    await db
+      .update(mediaPurgeIntents)
+      .set({
+        lastErrorCategory: "staging_purge_failed",
+        updatedAt: new Date(),
+      })
+      .where(eq(mediaPurgeIntents.mediaId, mediaId));
     throw new Error("media staging purge failed");
   }
 
   try {
-    await finalizeMediaPurge(db, mediaId, new Date());
+    await finalizeMediaPurge(db, mediaId, prepared.ownedGeneration, new Date());
   } catch (error) {
-    // Objects already deleted; keep intent prepared/pending so replay finalizes without
-    // restoring readable state. Prefer retryable pending for worker backoff.
-    await markIntentRetryable(db, mediaId, "finalize_failed", new Date());
+    // Objects already deleted; keep prepared + purging so replay finalizes without
+    // restoring readable state or allowing re-attach.
+    await db
+      .update(mediaPurgeIntents)
+      .set({
+        lastErrorCategory: "finalize_failed",
+        updatedAt: new Date(),
+      })
+      .where(eq(mediaPurgeIntents.mediaId, mediaId));
     throw error;
   }
 }

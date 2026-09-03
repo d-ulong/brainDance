@@ -24,7 +24,6 @@ export async function POST(_request: Request, context: RouteContext) {
 
     const issued = await issueMediaReadCapability(db, {
       actorId: dbUser.id,
-      actorRole: dbUser.role,
       referenceId,
     });
 

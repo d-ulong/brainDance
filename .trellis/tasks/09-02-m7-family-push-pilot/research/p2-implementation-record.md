@@ -105,14 +105,35 @@
 - Real production media drill / ops runbook
 - Full AC-M7-09 suite (full test/typecheck/lint/format/build/complete dual-viewport) deferred to P2 sign-off / merge gate
 
-## Verification command log (remediation)
+## Final concentrated remediation (P2-FF01～FF06)
+
+- Final remediation baseline SHA: `ae36006d15ab9dc108114e9fad5478a6be42e44a`
+- Reviewed NO-GO SHA: `dd7b350899b9039ab06d7e1f492b2f6a69ab85fe`
+- Scope: close remaining F02～F06 only; no PRD/design/implement/task-status edits
+
+| Finding | Code evidence | Test evidence |
+|---------|---------------|---------------|
+| **P2-FF01** | `media-purge.service.ts`: prepare sets `status=purging` + increments `purge_generation` / `owned_generation`; physical fail releases ownership to pending; finalize requires matching ownership; attach cancels **pending only** (`media-reference.service.ts`); `0031_m7_media_purge_fencing.sql` | `P2-F03/F06: prepare vs attach races` — attach-first keeps object; prepare-first blocks attach while purging |
+| **P2-FF02** | `media-upload.service.ts`: staging/scanner-error/promote → `markRecoverableFailure` (staging/processing + `scanResult=error`); permanent malware/reencode → rejected; `setMediaUploadFinalizeFailureHookForTest` injects real finalize TX throw after promote | `P2-F02: recoverable staging/scanner/promote/finalize failures resume by same key` — no hand-seeded processing row; finalize inject proves no ready-without-audit then same-key converges |
+| **P2-FF03** | `issueMediaReadCapability` resolves role via Identity `getParentOrStudentRole(actorId)`; `actorRole` param removed; capability route no longer passes session role | `P2-F04: capability bindings; Identity role; freeze; ...` — student/parent/stranger/freeze/cross-family matrix |
+| **P2-FF04** | `setFamilyContentDeletionTxFailureHookForTest` in `account-deletion.service.ts`; formal `applyTombstonesBeforeProjectionRebuild` | `P2-F05`: injected deletion TX rollback restores secrets/refs/caps/ready media; real restore then tombstone clears again; audit/outbox stable; no secret/token/staging in payloads |
+| **P2-FF05** | `0030_m7_media_student_binding.sql` replaces silent `DELETE` with `RAISE EXCEPTION` for unbackfillable rows | `tests/integration/migrations/m7-media-student-binding.test.ts` — SQL assertion; fail-closed preserves facts; legal backfill binds; 0031 fencing columns present |
+| **P2-FF06** | N/A (test quality) | Barrier concurrent upload + independent-TX duplicate attach; pixel bomb; dead replay asserts purged/intent/audit=1 (no tautology); E2E saves capability pre-delete and asserts `/api/media/read` fails post-delete |
+
+### Upload / purge machines after final remediation
+
+- Transient infra failures remain recoverable under staging/processing with explicit `scanErrorCategory`; identical key+payload resumes; different payload conflicts.
+- Purge ownership is durable after prepare (`purging` + generation). Attach cannot succeed while owned. Physical delete failure releases ownership; finalize failure after physical delete keeps ownership (no re-attach to deleted bytes).
+
+## Verification command log (final remediation)
 
 | Command | Result |
 |---------|--------|
-| `pnpm db:migrate` | exit 0 — Migrations complete (**0030** applied) |
-| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **7/7 passed** |
-| `pnpm build` | exit 0 — prerequisite only for `next start` E2E webServer (not claimed as sign-off evidence) |
+| `pnpm db:migrate` | exit 0 — Migrations complete (**0030** fixed SQL already applied previously; **0031** applied) |
+| `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **8/8 passed** |
+| `pnpm test -- tests/integration/migrations/m7-media-student-binding.test.ts` | exit 0 — **4/4 passed** |
+| `pnpm build` | exit 0 — **prerequisite only** for `next start` E2E webServer (not claimed as sign-off evidence) |
 | `pnpm exec playwright test tests/e2e/m7-family-push-media.spec.ts --project=desktop-chromium --project=mobile-360` | exit 0 — **2/2 passed** |
 | `git diff --check` | clean |
 
-Not run (deferred to sign-off/merge per directive): full test suite, typecheck, lint, format, full dual-viewport E2E beyond P2 media spec.
+Not run (per final remediation directive): full test suite, typecheck, lint, format, full dual-viewport E2E beyond P2 media spec.
