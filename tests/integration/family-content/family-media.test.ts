@@ -50,6 +50,7 @@ import {
 } from "@/modules/family-content/media-scanner";
 import { handleMediaPurgeRequestedV1 } from "@/modules/family-content/media-purge.service";
 import { attachReadyMediaToResource } from "@/modules/family-content/media-reference.service";
+import { createPostgresMediaUploadIdempotencyLock } from "@/modules/family-content/media-upload-idempotency-lock";
 import { uploadFamilyMedia } from "@/modules/family-content/media-upload.service";
 import { createMemoryMediaStore } from "@/modules/family-content/private-media-store";
 import { transitionFamilyPush } from "@/modules/family-content/push-lifecycle.service";
@@ -70,6 +71,7 @@ import {
 import {
   closeTestDb,
   getTestDb,
+  getTestSqlClient,
   migrateTestDb,
   resetIdentityTables,
   type TestDb,
@@ -266,6 +268,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
   const db = getTestDb();
   const mediaStore = createMemoryMediaStore();
   const scanner = createAlwaysCleanTestScanner();
+  const idempotencyLock = createPostgresMediaUploadIdempotencyLock(getTestSqlClient());
 
   beforeAll(async () => {
     process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
@@ -391,6 +394,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `fmt-${mime}-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       });
       expect(uploaded.media.status).toBe("ready");
       expect(uploaded.media.studentId).toBe(studentId);
@@ -414,6 +418,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `trunc-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
@@ -426,6 +431,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `bad-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
@@ -439,6 +445,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `mime-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
@@ -452,6 +459,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `huge-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
 
@@ -469,6 +477,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
             return { outcome: "rejected" as const, category: "malware" };
           },
         },
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
     const malwareRow = await findUploadByKey(parentId, malwareKey);
@@ -489,6 +498,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
             return { outcome: "error" as const, category: "scanner_timeout" };
           },
         },
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
     const scanErrRow = await findUploadByKey(parentId, scanErrKey);
@@ -503,6 +513,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: scanErrKey,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     expect(scanErrResumed.media.status).toBe("ready");
     expect(scanErrResumed.media.mediaId).toBe(scanErrRow!.id);
@@ -517,6 +528,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: fcKey,
         mediaStore,
         scanner: createFailClosedProductionScanner(),
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
     const fcRow = await findUploadByKey(parentId, fcKey);
@@ -530,6 +542,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: fcKey,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     expect(fcResumed.media.status).toBe("ready");
 
@@ -547,6 +560,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: `reenc-${crypto.randomUUID()}`,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
 
@@ -572,6 +586,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: pixelBombKey,
         mediaStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_REJECTED" });
     const [pixelBombRow] = await db
@@ -609,6 +624,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `bind-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     expect(uploaded.media.studentId).toBe(familyA.studentId);
 
@@ -728,6 +744,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: stagingKey,
         mediaStore: brokenStaging,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
     const stagingFailed = await findUploadByKey(parentId, stagingKey);
@@ -742,6 +759,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: stagingKey,
       mediaStore: stagingBase,
       scanner,
+      idempotencyLock,
     });
     expect(stagingResumed.media.status).toBe("ready");
     expect(stagingResumed.media.mediaId).toBe(stagingFailed!.id);
@@ -761,6 +779,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
             return { outcome: "error" as const, category: "scanner_timeout" };
           },
         },
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
     const scanFailed = await findUploadByKey(parentId, scanKey);
@@ -775,6 +794,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: scanKey,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     expect(scanResumed.media.status).toBe("ready");
     expect(scanResumed.media.mediaId).toBe(scanFailed!.id);
@@ -797,6 +817,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: promoteKey,
         mediaStore: promoteFailStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
     const promoteFailed = await findUploadByKey(parentId, promoteKey);
@@ -811,6 +832,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: promoteKey,
       mediaStore: promoteBase,
       scanner,
+      idempotencyLock,
     });
     expect(promoteResumed.media.status).toBe("ready");
     expect(promoteResumed.media.mediaId).toBe(promoteFailed!.id);
@@ -828,6 +850,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
           idempotencyKey: finalizeKey,
           mediaStore: finalizeStore,
           scanner,
+          idempotencyLock,
         }),
       ),
     ).rejects.toMatchObject({ code: "MEDIA_UNAVAILABLE" });
@@ -853,6 +876,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: finalizeKey,
       mediaStore: finalizeStore,
       scanner,
+      idempotencyLock,
     });
     expect(finalizeResumed.media.status).toBe("ready");
     expect(finalizeResumed.media.mediaId).toBe(finalizeFailed!.id);
@@ -875,6 +899,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: finalizeKey,
       mediaStore: finalizeStore,
       scanner,
+      idempotencyLock,
     });
     expect(readyReplay.idempotentReplay).toBe(true);
     expect(readyReplay.media.mediaId).toBe(finalizeFailed!.id);
@@ -889,6 +914,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
         idempotencyKey: finalizeKey,
         mediaStore: finalizeStore,
         scanner,
+        idempotencyLock,
       }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
@@ -904,6 +930,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `life-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
 
     const push1 = await createFamilyPush(db, {
@@ -1067,6 +1094,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `purge-seed-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const push = await createFamilyPush(db, {
       actorId: input.parentId,
@@ -1166,6 +1194,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
     parentId: string;
     existingCapabilityToken: string;
     referenceId: string;
+    expectedGeneration: number;
   }): Promise<void> {
     const [done] = await db
       .select()
@@ -1179,6 +1208,10 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       .limit(1);
     expect(done?.status).toBe("purged");
     expect(intent?.status).toBe("completed");
+    // Same-generation retry keeps mid-state owned generation; completed intent
+    // clears ownedGeneration without reclaiming a new generation.
+    expect(done?.purgeGeneration).toBe(input.expectedGeneration);
+    expect(intent?.ownedGeneration).toBeNull();
     expect(mediaStore.hasSafe(input.safeKey)).toBe(false);
     expect(mediaStore.hasStaging(input.stagingKey)).toBe(false);
 
@@ -1268,6 +1301,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       parentId,
       existingCapabilityToken: seeded.existingCapabilityToken,
       referenceId: seeded.referenceId,
+      expectedGeneration: generation,
     });
   });
 
@@ -1313,6 +1347,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       parentId,
       existingCapabilityToken: seeded.existingCapabilityToken,
       referenceId: seeded.referenceId,
+      expectedGeneration: generation,
     });
   });
 
@@ -1357,6 +1392,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       parentId,
       existingCapabilityToken: seeded.existingCapabilityToken,
       referenceId: seeded.referenceId,
+      expectedGeneration: generation,
     });
   });
 
@@ -1420,6 +1456,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       parentId,
       existingCapabilityToken: seeded.existingCapabilityToken,
       referenceId: seeded.referenceId,
+      expectedGeneration: generation,
     });
   });
 
@@ -1436,6 +1473,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `race-attach-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const pushOld = await createFamilyPush(db, {
       actorId: parentId,
@@ -1499,6 +1537,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `race-prep-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const pushPrep = await createFamilyPush(db, {
       actorId: parentId,
@@ -1609,6 +1648,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `cap-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const push = await createFamilyPush(db, {
       actorId: parentId,
@@ -1696,6 +1736,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `cap2-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const freshPush = await createFamilyPush(db, {
       actorId: fresh.parentId,
@@ -1822,6 +1863,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `delup-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     // Never-attached media also enters revoke/cleanup
     await uploadFamilyMedia(db, {
@@ -1832,6 +1874,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `orphan-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
 
     const push = await createFamilyPush(db, {
@@ -2051,6 +2094,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `ans-up-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const push = await createFamilyPush(db, {
       actorId: parentId,
@@ -2082,6 +2126,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
           idempotencyKey: key,
           mediaStore,
           scanner,
+          idempotencyLock,
         });
       }),
       withIndependentDb(async (independentDb) => {
@@ -2094,6 +2139,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
           idempotencyKey: key,
           mediaStore,
           scanner,
+          idempotencyLock,
         });
       }),
     ]);
@@ -2144,6 +2190,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
           idempotencyKey: conflictKey,
           mediaStore,
           scanner,
+          idempotencyLock,
         });
       })(),
       (async () => {
@@ -2156,6 +2203,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
           idempotencyKey: conflictKey,
           mediaStore,
           scanner,
+          idempotencyLock,
         });
       })(),
     ]);
@@ -2189,6 +2237,7 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       idempotencyKey: `dup-att-${crypto.randomUUID()}`,
       mediaStore,
       scanner,
+      idempotencyLock,
     });
     const attachPush = await createFamilyPush(db, {
       actorId: parentId,

@@ -33,6 +33,15 @@ export function getDb(): Database {
   return db;
 }
 
+/** Shared postgres.js client backing `getDb()` — same DATABASE_URL authority. */
+export function getSharedSqlClient(): ReturnType<typeof postgres> {
+  getDb();
+  if (!client) {
+    throw new Error("Shared postgres client is not initialized");
+  }
+  return client;
+}
+
 export async function closeDb(): Promise<void> {
   if (client) {
     await client.end({ timeout: 5 });

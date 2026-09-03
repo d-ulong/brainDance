@@ -18,6 +18,15 @@ export function getTestDb(): TestDb {
   return drizzle(sharedClient, { schema });
 }
 
+/** Shared postgres.js client backing `getTestDb()` — same DATABASE_URL authority. */
+export function getTestSqlClient(): ReturnType<typeof postgres> {
+  getTestDb();
+  if (!sharedClient) {
+    throw new Error("Test postgres client is not initialized");
+  }
+  return sharedClient;
+}
+
 export async function migrateTestDb(): Promise<void> {
   const client = postgres(requireDatabaseUrl(), { max: 1 });
   const db = drizzle(client);

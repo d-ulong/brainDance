@@ -10,6 +10,7 @@ import { uploadFamilyMedia } from "@/modules/family-content/media-upload.service
 import {
   getRouteMediaScanner,
   getRouteMediaStore,
+  getRouteMediaUploadIdempotencyLock,
 } from "@/modules/family-content/route-media-stores";
 import { ALLOWED_MIMES, MAX_MEDIA_BYTES } from "@/modules/family-content/constants";
 
@@ -89,6 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
       requestId: request.headers.get("x-request-id") ?? undefined,
       mediaStore: getRouteMediaStore(),
       scanner: getRouteMediaScanner(),
+      idempotencyLock: getRouteMediaUploadIdempotencyLock(),
     });
 
     return NextResponse.json({

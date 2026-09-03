@@ -28,12 +28,17 @@
 
 ### Failure matrix (SC-03 — four independent objects)
 
+Each scenario captures `expectedGeneration` after mid-state ownership and passes it into
+`assertPurgeConverged`. Convergence asserts `media.purgeGeneration === expectedGeneration`
+and completed intent `ownedGeneration === null` (retry did not reclaim a new generation).
+Evidence is the persisted generation, not merely replaying the same outbox event payload.
+
 | Independent case | Mid-state | After same-generation retry |
 |------|-----------|-------------|
-| `purgeSafe` throw-before-delete | purging + prepared + owned_generation; attach rejected; capabilities unreadable | purged + completed; audit=1; refs=0; live caps=0; objects gone |
-| `purgeSafe` delete-before-throw | bytes may be gone; still purging/prepared; attach rejected | purged + completed; audit=1; replay stable |
-| safe ok / staging fail | safe gone; staging error category; ownership held | purged + completed; audit=1 |
-| physical ok / finalize fail | objects gone; `finalize_failed`; ownership held | purged + completed; audit=1 |
+| `purgeSafe` throw-before-delete | purging + prepared + owned_generation; attach rejected; capabilities unreadable | purged + completed; `purgeGeneration` unchanged; audit=1; refs=0; live caps=0; objects gone |
+| `purgeSafe` delete-before-throw | bytes may be gone; still purging/prepared; attach rejected | purged + completed; `purgeGeneration` unchanged; audit=1; replay stable |
+| safe ok / staging fail | safe gone; staging error category; ownership held | purged + completed; `purgeGeneration` unchanged; audit=1 |
+| physical ok / finalize fail | objects gone; `finalize_failed`; ownership held | purged + completed; `purgeGeneration` unchanged; audit=1 |
 
 ## AR-02 MediaMigrationGate
 
@@ -92,7 +97,7 @@ Tests still call the same production module entrypoints (`uploadFamilyMedia`, `h
 - **SC-02** Concurrent same-key/same-payload upload: independent connections + barrier; both calls return the same ready mediaId; exactly one created + one idempotent replay; one media row; one `media.uploaded` audit. Does **not** accept `MEDIA_UNAVAILABLE` / `MEDIA_REJECTED` / “at least one success”.
 - Concurrent different payload same key: exactly one success + one `IDEMPOTENCY_CONFLICT` + one ready row.
 - Concurrent duplicate attach: independent transactions + barrier; one success, one definite unique/`FamilyContentError`; `referenceCount=1`; one active purpose ref.
-- Upload single-flight: `pg_advisory_lock(hashtext(media.upload:{actor}:{key}))` on a dedicated connection around claim/pipeline so concurrent same-key work converges.
+- Upload single-flight: injectable `MediaUploadIdempotencyLock` (`media-upload-idempotency-lock.ts`) using `pg_advisory_lock(hashtext(media.upload:{actor}:{key}))` via `sql.reserve()` on the **same** shared Postgres authority as `db` (production: `getSharedSqlClient()` / `getRouteMediaUploadIdempotencyLock()`; tests: `getTestSqlClient()`). Domain module does not import `postgres` / `requireDatabaseUrl` or create per-request connections. Lock covers the full upload pipeline; scan/reencode/object I/O stay outside DB transactions.
 
 ## Seal correction (SC-01～SC-03)
 
@@ -102,12 +107,25 @@ Tests still call the same production module entrypoints (`uploadFamilyMedia`, `h
 | SC-02 | Upload idempotency advisory lock + strict concurrent assertions | `media-upload.service.ts`, concurrent block in `family-media.test.ts` |
 | SC-03 | Four independent purge failure `it`s with mid-state/capability/retry/audit/replay matrix | `SC-03:*` tests in `family-media.test.ts` |
 
-## Changed files (seal correction)
+## Final seal remediation (same-DB lock + generation proof)
+
+| Blocker | Change | Evidence |
+|---------|--------|----------|
+| Upload lock same DB authority | `MediaUploadIdempotencyLock` + `createPostgresMediaUploadIdempotencyLock(sql)`; route binds `getSharedSqlClient()`; tests bind `getTestSqlClient()`; no per-request pool in domain | `media-upload-idempotency-lock.ts`, `route-media-stores.ts`, `src/db/index.ts` `getSharedSqlClient`, concurrent SC-02 + lock adapter tests |
+| SC-03 same-generation retry | `assertPurgeConverged({ expectedGeneration })` asserts `media.purgeGeneration` and completed intent did not reclaim | four `SC-03:*` tests each pass captured mid-state generation |
+
+## Changed files (seal correction + final remediation)
 
 - `src/db/run-migrations-with-media-gate.ts` (new)
 - `scripts/migrate.ts`
+- `src/db/index.ts` (`getSharedSqlClient`)
+- `src/modules/family-content/media-upload-idempotency-lock.ts` (new)
 - `src/modules/family-content/media-upload.service.ts`
+- `src/modules/family-content/route-media-stores.ts`
+- `src/app/api/family/students/[studentId]/media/route.ts`
+- `tests/helpers/db.ts` (`getTestSqlClient`)
 - `tests/integration/family-content/family-media.test.ts`
+- `tests/integration/family-content/media-upload-idempotency-lock.test.ts` (new)
 - `tests/integration/migrations/m7-media-student-binding.test.ts`
 - `research/p2-architecture-rework-record.md` (this file)
 
@@ -116,14 +134,12 @@ Tests still call the same production module entrypoints (`uploadFamilyMedia`, `h
 | Command | Result |
 |---------|--------|
 | `pnpm test -- tests/integration/family-content/family-media.test.ts` | exit 0 — **12/12 passed** |
-| `pnpm test -- tests/integration/migrations/m7-media-student-binding.test.ts` | exit 0 — **8/8 passed** (includes SC-01 orchestration) |
+| `pnpm test -- tests/integration/family-content/media-upload-idempotency-lock.test.ts` | exit 0 — **2/2 passed** (same run: 14/14) |
 | `git diff --check` | clean |
 
-### Not run (per seal-correction directive)
+### Not run (per final seal remediation directive)
 
-- Full test suite
+- Migration tests / full test suite
 - typecheck / lint / format / build
-- P2 E2E (previously green and unaffected)
-- Automatic drop/reset of user databases
-- Migration renumber/merge/delete
+- E2E
 - Milestone gate
