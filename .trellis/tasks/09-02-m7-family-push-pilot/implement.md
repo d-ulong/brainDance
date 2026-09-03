@@ -34,6 +34,7 @@ P2 验证：migration、媒体安全、删除/恢复、全量 test、typecheck�
 - P2 提交 `db0e9dbb96af4483a61ff8ff5017f635741c1f08` 终局复验为 NO-GO，原 P2 补丁轮次冻结，禁止合入 `main`。
 - 唯一恢复路径为 `research/p2-architecture-rework-directive.md`：重建 purge 不确定性、未发布 migration gate、测试 seam 与不可空跑证据。
 - 架构返工只审核一次；若仍有 P1 阻断项，则终止 M7 媒体范围并回退至 P1 可交付边界，不继续追加整改轮次。
+- 架构返工提交 `4b0421c0b925f4a6253f5bf86a3f99edbc1a0975` 终审 NO-GO；已触发终止条件。唯一后续为 `research/p2-scope-rollback-directive.md`，完成后 M7 交付范围收敛至已签署 P1。
 
 ## 审核与回滚点
 
