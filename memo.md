@@ -53,6 +53,12 @@
 
 ## 本机封闭试点登录排查
 
+### 当前本机库映射（2026-09）
+
+- 封闭试点的权威库为 `braindance_closed_pilot_20260903`；`scripts/start-closed-pilot.ps1` 会只在其子进程中选择该库。
+- `braindance` 是 Docker 初始化及日常开发/测试默认库；它可以有不同的管理员数据，不能据此判断封闭试点账号是否有效。
+- 历史 M7 验证库 `braindance_m7_gate_20260903b` 已在确认无代码引用、无连接后删除；不要在后续操作中重新指向它。
+
 症状：`localhost:3002` 可访问，但新建隔离试点库中的管理员登录返回 `Invalid credentials`。
 
 检查顺序：
