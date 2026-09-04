@@ -107,14 +107,14 @@ export async function completeStroopTraining(page: Page) {
   await page.goto("/student/training/stroop");
   await expect(page.getByTestId("stroop-stimulus")).toBeVisible({ timeout: 30_000 });
 
-  const totalText = await page.getByText(/\/ \d+ ?/).innerText();
-  const match = totalText.match(/\/ (\d+) ?/);
+  const totalText = await page.getByText(/\/ \d+ 次/).innerText();
+  const match = totalText.match(/\/ (\d+) 次/);
   const total = match ? Number(match[1]) : 16;
 
   for (let trial = 0; trial < total; trial += 1) {
     await respondToStroopTrial(page, true, "pointer");
     if (trial < total - 1) {
-      await expect(page.getByText(`? ${trial + 2} / ${total} ?`)).toBeVisible({
+      await expect(page.getByText(`第 ${trial + 2} / ${total} 次`)).toBeVisible({
         timeout: 20_000,
       });
     }
@@ -156,7 +156,7 @@ export async function completeDigitSpanTraining(page: Page) {
   await expect(page.getByTestId("digit-stimulus")).toBeVisible({ timeout: 30_000 });
 
   const subtitle = await page.locator("header p").innerText();
-  const match = subtitle.match(/\/ (\d+) ?/);
+  const match = subtitle.match(/\/ (\d+) 次/);
   const total = match ? Number(match[1]) : 14;
 
   for (let attempt = 0; attempt < total; attempt += 1) {
@@ -174,7 +174,7 @@ export async function completeDigitSpanTraining(page: Page) {
     await enterDigitSpanAnswer(page, digits);
 
     if (attempt < total - 1) {
-      await expect(page.getByTestId("digit-response")).toHaveText("�", { timeout: 20_000 });
+      await expect(page.getByTestId("digit-response")).toHaveText("—", { timeout: 20_000 });
     }
   }
 

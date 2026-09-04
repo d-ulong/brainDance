@@ -1044,6 +1044,7 @@ async function loadTrainingSummaryForTrainee(
   db: Database,
   traineeId: string,
   trainingKey: string,
+  defaultAgeBand: string = "9-12",
 ): Promise<Omit<SubjectTrainingSummary, "traineeId">> {
   const [latestSession] = await db
     .select()
@@ -1088,7 +1089,7 @@ async function loadTrainingSummaryForTrainee(
     trainingKey,
     definitionVersion:
       latestSession?.definitionVersion ?? projectionRows[0]?.definitionVersion ?? 1,
-    ageBand: latestSession?.ageBand ?? projectionRows[0]?.ageBand ?? "9-12",
+    ageBand: latestSession?.ageBand ?? projectionRows[0]?.ageBand ?? defaultAgeBand,
     familyDate: latestSession?.familyDate ?? toFamilyDate(),
     lastSession,
     projection: projectionRows
@@ -1109,7 +1110,12 @@ export async function getTrainingSummaryForSubject(
   const subject = await authorizeTrainingSubject(db, claimedSubject);
   await assertSubjectReadable(db, subject);
 
-  const summary = await loadTrainingSummaryForTrainee(db, subject.traineeId, trainingKey);
+  const summary = await loadTrainingSummaryForTrainee(
+    db,
+    subject.traineeId,
+    trainingKey,
+    subject.ageBand,
+  );
   return {
     traineeId: subject.traineeId,
     ...summary,

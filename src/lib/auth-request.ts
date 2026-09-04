@@ -80,6 +80,9 @@ export async function requireTraineeSession() {
   if (ctx.dbUser.role !== "student" && ctx.dbUser.role !== "parent") {
     throw new IdentityError("FORBIDDEN", "Training access requires student or parent");
   }
+  if (ctx.dbUser.role === "parent" && !ctx.dbUser.contactVerifiedAt) {
+    throw new FamilyAccessError("CONTACT_NOT_VERIFIED", "Parent contact must be verified");
+  }
   return ctx;
 }
 

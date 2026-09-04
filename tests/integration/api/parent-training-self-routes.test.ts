@@ -8,9 +8,14 @@ import { POST as startTrainingRoute } from "@/app/api/training/sessions/route";
 import { GET as getTrainingSessionRoute } from "@/app/api/training/sessions/[sessionId]/route";
 import { POST as appendTrainingEventRoute } from "@/app/api/training/sessions/[sessionId]/events/route";
 import { POST as submitTrainingRoute } from "@/app/api/training/sessions/[sessionId]/submit/route";
+import { POST as terminateTrainingRoute } from "@/app/api/training/sessions/[sessionId]/terminate/route";
 import { GET as getOwnTrainingSummaryRoute } from "@/app/api/training/summary/route";
 import { GET as getOwnTrainingTrendsRoute } from "@/app/api/training/trends/route";
+import { createInvitation } from "@/modules/identity/invitation.service";
+import { login } from "@/modules/identity/login.service";
+import { registerParent } from "@/modules/identity/registration.service";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
+import { bootstrapAdmin } from "../../helpers/identity";
 import { ensureM5TrainingDefinitions } from "../../helpers/training";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
 
@@ -164,5 +169,150 @@ describe.skipIf(!hasDb)("parent self training summary/trends routes", () => {
     const studentTrendsBody = await studentTrends.json();
     expect(studentTrendsBody.traineeId).toBe(owner.studentId);
     expect(studentTrendsBody.hasData).toBe(false);
+  });
+
+  it("rejects unverified parent on trainee training routes and allows verified parent", async () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const { adminId } = await bootstrapAdmin(db, `admin-unverified-${suffix}@test.local`);
+    const parentEmail = `unverified-parent-${suffix}@test.local`;
+    const invite = await createInvitation(db, {
+      adminId,
+      targetRole: "parent",
+      idempotencyKey: `invite-unverified-${suffix}`,
+    });
+    await registerParent(db, {
+      invitationCode: invite.codePlaintext,
+      displayName: "Unverified Parent",
+      email: parentEmail,
+      password: "Parent1aXy",
+      idempotencyKey: `register-unverified-${suffix}`,
+    });
+    const unverifiedSession = await login(db, {
+      identifier: parentEmail,
+      password: "Parent1aXy",
+      idempotencyKey: `login-unverified-${suffix}`,
+    });
+
+    withSessionCookie(unverifiedSession);
+    const placeholderSessionId = crypto.randomUUID();
+
+    const startDenied = await startTrainingRoute(
+      new Request("http://localhost/api/training/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          trainingKey: REACTION_TRAINING_KEY,
+          idempotencyKey: `unverified-start-${suffix}`,
+        }),
+      }),
+    );
+    expect(startDenied.status).toBe(403);
+    expect((await startDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const eventDenied = await appendTrainingEventRoute(
+      new Request(`http://localhost/api/training/sessions/${placeholderSessionId}/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sequence: 0,
+          eventType: "trial.stimulus",
+          payload: { trialIndex: 0, stimulusId: "s-0" },
+        }),
+      }),
+      { params: Promise.resolve({ sessionId: placeholderSessionId }) },
+    );
+    expect(eventDenied.status).toBe(403);
+    expect((await eventDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const submitDenied = await submitTrainingRoute(
+      new Request(`http://localhost/api/training/sessions/${placeholderSessionId}/submit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: `unverified-submit-${suffix}` }),
+      }),
+      { params: Promise.resolve({ sessionId: placeholderSessionId }) },
+    );
+    expect(submitDenied.status).toBe(403);
+    expect((await submitDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const terminateDenied = await terminateTrainingRoute(
+      new Request(`http://localhost/api/training/sessions/${placeholderSessionId}/terminate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "abandon",
+          reason: "unverified-parent-guard",
+        }),
+      }),
+      { params: Promise.resolve({ sessionId: placeholderSessionId }) },
+    );
+    expect(terminateDenied.status).toBe(403);
+    expect((await terminateDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const sessionReadDenied = await getTrainingSessionRoute(
+      new Request(`http://localhost/api/training/sessions/${placeholderSessionId}`),
+      { params: Promise.resolve({ sessionId: placeholderSessionId }) },
+    );
+    expect(sessionReadDenied.status).toBe(403);
+    expect((await sessionReadDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const summaryDenied = await getOwnTrainingSummaryRoute(
+      new Request(`http://localhost/api/training/summary?trainingKey=${REACTION_TRAINING_KEY}`),
+    );
+    expect(summaryDenied.status).toBe(403);
+    expect((await summaryDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const trendsDenied = await getOwnTrainingTrendsRoute(
+      new Request(
+        `http://localhost/api/training/trends?trainingKey=${REACTION_TRAINING_KEY}&window=7d`,
+      ),
+    );
+    expect(trendsDenied.status).toBe(403);
+    expect((await trendsDenied.json()).code).toBe("CONTACT_NOT_VERIFIED");
+
+    const verified = await bootstrapLinkedParentStudent(db);
+    withSessionCookie(verified.parentSession);
+
+    const emptySummary = await getOwnTrainingSummaryRoute(
+      new Request(`http://localhost/api/training/summary?trainingKey=${REACTION_TRAINING_KEY}`),
+    );
+    expect(emptySummary.status).toBe(200);
+    const emptySummaryBody = await emptySummary.json();
+    expect(emptySummaryBody.traineeId).toBe(verified.parentId);
+    expect(emptySummaryBody.ageBand).toBe("adult");
+    expect(emptySummaryBody.lastSession).toBeNull();
+
+    const started = await completeParentReactionSession(`verified-ok-${suffix}`);
+    expect(started.ageBand).toBe("adult");
+
+    const sessionReadOk = await getTrainingSessionRoute(
+      new Request(`http://localhost/api/training/sessions/${started.sessionId}`),
+      { params: Promise.resolve({ sessionId: started.sessionId }) },
+    );
+    expect(sessionReadOk.status).toBe(200);
+
+    const summaryOk = await getOwnTrainingSummaryRoute(
+      new Request(`http://localhost/api/training/summary?trainingKey=${REACTION_TRAINING_KEY}`),
+    );
+    expect(summaryOk.status).toBe(200);
+    expect((await summaryOk.json()).ageBand).toBe("adult");
+
+    const trendsOk = await getOwnTrainingTrendsRoute(
+      new Request(
+        `http://localhost/api/training/trends?trainingKey=${REACTION_TRAINING_KEY}&window=7d`,
+      ),
+    );
+    expect(trendsOk.status).toBe(200);
+    expect((await trendsOk.json()).traineeId).toBe(verified.parentId);
+
+    withSessionCookie(verified.studentSession);
+    const studentEmptySummary = await getOwnTrainingSummaryRoute(
+      new Request(`http://localhost/api/training/summary?trainingKey=${REACTION_TRAINING_KEY}`),
+    );
+    expect(studentEmptySummary.status).toBe(200);
+    const studentEmptyBody = await studentEmptySummary.json();
+    expect(studentEmptyBody.traineeId).toBe(verified.studentId);
+    expect(studentEmptyBody.ageBand).not.toBe("adult");
+    expect(["5-8", "9-12", "13-18"]).toContain(studentEmptyBody.ageBand);
   });
 });
