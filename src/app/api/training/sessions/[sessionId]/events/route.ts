@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireStudentSessionForWrites } from "@/lib/auth-request";
+import { requireTraineeSessionForWrites } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
-import { appendTrainingEvent } from "@/modules/training/session.service";
+import { appendTrainingEventForSubject } from "@/modules/training/session.service";
+import { resolveTrainingSubject } from "@/modules/training/training-subject";
 
 const bodySchema = z.object({
   sequence: z.number().int().min(0),
@@ -17,12 +18,13 @@ type RouteContext = {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const { db, dbUser } = await requireStudentSessionForWrites();
+    const { db, dbUser } = await requireTraineeSessionForWrites();
     const { sessionId } = await context.params;
     const body = bodySchema.parse(await request.json());
+    const subject = await resolveTrainingSubject(db, dbUser.id);
 
-    const result = await appendTrainingEvent(db, {
-      studentId: dbUser.id,
+    const result = await appendTrainingEventForSubject(db, {
+      subject,
       sessionId,
       sequence: body.sequence,
       eventType: body.eventType,

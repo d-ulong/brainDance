@@ -439,7 +439,7 @@ async function buildExportArtifactContent(
         finishedAt: trainingSessions.finishedAt,
       })
       .from(trainingSessions)
-      .where(eq(trainingSessions.studentId, scope.studentId));
+      .where(eq(trainingSessions.traineeId, scope.studentId));
 
     const sessionSummaries = [];
 

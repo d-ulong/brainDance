@@ -55,6 +55,14 @@ const DEFAULT_STROOP_SCHEMAS: Record<string, StroopMetricSchema> = {
     minValidMs: 150,
     maxValidMs: 3000,
   },
+  adult: {
+    trialCount: 20,
+    congruentQuota: 10,
+    incongruentQuota: 10,
+    colors: [...STROOP_COLORS],
+    minValidMs: 150,
+    maxValidMs: 3000,
+  },
 };
 
 export function decodeStroopMetricSchema(raw: Record<string, unknown>): StroopMetricSchema | null {

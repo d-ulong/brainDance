@@ -93,7 +93,7 @@ function compareSegmentOrder(
 
 async function loadEffectiveSessions(
   db: Database,
-  studentId: string,
+  traineeId: string,
   trainingKey: string,
 ): Promise<EffectiveSessionRow[]> {
   return db
@@ -101,7 +101,7 @@ async function loadEffectiveSessions(
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.trainingKey, trainingKey),
         eq(trainingSessions.status, "completed"),
         eq(trainingSessions.sessionKind, "effective"),
@@ -289,7 +289,7 @@ export async function loadTrainingProfileProjectionRows(
   studentId: string,
   trainingKey?: string,
 ) {
-  const conditions = [eq(trainingProfileProjection.studentId, studentId)];
+  const conditions = [eq(trainingProfileProjection.traineeId, studentId)];
   if (trainingKey) {
     conditions.push(eq(trainingProfileProjection.trainingKey, trainingKey));
   }
@@ -397,12 +397,20 @@ export async function rebuildTrainingProfileProjectionForStudent(
   studentId: string,
   now: Date = new Date(),
 ): Promise<{ sessionsScanned: number; projectionRowsWritten: number }> {
+  return rebuildTrainingProfileProjectionForTrainee(tx, studentId, now);
+}
+
+export async function rebuildTrainingProfileProjectionForTrainee(
+  tx: Database,
+  traineeId: string,
+  now: Date = new Date(),
+): Promise<{ sessionsScanned: number; projectionRowsWritten: number }> {
   const sessions = await tx
     .select()
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.status, "completed"),
         eq(trainingSessions.sessionKind, "effective"),
       ),
@@ -453,13 +461,16 @@ export async function rebuildTrainingProfileProjectionForStudent(
 
   await tx
     .delete(trainingProfileProjection)
-    .where(eq(trainingProfileProjection.studentId, studentId));
+    .where(eq(trainingProfileProjection.traineeId, traineeId));
+
+  const compatStudentId = sessions.find((session) => session.studentId != null)?.studentId ?? null;
 
   let projectionRowsWritten = 0;
   for (const segment of segmentStates.values()) {
     for (const row of segment.metrics.values()) {
       await tx.insert(trainingProfileProjection).values({
-        studentId,
+        traineeId,
+        studentId: compatStudentId,
         trainingKey: segment.trainingKey,
         definitionVersion: segment.definitionVersion,
         ageBand: segment.ageBand,
@@ -514,19 +525,19 @@ export async function rebuildTrainingProfileProjection(
     await acquireFullRebuildProjectionLock(tx);
 
     const studentRows = await tx.execute(sql`
-      SELECT DISTINCT student_id
+      SELECT DISTINCT trainee_id
       FROM training_sessions
       WHERE status = 'completed' AND session_kind = 'effective'
-      ORDER BY student_id
+      ORDER BY trainee_id
     `);
 
-    const studentIds = (studentRows as unknown as { student_id: string }[]).map(
-      (row) => row.student_id,
+    const studentIds = (studentRows as unknown as { trainee_id: string }[]).map(
+      (row) => row.trainee_id,
     );
     studentsScanned = studentIds.length;
 
     for (const studentId of studentIds) {
-      const result = await rebuildTrainingProfileProjectionForStudent(tx, studentId, now);
+      const result = await rebuildTrainingProfileProjectionForTrainee(tx, studentId, now);
       sessionsScanned += result.sessionsScanned;
       projectionRowsWritten += result.projectionRowsWritten;
     }
@@ -540,7 +551,7 @@ export async function rebuildTrainingProfileProjection(
     } else {
       await tx
         .delete(trainingProfileProjection)
-        .where(notInArray(trainingProfileProjection.studentId, studentIds));
+        .where(notInArray(trainingProfileProjection.traineeId, studentIds));
     }
   });
 

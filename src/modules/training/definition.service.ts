@@ -11,11 +11,12 @@ import { DEFAULT_DIGIT_SPAN_SCHEMAS } from "@/modules/training/digit-span-v1";
 import { DEFAULT_STROOP_SCHEMAS } from "@/modules/training/stroop-v1";
 import { TrainingError } from "@/modules/training/errors";
 import type { AgeBand } from "@/modules/time-policy/resolve-age-band";
+import { ADULT_AGE_BAND, type TrainingAgeBand } from "@/modules/training/training-subject";
 
 export async function getActiveTrainingDefinition(
   db: Database,
   trainingKey: string,
-  ageBand: AgeBand,
+  ageBand: TrainingAgeBand,
 ) {
   const [definition] = await db
     .select()
@@ -83,31 +84,41 @@ export async function getSessionTrainingDefinition(
   return definition;
 }
 
-const AGE_BANDS: AgeBand[] = ["5-8", "9-12", "13-18"];
+const CHILD_AGE_BANDS: AgeBand[] = ["5-8", "9-12", "13-18"];
+
+async function seedDefinitionRow(
+  db: Database,
+  trainingKey: string,
+  ageBand: TrainingAgeBand,
+  metricSchema: Record<string, unknown>,
+): Promise<void> {
+  await db
+    .insert(trainingDefinitions)
+    .values({
+      trainingKey,
+      version: 1,
+      ageBand,
+      metricSchema,
+      active: 1,
+    })
+    .onConflictDoNothing({
+      target: [
+        trainingDefinitions.trainingKey,
+        trainingDefinitions.version,
+        trainingDefinitions.ageBand,
+      ],
+    });
+}
 
 async function seedDefinitionForKey(
   db: Database,
   trainingKey: string,
-  metricSchemaForAgeBand: (ageBand: AgeBand) => Record<string, unknown>,
+  metricSchemaForAgeBand: (ageBand: TrainingAgeBand) => Record<string, unknown>,
 ): Promise<void> {
-  for (const ageBand of AGE_BANDS) {
-    await db
-      .insert(trainingDefinitions)
-      .values({
-        trainingKey,
-        version: 1,
-        ageBand,
-        metricSchema: metricSchemaForAgeBand(ageBand),
-        active: 1,
-      })
-      .onConflictDoNothing({
-        target: [
-          trainingDefinitions.trainingKey,
-          trainingDefinitions.version,
-          trainingDefinitions.ageBand,
-        ],
-      });
+  for (const ageBand of CHILD_AGE_BANDS) {
+    await seedDefinitionRow(db, trainingKey, ageBand, metricSchemaForAgeBand(ageBand));
   }
+  await seedDefinitionRow(db, trainingKey, ADULT_AGE_BAND, metricSchemaForAgeBand(ADULT_AGE_BAND));
 }
 
 export async function seedReactionDefinitions(db: Database): Promise<void> {

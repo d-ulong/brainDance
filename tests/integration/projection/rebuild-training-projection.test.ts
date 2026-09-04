@@ -185,6 +185,7 @@ describe.skipIf(!hasDb)("M5 training projection rebuild", () => {
     });
 
     await db.insert(trainingProfileProjection).values({
+      traineeId: studentA.studentId,
       studentId: studentA.studentId,
       trainingKey: REACTION_TRAINING_KEY,
       definitionVersion: 1,
@@ -218,6 +219,7 @@ describe.skipIf(!hasDb)("M5 training projection rebuild", () => {
     });
 
     await db.insert(trainingProfileProjection).values({
+      traineeId: student.studentId,
       studentId: student.studentId,
       trainingKey: REACTION_TRAINING_KEY,
       definitionVersion: 1,
@@ -246,6 +248,7 @@ describe.skipIf(!hasDb)("M5 training projection rebuild", () => {
     });
 
     await db.insert(trainingProfileProjection).values({
+      traineeId: student.studentId,
       studentId: student.studentId,
       trainingKey: "legacy_training",
       definitionVersion: 1,

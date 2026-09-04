@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { trainingEvents, trainingProfileProjection, trainingSessions } from "@/db/schema";
-import { rebuildTrainingProfileProjectionForStudent } from "@/modules/training/trends.service";
+import { rebuildTrainingProfileProjectionForTrainee } from "@/modules/training/trends.service";
 
 export async function purgeTrainingPayloadsForStudent(
   tx: Database,
@@ -13,7 +13,7 @@ export async function purgeTrainingPayloadsForStudent(
     SET payload = '{}'::jsonb
     FROM training_sessions
     WHERE training_events.session_id = training_sessions.id
-      AND training_sessions.student_id = ${studentId}::uuid
+      AND training_sessions.trainee_id = ${studentId}::uuid
       AND training_events.payload <> '{}'::jsonb
     RETURNING training_events.id
   `);
@@ -35,9 +35,9 @@ export async function cleanupTrainingProjectionsForStudentDeletion(
 ): Promise<void> {
   await tx
     .delete(trainingProfileProjection)
-    .where(eq(trainingProfileProjection.studentId, studentId));
+    .where(eq(trainingProfileProjection.traineeId, studentId));
 
-  await rebuildTrainingProfileProjectionForStudent(tx, studentId, now);
+  await rebuildTrainingProfileProjectionForTrainee(tx, studentId, now);
 }
 
 export async function countNonEmptyTrainingPayloadsForStudent(
@@ -49,7 +49,7 @@ export async function countNonEmptyTrainingPayloadsForStudent(
     .from(trainingEvents)
     .innerJoin(trainingSessions, eq(trainingEvents.sessionId, trainingSessions.id))
     .where(
-      and(eq(trainingSessions.studentId, studentId), sql`${trainingEvents.payload} <> '{}'::jsonb`),
+      and(eq(trainingSessions.traineeId, studentId), sql`${trainingEvents.payload} <> '{}'::jsonb`),
     );
 
   return rows.length;

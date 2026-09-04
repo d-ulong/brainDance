@@ -225,6 +225,13 @@
       "when": 1787757600000,
       "tag": "0031_m7_media_purge_fencing",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787761200000,
+      "tag": "0032_p2_training_trainee_id",
+      "breakpoints": true
     }
   ]
 }

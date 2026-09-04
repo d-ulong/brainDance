@@ -75,6 +75,22 @@ export async function requireAuthenticatedSession() {
   return requireSession();
 }
 
+export async function requireTraineeSession() {
+  const ctx = await requireAuthenticatedSession();
+  if (ctx.dbUser.role !== "student" && ctx.dbUser.role !== "parent") {
+    throw new IdentityError("FORBIDDEN", "Training access requires student or parent");
+  }
+  return ctx;
+}
+
+export async function requireTraineeSessionForWrites() {
+  const ctx = await requireTraineeSession();
+  if (ctx.dbUser.role === "student") {
+    assertStudentMayPerformWrites(ctx.dbUser);
+  }
+  return ctx;
+}
+
 export async function refreshSessionCookieAfterEpochChange(
   db: Database,
   userId: string,

@@ -6,7 +6,6 @@ import {
   trainingMetrics,
   trainingProfileProjection,
   trainingSessions,
-  users,
 } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
@@ -37,12 +36,17 @@ import {
   metricRowsToDbValues,
   validateTrainingEvents,
 } from "@/modules/training/protocol";
-import { resolveAgeBand, type AgeBand } from "@/modules/time-policy/resolve-age-band";
+import {
+  compatStudentIdForSubject,
+  resolveTrainingSubject,
+  type TrainingAgeBand,
+  type TrainingSubject,
+} from "@/modules/training/training-subject";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 
 export type StartTrainingSessionInput = {
-  studentId: string;
+  subject: TrainingSubject;
   trainingKey: string;
   idempotencyKey: string;
   requestId?: string;
@@ -52,7 +56,7 @@ export type StartTrainingSessionResult = {
   sessionId: string;
   trainingKey: string;
   definitionVersion: number;
-  ageBand: AgeBand;
+  ageBand: TrainingAgeBand;
   familyDate: string;
   expectedTrialCount: number;
   status: "active";
@@ -60,7 +64,7 @@ export type StartTrainingSessionResult = {
 };
 
 export type AppendTrainingEventInput = {
-  studentId: string;
+  subject: TrainingSubject;
   sessionId: string;
   sequence: number;
   eventType: string;
@@ -75,7 +79,7 @@ export type AppendTrainingEventResult = {
 };
 
 export type SubmitTrainingSessionInput = {
-  studentId: string;
+  subject: TrainingSubject;
   sessionId: string;
   idempotencyKey: string;
   requestId?: string;
@@ -133,23 +137,27 @@ export type ParentTrainingSummary = {
   }>;
 };
 
-async function resolveStudentAgeBand(db: Database, studentId: string): Promise<AgeBand> {
-  const [student] = await db.select().from(users).where(eq(users.id, studentId)).limit(1);
-  if (!student) {
-    throw new TrainingError("USER_NOT_FOUND", "Student not found");
-  }
-  if (!student.birthDate) {
-    throw new TrainingError("STUDENT_BIRTH_DATE_REQUIRED", "Student birth date is required");
-  }
+type StudentFacadeInput = {
+  studentId: string;
+};
 
-  return resolveAgeBand(new Date(`${student.birthDate}T12:00:00.000Z`));
+async function assertSubjectWritable(db: Database, subject: TrainingSubject): Promise<void> {
+  if (subject.traineeRole === "student") {
+    await assertStudentAccountNotFrozen(db, subject.traineeId, "write");
+  }
 }
 
-async function loadOwnedSession(db: Database, studentId: string, sessionId: string) {
+async function assertSubjectReadable(db: Database, subject: TrainingSubject): Promise<void> {
+  if (subject.traineeRole === "student") {
+    await assertStudentAccountNotFrozen(db, subject.traineeId, "read");
+  }
+}
+
+async function loadOwnedSession(db: Database, traineeId: string, sessionId: string) {
   const [session] = await db
     .select()
     .from(trainingSessions)
-    .where(and(eq(trainingSessions.id, sessionId), eq(trainingSessions.studentId, studentId)))
+    .where(and(eq(trainingSessions.id, sessionId), eq(trainingSessions.traineeId, traineeId)))
     .limit(1);
 
   if (!session) {
@@ -198,7 +206,7 @@ function resolveDecodedSchema(trainingKey: string, metricSchema: Record<string, 
 async function upsertProfileProjection(
   tx: Database,
   input: {
-    studentId: string;
+    subject: TrainingSubject;
     trainingKey: string;
     definitionVersion: number;
     ageBand: string;
@@ -212,7 +220,7 @@ async function upsertProfileProjection(
     .from(trainingProfileProjection)
     .where(
       and(
-        eq(trainingProfileProjection.studentId, input.studentId),
+        eq(trainingProfileProjection.traineeId, input.subject.traineeId),
         eq(trainingProfileProjection.trainingKey, input.trainingKey),
         eq(trainingProfileProjection.definitionVersion, input.definitionVersion),
         eq(trainingProfileProjection.ageBand, input.ageBand),
@@ -233,6 +241,8 @@ async function upsertProfileProjection(
     metrics: sessionMetrics,
   });
 
+  const compatStudentId = compatStudentIdForSubject(input.subject);
+
   for (const metric of filterProjectionEligibleMetrics(input.trainingKey, sessionMetrics)) {
     const row = state.get(metric.metricKey);
     if (!row) {
@@ -242,7 +252,8 @@ async function upsertProfileProjection(
     await tx
       .insert(trainingProfileProjection)
       .values({
-        studentId: input.studentId,
+        traineeId: input.subject.traineeId,
+        studentId: compatStudentId,
         trainingKey: input.trainingKey,
         definitionVersion: input.definitionVersion,
         ageBand: input.ageBand,
@@ -254,7 +265,7 @@ async function upsertProfileProjection(
       })
       .onConflictDoUpdate({
         target: [
-          trainingProfileProjection.studentId,
+          trainingProfileProjection.traineeId,
           trainingProfileProjection.trainingKey,
           trainingProfileProjection.definitionVersion,
           trainingProfileProjection.ageBand,
@@ -273,7 +284,7 @@ async function upsertProfileProjection(
 
 async function findStartSessionByIdempotency(
   db: Database,
-  studentId: string,
+  traineeId: string,
   idempotencyKey: string,
 ) {
   const [existing] = await db
@@ -281,7 +292,7 @@ async function findStartSessionByIdempotency(
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.startIdempotencyKey, idempotencyKey),
       ),
     )
@@ -301,7 +312,7 @@ async function buildStartReplayResult(
     sessionId: existing.id,
     trainingKey: existing.trainingKey,
     definitionVersion: existing.definitionVersion,
-    ageBand: existing.ageBand as AgeBand,
+    ageBand: existing.ageBand as TrainingAgeBand,
     familyDate: existing.familyDate,
     expectedTrialCount: getExpectedSessionCount(existing.trainingKey, schema),
     status: "active",
@@ -333,7 +344,7 @@ async function resolveSubmitIdempotencyReplay(
 
 async function findSubmitSessionByIdempotency(
   db: Database,
-  studentId: string,
+  traineeId: string,
   idempotencyKey: string,
 ) {
   const [existing] = await db
@@ -341,7 +352,7 @@ async function findSubmitSessionByIdempotency(
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.submitIdempotencyKey, idempotencyKey),
       ),
     )
@@ -350,19 +361,23 @@ async function findSubmitSessionByIdempotency(
   return existing;
 }
 
-export async function startTrainingSession(
+export async function startTrainingSessionForSubject(
   db: Database,
   input: StartTrainingSessionInput,
 ): Promise<StartTrainingSessionResult> {
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectWritable(db, input.subject);
 
-  const existing = await findStartSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+  const existing = await findStartSessionByIdempotency(
+    db,
+    input.subject.traineeId,
+    input.idempotencyKey,
+  );
 
   if (existing) {
     return buildStartReplayResult(db, existing);
   }
 
-  const ageBand = await resolveStudentAgeBand(db, input.studentId);
+  const ageBand = input.subject.ageBand;
   if (!getTrainingProtocol(input.trainingKey)) {
     throw new TrainingError(
       "TRAINING_DEFINITION_NOT_FOUND",
@@ -373,12 +388,14 @@ export async function startTrainingSession(
   const schema = resolveDecodedSchema(input.trainingKey, definition.metricSchema ?? {});
   const familyDate = toFamilyDate();
   const startedAt = new Date();
+  const compatStudentId = compatStudentIdForSubject(input.subject);
 
   try {
     const [created] = await db
       .insert(trainingSessions)
       .values({
-        studentId: input.studentId,
+        traineeId: input.subject.traineeId,
+        studentId: compatStudentId,
         trainingKey: input.trainingKey,
         definitionId: definition.id,
         definitionVersion: definition.version,
@@ -395,16 +412,17 @@ export async function startTrainingSession(
     }
 
     await appendAuditEvent(db, {
-      actorId: input.studentId,
+      actorId: input.subject.traineeId,
       action: "training_session.started",
       resourceType: "training_session",
       resourceId: created.id,
       requestId: input.requestId,
-      idempotencyKey: `audit:training-start:${input.studentId}:${input.idempotencyKey}`,
+      idempotencyKey: `audit:training-start:${input.subject.traineeId}:${input.idempotencyKey}`,
       metadata: {
         trainingKey: input.trainingKey,
         familyDate,
         ageBand,
+        traineeRole: input.subject.traineeRole,
       },
     });
 
@@ -412,7 +430,7 @@ export async function startTrainingSession(
       sessionId: created.id,
       trainingKey: created.trainingKey,
       definitionVersion: created.definitionVersion,
-      ageBand: created.ageBand as AgeBand,
+      ageBand: created.ageBand as TrainingAgeBand,
       familyDate: created.familyDate,
       expectedTrialCount: getExpectedSessionCount(created.trainingKey, schema),
       status: "active",
@@ -423,7 +441,11 @@ export async function startTrainingSession(
       throw error;
     }
 
-    const raced = await findStartSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+    const raced = await findStartSessionByIdempotency(
+      db,
+      input.subject.traineeId,
+      input.idempotencyKey,
+    );
     if (!raced) {
       throw error;
     }
@@ -432,11 +454,29 @@ export async function startTrainingSession(
   }
 }
 
-export async function appendTrainingEvent(
+/** Student-named facade for existing callers; resolves TrainingSubject from user id. */
+export async function startTrainingSession(
+  db: Database,
+  input: StudentFacadeInput & {
+    trainingKey: string;
+    idempotencyKey: string;
+    requestId?: string;
+  },
+): Promise<StartTrainingSessionResult> {
+  const subject = await resolveTrainingSubject(db, input.studentId);
+  return startTrainingSessionForSubject(db, {
+    subject,
+    trainingKey: input.trainingKey,
+    idempotencyKey: input.idempotencyKey,
+    requestId: input.requestId,
+  });
+}
+
+export async function appendTrainingEventForSubject(
   db: Database,
   input: AppendTrainingEventInput,
 ): Promise<AppendTrainingEventResult> {
-  const session = await loadOwnedSession(db, input.studentId, input.sessionId);
+  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
     throw new TrainingError("SESSION_INVALID_STATE", "Session is not active");
@@ -498,11 +538,30 @@ export async function appendTrainingEvent(
   };
 }
 
-export async function cancelTrainingSession(
+export async function appendTrainingEvent(
   db: Database,
-  input: { studentId: string; sessionId: string; requestId?: string },
+  input: StudentFacadeInput & {
+    sessionId: string;
+    sequence: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+  },
+): Promise<AppendTrainingEventResult> {
+  const subject = await resolveTrainingSubject(db, input.studentId);
+  return appendTrainingEventForSubject(db, {
+    subject,
+    sessionId: input.sessionId,
+    sequence: input.sequence,
+    eventType: input.eventType,
+    payload: input.payload,
+  });
+}
+
+export async function cancelTrainingSessionForSubject(
+  db: Database,
+  input: { subject: TrainingSubject; sessionId: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "cancelled" }> {
-  const session = await loadOwnedSession(db, input.studentId, input.sessionId);
+  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
     throw new TrainingError("SESSION_INVALID_STATE", "Only active sessions can be cancelled");
@@ -515,7 +574,7 @@ export async function cancelTrainingSession(
     .where(eq(trainingSessions.id, input.sessionId));
 
   await appendAuditEvent(db, {
-    actorId: input.studentId,
+    actorId: input.subject.traineeId,
     action: "training_session.cancelled",
     resourceType: "training_session",
     resourceId: input.sessionId,
@@ -526,11 +585,23 @@ export async function cancelTrainingSession(
   return { sessionId: input.sessionId, status: "cancelled" };
 }
 
-export async function abandonTrainingSession(
+export async function cancelTrainingSession(
   db: Database,
-  input: { studentId: string; sessionId: string; reason?: string; requestId?: string },
+  input: StudentFacadeInput & { sessionId: string; requestId?: string },
+): Promise<{ sessionId: string; status: "cancelled" }> {
+  const subject = await resolveTrainingSubject(db, input.studentId);
+  return cancelTrainingSessionForSubject(db, {
+    subject,
+    sessionId: input.sessionId,
+    requestId: input.requestId,
+  });
+}
+
+export async function abandonTrainingSessionForSubject(
+  db: Database,
+  input: { subject: TrainingSubject; sessionId: string; reason?: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "abandoned" }> {
-  const session = await loadOwnedSession(db, input.studentId, input.sessionId);
+  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
 
   if (session.status !== "active" && session.status !== "submitted") {
     if (session.status === "abandoned") {
@@ -546,7 +617,7 @@ export async function abandonTrainingSession(
     .where(eq(trainingSessions.id, input.sessionId));
 
   await appendAuditEvent(db, {
-    actorId: input.studentId,
+    actorId: input.subject.traineeId,
     action: "training_session.abandoned",
     resourceType: "training_session",
     resourceId: input.sessionId,
@@ -556,6 +627,19 @@ export async function abandonTrainingSession(
   });
 
   return { sessionId: input.sessionId, status: "abandoned" };
+}
+
+export async function abandonTrainingSession(
+  db: Database,
+  input: StudentFacadeInput & { sessionId: string; reason?: string; requestId?: string },
+): Promise<{ sessionId: string; status: "abandoned" }> {
+  const subject = await resolveTrainingSubject(db, input.studentId);
+  return abandonTrainingSessionForSubject(db, {
+    subject,
+    sessionId: input.sessionId,
+    reason: input.reason,
+    requestId: input.requestId,
+  });
 }
 
 async function finalizeInvalidSession(
@@ -576,12 +660,12 @@ async function finalizeInvalidSession(
         .where(eq(trainingSessions.id, input.sessionId));
 
       await appendAuditEvent(tx, {
-        actorId: input.studentId,
+        actorId: input.subject.traineeId,
         action: "training_session.invalid",
         resourceType: "training_session",
         resourceId: input.sessionId,
         requestId: input.requestId,
-        idempotencyKey: `audit:training-invalid:${input.studentId}:${input.idempotencyKey}`,
+        idempotencyKey: `audit:training-invalid:${input.subject.traineeId}:${input.idempotencyKey}`,
         metadata: { reason: input.reason },
       });
     });
@@ -605,7 +689,11 @@ async function replayOrMismatchOnSubmitKeyConflict(
   db: Database,
   input: SubmitTrainingSessionInput,
 ): Promise<SubmitTrainingSessionResult> {
-  const raced = await findSubmitSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+  const raced = await findSubmitSessionByIdempotency(
+    db,
+    input.subject.traineeId,
+    input.idempotencyKey,
+  );
   if (!raced) {
     throw new Error("Submit idempotency conflict without matching session");
   }
@@ -613,15 +701,15 @@ async function replayOrMismatchOnSubmitKeyConflict(
   return resolveSubmitIdempotencyReplay(db, input, raced);
 }
 
-export async function submitTrainingSession(
+export async function submitTrainingSessionForSubject(
   db: Database,
   input: SubmitTrainingSessionInput,
 ): Promise<SubmitTrainingSessionResult> {
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectWritable(db, input.subject);
 
   const existingBySubmitKey = await findSubmitSessionByIdempotency(
     db,
-    input.studentId,
+    input.subject.traineeId,
     input.idempotencyKey,
   );
 
@@ -629,7 +717,7 @@ export async function submitTrainingSession(
     return resolveSubmitIdempotencyReplay(db, input, existingBySubmitKey);
   }
 
-  const session = await loadOwnedSession(db, input.studentId, input.sessionId);
+  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
 
   if (
     session.status === "completed" ||
@@ -695,7 +783,7 @@ export async function submitTrainingSession(
       );
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${buildSubmitCompetitionLockKey(
-          input.studentId,
+          input.subject.traineeId,
           session.trainingKey,
           session.familyDate,
         )}))`,
@@ -719,7 +807,7 @@ export async function submitTrainingSession(
         .from(trainingSessions)
         .where(
           and(
-            eq(trainingSessions.studentId, input.studentId),
+            eq(trainingSessions.traineeId, input.subject.traineeId),
             eq(trainingSessions.trainingKey, lockedSession.trainingKey),
             eq(trainingSessions.familyDate, lockedSession.familyDate),
             eq(trainingSessions.sessionKind, "effective"),
@@ -765,7 +853,7 @@ export async function submitTrainingSession(
 
       if (sessionKind === "effective") {
         await upsertProfileProjection(tx, {
-          studentId: input.studentId,
+          subject: input.subject,
           trainingKey: lockedSession.trainingKey,
           definitionVersion: lockedSession.definitionVersion,
           ageBand: lockedSession.ageBand,
@@ -776,32 +864,36 @@ export async function submitTrainingSession(
       }
 
       await appendAuditEvent(tx, {
-        actorId: input.studentId,
+        actorId: input.subject.traineeId,
         action: "training_session.completed",
         resourceType: "training_session",
         resourceId: input.sessionId,
         requestId: input.requestId,
-        idempotencyKey: `audit:training-complete:${input.studentId}:${input.idempotencyKey}`,
+        idempotencyKey: `audit:training-complete:${input.subject.traineeId}:${input.idempotencyKey}`,
         metadata: {
           sessionKind,
           trainingKey: lockedSession.trainingKey,
           familyDate: lockedSession.familyDate,
+          traineeRole: input.subject.traineeRole,
         },
       });
 
-      await appendOutboxEvent(tx, {
-        aggregateType: "training_session",
-        aggregateId: input.sessionId,
-        eventType: "training_session.completed",
-        dedupeKey: `outbox:training-complete:${input.studentId}:${input.idempotencyKey}`,
-        payload: {
-          sessionId: input.sessionId,
-          studentId: input.studentId,
-          trainingKey: lockedSession.trainingKey,
-          sessionKind,
-          familyDate: lockedSession.familyDate,
-        },
-      });
+      if (input.subject.traineeRole === "student") {
+        await appendOutboxEvent(tx, {
+          aggregateType: "training_session",
+          aggregateId: input.sessionId,
+          eventType: "training_session.completed",
+          dedupeKey: `outbox:training-complete:${input.subject.traineeId}:${input.idempotencyKey}`,
+          payload: {
+            sessionId: input.sessionId,
+            studentId: input.subject.traineeId,
+            traineeId: input.subject.traineeId,
+            trainingKey: lockedSession.trainingKey,
+            sessionKind,
+            familyDate: lockedSession.familyDate,
+          },
+        });
+      }
 
       const [finalSession] = await tx
         .select({ sessionKind: trainingSessions.sessionKind })
@@ -822,7 +914,11 @@ export async function submitTrainingSession(
       return replayOrMismatchOnSubmitKeyConflict(db, input);
     }
     if (error instanceof TrainingError && error.code === "SESSION_INVALID_STATE") {
-      const raced = await findSubmitSessionByIdempotency(db, input.studentId, input.idempotencyKey);
+      const raced = await findSubmitSessionByIdempotency(
+        db,
+        input.subject.traineeId,
+        input.idempotencyKey,
+      );
       if (raced && raced.id === input.sessionId) {
         return resolveSubmitIdempotencyReplay(db, input, raced);
       }
@@ -831,14 +927,31 @@ export async function submitTrainingSession(
   }
 }
 
-export async function getTrainingSessionForStudent(
+export async function submitTrainingSession(
   db: Database,
-  studentId: string,
+  input: StudentFacadeInput & {
+    sessionId: string;
+    idempotencyKey: string;
+    requestId?: string;
+  },
+): Promise<SubmitTrainingSessionResult> {
+  const subject = await resolveTrainingSubject(db, input.studentId);
+  return submitTrainingSessionForSubject(db, {
+    subject,
+    sessionId: input.sessionId,
+    idempotencyKey: input.idempotencyKey,
+    requestId: input.requestId,
+  });
+}
+
+export async function getTrainingSessionForSubject(
+  db: Database,
+  subject: TrainingSubject,
   sessionId: string,
 ): Promise<TrainingSessionDetail> {
-  await assertStudentAccountNotFrozen(db, studentId, "read");
+  await assertSubjectReadable(db, subject);
 
-  const session = await loadOwnedSession(db, studentId, sessionId);
+  const session = await loadOwnedSession(db, subject.traineeId, sessionId);
   const metrics = await loadSessionMetrics(db, sessionId);
   const events = await loadSessionEvents(db, sessionId);
 
@@ -859,6 +972,15 @@ export async function getTrainingSessionForStudent(
   };
 }
 
+export async function getTrainingSessionForStudent(
+  db: Database,
+  studentId: string,
+  sessionId: string,
+): Promise<TrainingSessionDetail> {
+  const subject = await resolveTrainingSubject(db, studentId);
+  return getTrainingSessionForSubject(db, subject, sessionId);
+}
+
 export async function getTrainingSummaryForParent(
   db: Database,
   parentId: string,
@@ -873,7 +995,7 @@ export async function getTrainingSummaryForParent(
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.studentId, studentId),
+        eq(trainingSessions.traineeId, studentId),
         eq(trainingSessions.trainingKey, trainingKey),
         eq(trainingSessions.status, "completed"),
       ),
@@ -886,7 +1008,7 @@ export async function getTrainingSummaryForParent(
     .from(trainingProfileProjection)
     .where(
       and(
-        eq(trainingProfileProjection.studentId, studentId),
+        eq(trainingProfileProjection.traineeId, studentId),
         eq(trainingProfileProjection.trainingKey, trainingKey),
       ),
     );

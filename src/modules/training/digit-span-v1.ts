@@ -47,6 +47,13 @@ const DEFAULT_DIGIT_SPAN_SCHEMAS: Record<string, DigitSpanMetricSchema> = {
     backwardMaxLength: 5,
     attemptsPerLength: 2,
   },
+  adult: {
+    forwardMinLength: 3,
+    forwardMaxLength: 6,
+    backwardMinLength: 2,
+    backwardMaxLength: 5,
+    attemptsPerLength: 2,
+  },
 };
 
 export function decodeDigitSpanMetricSchema(

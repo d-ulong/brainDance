@@ -11,9 +11,9 @@ export function buildFullRebuildProjectionLockKey(): string {
  * Acquire order when both are needed: full rebuild lock, then submit competition lock.
  */
 export function buildSubmitCompetitionLockKey(
-  studentId: string,
+  traineeId: string,
   trainingKey: string,
   familyDate: string,
 ): string {
-  return `${studentId}:${trainingKey}:${familyDate}`;
+  return `${traineeId}:${trainingKey}:${familyDate}`;
 }

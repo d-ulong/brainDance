@@ -59,9 +59,11 @@ export const trainingSessions = pgTable(
   "training_sessions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    studentId: uuid("student_id")
+    traineeId: uuid("trainee_id")
       .notNull()
       .references(() => users.id),
+    /** Expand-compat owner column; null for parent trainees, set for students. */
+    studentId: uuid("student_id").references(() => users.id),
     trainingKey: text("training_key").notNull(),
     definitionId: uuid("definition_id")
       .notNull()
@@ -86,14 +88,29 @@ export const trainingSessions = pgTable(
     uniqueIndex("training_sessions_submit_idempotency_scoped")
       .on(table.studentId, table.submitIdempotencyKey)
       .where(sql`${table.submitIdempotencyKey} is not null`),
+    uniqueIndex("training_sessions_start_idempotency_trainee_scoped")
+      .on(table.traineeId, table.startIdempotencyKey)
+      .where(sql`${table.startIdempotencyKey} is not null`),
+    uniqueIndex("training_sessions_submit_idempotency_trainee_scoped")
+      .on(table.traineeId, table.submitIdempotencyKey)
+      .where(sql`${table.submitIdempotencyKey} is not null`),
     index("training_sessions_student_key_date_idx").on(
       table.studentId,
       table.trainingKey,
       table.familyDate,
     ),
     index("training_sessions_student_status_idx").on(table.studentId, table.status),
+    index("training_sessions_trainee_key_date_idx").on(
+      table.traineeId,
+      table.trainingKey,
+      table.familyDate,
+    ),
+    index("training_sessions_trainee_status_idx").on(table.traineeId, table.status),
     uniqueIndex("training_sessions_effective_daily_unique")
       .on(table.studentId, table.trainingKey, table.familyDate)
+      .where(sql`${table.sessionKind} = 'effective' AND ${table.status} = 'completed'`),
+    uniqueIndex("training_sessions_effective_daily_trainee_unique")
+      .on(table.traineeId, table.trainingKey, table.familyDate)
       .where(sql`${table.sessionKind} = 'effective' AND ${table.status} = 'completed'`),
   ],
 );
@@ -141,9 +158,11 @@ export const trainingProfileProjection = pgTable(
   "training_profile_projection",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    studentId: uuid("student_id")
+    traineeId: uuid("trainee_id")
       .notNull()
       .references(() => users.id),
+    /** Expand-compat owner column; null for parent trainees, set for students. */
+    studentId: uuid("student_id").references(() => users.id),
     trainingKey: text("training_key").notNull(),
     definitionVersion: integer("definition_version").notNull(),
     ageBand: text("age_band").notNull(),
@@ -162,6 +181,14 @@ export const trainingProfileProjection = pgTable(
       table.ageBand,
       table.metricKey,
     ),
+    unique("training_profile_projection_trainee_unique").on(
+      table.traineeId,
+      table.trainingKey,
+      table.definitionVersion,
+      table.ageBand,
+      table.metricKey,
+    ),
     index("training_profile_projection_student_key_idx").on(table.studentId, table.trainingKey),
+    index("training_profile_projection_trainee_key_idx").on(table.traineeId, table.trainingKey),
   ],
 );

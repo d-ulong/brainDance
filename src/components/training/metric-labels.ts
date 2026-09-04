@@ -31,6 +31,7 @@ const AGE_BAND_LABELS: Record<string, string> = {
   "5-8": "5–8 岁",
   "9-12": "9–12 岁",
   "13-18": "13–18 岁",
+  adult: "成人",
 };
 
 const SEGMENT_REASON_LABELS: Record<string, string> = {

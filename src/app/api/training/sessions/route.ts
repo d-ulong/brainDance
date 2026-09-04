@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireStudentSessionForWrites } from "@/lib/auth-request";
+import { requireTraineeSessionForWrites } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
-import { startTrainingSession } from "@/modules/training/session.service";
+import { startTrainingSessionForSubject } from "@/modules/training/session.service";
+import { resolveTrainingSubject } from "@/modules/training/training-subject";
 
 const bodySchema = z.object({
   trainingKey: z.string().min(1).max(64),
@@ -12,11 +13,12 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const { db, dbUser } = await requireStudentSessionForWrites();
+    const { db, dbUser } = await requireTraineeSessionForWrites();
     const body = bodySchema.parse(await request.json());
+    const subject = await resolveTrainingSubject(db, dbUser.id);
 
-    const result = await startTrainingSession(db, {
-      studentId: dbUser.id,
+    const result = await startTrainingSessionForSubject(db, {
+      subject,
       trainingKey: body.trainingKey,
       idempotencyKey: body.idempotencyKey,
       requestId: request.headers.get("x-request-id") ?? undefined,
