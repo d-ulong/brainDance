@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-09-03
+- **Total Sessions**: 10
+- **Last Active**: 2026-09-04
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~228 | Active |
+| `journal-1.md` | ~268 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-09-04 | Credential UX and parent self-training | `b9b04bc`, `9985bc8`, `4048c81`, `cf79f2e`, `491d597`, `7e2782c`, `b767810` | `main` |
 | 9 | 2026-09-03 | Define launch readiness gates | `dd76ac4`, `e50d5ef` | `main` |
 | 8 | 2026-09-03 | Complete M7 family push pilot | `6a15eab9adabf4c0c47f91322ad2b48f22ede108`, `cdcf42ff8b1c07c3eacd1a9bc3aa77ccec2b0789`, `287068b29ebb8fe2c444f4371d6fbb1d9fcc09c8` | `main` |
 | 7 | 2026-09-02 | M6 lifecycle acceptance final signoff | `e2abff52c496f53e81d1442145f5bc75ebd6b28a`, `d4de9a4` | `feat/m6-lifecycle-redemption-acceptance` |

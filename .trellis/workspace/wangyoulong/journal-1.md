@@ -226,3 +226,43 @@ Created and completed a planning-only launch-readiness task: evidence register, 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: Credential UX and parent self-training
+
+**Date**: 2026-09-04
+**Task**: Credential UX and parent self-training
+**Branch**: `main`
+
+### Summary
+
+Completed and final-reviewed unified password UX plus parent personal training access.
+
+### Main Changes
+
+- Added password confirmation, visibility controls, and shared credential policy.
+- Added isolated parent trainee subjects, self-only training routes, and verified-contact enforcement.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9b04bc` | (see git log) |
+| `9985bc8` | (see git log) |
+| `4048c81` | (see git log) |
+| `cf79f2e` | (see git log) |
+| `491d597` | (see git log) |
+| `7e2782c` | (see git log) |
+| `b767810` | (see git log) |
+
+### Testing
+
+- [OK] Focused integration and desktop E2E evidence recorded at b767810; final source review GO.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- No further implementation; optionally push main when authorized.
