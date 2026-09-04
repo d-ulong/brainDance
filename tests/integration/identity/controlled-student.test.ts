@@ -11,6 +11,7 @@ import { createControlledStudent } from "@/modules/identity/create-controlled-st
 import { IdentityError } from "@/modules/identity/errors";
 import { PRODUCT_PASSWORD_RULE_DESCRIPTION } from "@/modules/identity/password-policy";
 import { assertStudentMayPerformWrites } from "@/modules/identity/password-change-guard";
+import { login, validateSession } from "@/modules/identity/login.service";
 import { registerParent } from "@/modules/identity/registration.service";
 import { createInvitation } from "@/modules/identity/invitation.service";
 import { startTrainingSession } from "@/modules/training/session.service";
@@ -265,6 +266,33 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
 
     const [after] = await db.select().from(users).where(eq(users.id, parentId)).limit(1);
     expect(after!.authorizationEpoch).toBeGreaterThan(before!.authorizationEpoch);
+  });
+
+  it("invalidates the prior session and authenticates the new cookie after password change", async () => {
+    const parentEmail = `parent-${randomUUID()}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
+
+    const prior = await login(db, {
+      identifier: parentEmail,
+      password: "Parent1aXy",
+      idempotencyKey: `login-before-pw-change-${randomUUID()}`,
+    });
+
+    const changed = await changePassword(db, {
+      userId: parentId,
+      currentSessionId: prior.sessionId,
+      currentPassword: "Parent1aXy",
+      newPassword: "Parent2bYz",
+      idempotencyKey: `parent-session-contract-${randomUUID()}`,
+    });
+
+    expect(await validateSession(db, prior.sessionId)).toBeNull();
+
+    const renewed = await validateSession(db, changed.sessionCookie.value);
+    expect(renewed).not.toBeNull();
+    expect(renewed!.user.id).toBe(parentId);
+    expect(renewed!.session.id).toBe(changed.sessionCookie.value);
+    expect(renewed!.session.id).not.toBe(prior.sessionId);
   });
 
   it("rejects password change for non self roles via service role gate", async () => {

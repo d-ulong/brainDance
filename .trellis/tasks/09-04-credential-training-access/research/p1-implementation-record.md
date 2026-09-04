@@ -45,6 +45,15 @@
 | `pnpm build` | exit 0 — Playwright `next start` 前置（指令未列，但定向 E2E 需要与本阶段 UI 一致的 `.next`） |
 | `pnpm exec playwright test tests/e2e/m1-browser-flow.spec.ts --project=desktop-chromium --project=mobile-360 --workers=1` | exit 0 — 6 passed / 2 skipped（项目无 `chromium`；等价双视口） |
 
+## P1 remediation（基线 `b9b04bc`）
+
+范围：无关测试字符损坏恢复；补充改密后会话契约集成回归。未改业务实现。
+
+| Command | Result |
+|---------|--------|
+| `pnpm test -- tests/integration/identity/controlled-student.test.ts` | exit 0 — 1 file / 7 tests passed（含新增会话契约用例） |
+| `git diff --check` | exit 0 — clean |
+
 ## Not executed
 
 - 指令中的 `--runInBand`：Vitest 未知选项，已省略并说明

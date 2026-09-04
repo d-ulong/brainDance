@@ -104,7 +104,7 @@ async function findForeignKeyConstraint(
 
   if (rows.length !== 1) {
     throw new Error(
-      `Expected exactly one foreign key for ${quadruple.sourceTable}.${quadruple.sourceColumn} â†?${quadruple.targetTable}.${quadruple.targetColumn}, found ${rows.length}`,
+      `Expected exactly one foreign key for ${quadruple.sourceTable}.${quadruple.sourceColumn} â†’ ${quadruple.targetTable}.${quadruple.targetColumn}, found ${rows.length}`,
     );
   }
 
@@ -316,7 +316,7 @@ describe.skipIf(!hasDb)("settlement ledger", () => {
     expect(ledger?.explanation).toContain("completion_kind=late");
   });
 
-  it("updates balance 0â†?0 and last_ledger_entry_id on first ledger (C9)", async () => {
+  it("updates balance 0â†’10 and last_ledger_entry_id on first ledger (C9)", async () => {
     const { studentId, items } = await seedPlanWithRule();
     const item = items.find((row) => row.familyDate === "2026-01-15");
     if (!item) throw new Error("Expected item");
