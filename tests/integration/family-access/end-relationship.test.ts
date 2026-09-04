@@ -40,7 +40,7 @@ describe.skipIf(!hasDb)("end relationship", () => {
 
   async function setupActiveRelationship() {
     const parentEmail = `parent-${crypto.randomUUID()}@test.local`;
-    const parentPassword = "ParentPass123!Parent";
+    const parentPassword = "Parent1aXy";
     const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
     const student = await seedStudentUser(db, {
       username: `student_${crypto.randomUUID().slice(0, 8)}`,

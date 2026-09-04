@@ -5,6 +5,7 @@ import { auditEvents, users } from "@/db/schema";
 import { hashPassword } from "@/lib/crypto";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { FamilyAccessError } from "@/modules/family-access/errors";
+import { assertProductPassword } from "@/modules/identity/password-policy";
 import { resolveAgeBand } from "@/modules/time-policy/resolve-age-band";
 
 export type CreateControlledStudentInput = {
@@ -117,13 +118,7 @@ export async function createControlledStudent(
   }
 
   assertControlledStudentAge(input.birthDate);
-
-  if (input.initialPassword.length < 12) {
-    throw new FamilyAccessError(
-      "VALIDATION_ERROR",
-      "Initial password must be at least 12 characters",
-    );
-  }
+  assertProductPassword(input.initialPassword);
 
   const [existingUsername] = await db
     .select({ id: users.id })

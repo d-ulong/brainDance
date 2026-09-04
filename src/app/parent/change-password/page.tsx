@@ -12,23 +12,24 @@ import {
   PRODUCT_PASSWORD_RULE_DESCRIPTION,
 } from "@/modules/identity/password-policy";
 
-export default function StudentChangePasswordPage() {
+export default function ParentChangePasswordPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     void fetchSession().then((session) => {
-      if (!session || session.role !== "student") {
+      if (!session || session.role !== "parent") {
         router.replace("/login");
         return;
       }
-      if (!session.mustChangePassword) {
-        router.replace("/");
+      if (!session.contactVerified) {
+        router.replace("/verify-contact");
         return;
       }
       setLoading(false);
@@ -43,6 +44,7 @@ export default function StudentChangePasswordPage() {
     }
     setSubmitting(true);
     setError(null);
+    setSuccess(false);
     try {
       await apiFetch("/api/auth/change-password", {
         method: "POST",
@@ -52,7 +54,10 @@ export default function StudentChangePasswordPage() {
           idempotencyKey: newIdempotencyKey("change-password"),
         }),
       });
-      window.location.assign("/");
+      setSuccess(true);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "修改密码失败");
     } finally {
@@ -69,7 +74,7 @@ export default function StudentChangePasswordPage() {
   }
 
   return (
-    <PageShell title="修改初始密码" subtitle="首次登录必须修改密码后才能继续">
+    <PageShell title="修改密码" subtitle="仅可修改自己的登录密码" backHref="/" showLogout>
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
         <PasswordField
           label="当前密码"
@@ -102,6 +107,11 @@ export default function StudentChangePasswordPage() {
         {error ? (
           <Alert tone="error" data-testid="change-password-error">
             {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert tone="success" data-testid="change-password-success">
+            密码已更新，请使用新密码登录后续会话。
           </Alert>
         ) : null}
         <PrimaryButton type="submit" disabled={submitting} data-testid="change-password-submit">

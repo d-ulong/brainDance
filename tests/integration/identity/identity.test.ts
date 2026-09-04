@@ -72,7 +72,7 @@ describe.skipIf(!hasDb)("identity module", () => {
         invitationCode: expired.codePlaintext,
         displayName: "Parent",
         email: "parent1@test.local",
-        password: "ParentPass123!Parent",
+        password: "Parent1aXy",
         idempotencyKey: "reg-expired",
       }),
     ).rejects.toMatchObject({ code: "INVITATION_EXPIRED" });
@@ -94,7 +94,7 @@ describe.skipIf(!hasDb)("identity module", () => {
         invitationCode: revokable.codePlaintext,
         displayName: "Parent",
         email: "parent2@test.local",
-        password: "ParentPass123!Parent",
+        password: "Parent1aXy",
         idempotencyKey: "reg-revoked",
       }),
     ).rejects.toMatchObject({ code: "INVITATION_REVOKED" });
@@ -110,7 +110,7 @@ describe.skipIf(!hasDb)("identity module", () => {
       invitationCode: singleUse.codePlaintext,
       displayName: "Parent",
       email: "parent3@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "reg-single-1",
     });
 
@@ -119,7 +119,7 @@ describe.skipIf(!hasDb)("identity module", () => {
         invitationCode: singleUse.codePlaintext,
         displayName: "Parent Two",
         email: "parent4@test.local",
-        password: "ParentPass123!Parent",
+        password: "Parent1aXy",
         idempotencyKey: "reg-single-2",
       }),
     ).rejects.toMatchObject({ code: "INVITATION_EXHAUSTED" });
@@ -135,7 +135,7 @@ describe.skipIf(!hasDb)("identity module", () => {
         invitationCode: studentInvite.codePlaintext,
         displayName: "Parent",
         email: "parent5@test.local",
-        password: "ParentPass123!Parent",
+        password: "Parent1aXy",
         idempotencyKey: "reg-role",
       }),
     ).rejects.toMatchObject({ code: "INVITATION_ROLE_MISMATCH" });
@@ -153,7 +153,7 @@ describe.skipIf(!hasDb)("identity module", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Parent",
       email: "parent-idem@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "reg-idem",
     });
 
@@ -161,7 +161,7 @@ describe.skipIf(!hasDb)("identity module", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Parent",
       email: "parent-idem@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "reg-idem",
     });
 
@@ -187,13 +187,13 @@ describe.skipIf(!hasDb)("identity module", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Parent",
       email: "verified-parent@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "reg-verify",
     });
 
     const beforeVerify = await login(db, {
       identifier: "verified-parent@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "login-before-verify",
     });
     expect(beforeVerify.contactVerified).toBe(false);
@@ -212,7 +212,7 @@ describe.skipIf(!hasDb)("identity module", () => {
 
     const afterVerify = await login(db, {
       identifier: "verified-parent@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "login-after-verify",
     });
     expect(afterVerify.contactVerified).toBe(true);
@@ -234,7 +234,7 @@ describe.skipIf(!hasDb)("identity module", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Parent",
       email: "lock-parent@test.local",
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "reg-lock",
     });
 
@@ -251,7 +251,7 @@ describe.skipIf(!hasDb)("identity module", () => {
     await expect(
       login(db, {
         identifier: "lock-parent@test.local",
-        password: "ParentPass123!Parent",
+        password: "Parent1aXy",
         idempotencyKey: "login-while-locked",
       }),
     ).rejects.toMatchObject({ code: "ACCOUNT_LOCKED" });

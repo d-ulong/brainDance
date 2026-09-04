@@ -11,7 +11,13 @@ import {
   PrimaryButton,
   TextInput,
 } from "@/components/ui/page-shell";
+import { PasswordField } from "@/components/ui/password-field";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
+import {
+  PRODUCT_PASSWORD_MAX_LENGTH,
+  PRODUCT_PASSWORD_MIN_LENGTH,
+  PRODUCT_PASSWORD_RULE_DESCRIPTION,
+} from "@/modules/identity/password-policy";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -19,6 +25,7 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -35,6 +42,10 @@ export default function RegisterPage() {
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (password !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -92,18 +103,32 @@ export default function RegisterPage() {
             required
           />
         </Field>
-        <Field label="密码（至少 12 位）">
-          <TextInput
-            data-testid="register-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={12}
-            required
-          />
-        </Field>
-        {error ? <Alert tone="error">{error}</Alert> : null}
-        <PrimaryButton type="submit" disabled={loading}>
+        <PasswordField
+          label={`密码（${PRODUCT_PASSWORD_RULE_DESCRIPTION}）`}
+          testId="register-password"
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+          minLength={PRODUCT_PASSWORD_MIN_LENGTH}
+          maxLength={PRODUCT_PASSWORD_MAX_LENGTH}
+          required
+        />
+        <PasswordField
+          label="确认密码"
+          testId="register-password-confirm"
+          autoComplete="new-password"
+          value={confirmPassword}
+          onChange={setConfirmPassword}
+          minLength={PRODUCT_PASSWORD_MIN_LENGTH}
+          maxLength={PRODUCT_PASSWORD_MAX_LENGTH}
+          required
+        />
+        {error ? (
+          <Alert tone="error" data-testid="register-error">
+            {error}
+          </Alert>
+        ) : null}
+        <PrimaryButton type="submit" disabled={loading} data-testid="register-submit">
           {loading ? "注册中…" : "注册并继续验证"}
         </PrimaryButton>
       </form>

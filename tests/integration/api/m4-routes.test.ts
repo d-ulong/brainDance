@@ -72,7 +72,7 @@ describe.skipIf(!hasDb)("m4 api routes", () => {
 
     const parentSession = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-parent:${suffix}`,
     });
     withSessionCookie(parentSession);
@@ -179,7 +179,7 @@ describe.skipIf(!hasDb)("m4 api routes", () => {
 
     const parent2Session = await login(db, {
       identifier: `parent2_${suffix}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-parent2-${suffix}`,
     });
     withSessionCookie(parent2Session);
@@ -243,7 +243,7 @@ describe.skipIf(!hasDb)("m4 api routes", () => {
 
     const parentSession = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-parent-revoke-${suffix}`,
     });
     withSessionCookie(parentSession);
@@ -274,7 +274,7 @@ describe.skipIf(!hasDb)("m4 api routes", () => {
 
     const refreshedParentSession = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-parent-revoke-fresh-${suffix}`,
     });
     withSessionCookie(refreshedParentSession);

@@ -38,7 +38,7 @@ export async function bootstrapLinkedParentStudent(db: TestDb) {
 
   const parentSession = await login(db, {
     identifier: email,
-    password: "ParentPass123!Parent",
+    password: "Parent1aXy",
     idempotencyKey: `login-parent:${suffix}`,
   });
 

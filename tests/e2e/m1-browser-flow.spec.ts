@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { fillField, loadE2eFixture, loginViaUi, logoutViaUi } from "./ui-helpers";
 
@@ -6,7 +6,7 @@ function uniqueSuffix(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function completeTraining(page: import("@playwright/test").Page) {
+async function completeTraining(page: Page) {
   await page.goto("/student/training/reaction");
   const target = page.getByTestId("training-target");
   await expect(target).toBeVisible({ timeout: 30_000 });
@@ -24,6 +24,22 @@ async function completeTraining(page: import("@playwright/test").Page) {
   await expect(page.getByTestId("metric-median_reaction_ms")).toBeVisible();
 }
 
+async function expectPasswordToggle(page: Page, testId: string) {
+  const input = page.getByTestId(testId);
+  const toggle = page.getByTestId(`${testId}-toggle`);
+  await expect(input).toHaveAttribute("type", "password");
+  await expect(toggle).toHaveAttribute("aria-label", "显示密码");
+  const before = await input.inputValue();
+  await toggle.click();
+  await expect(input).toHaveAttribute("type", "text");
+  await expect(toggle).toHaveAttribute("aria-label", "隐藏密码");
+  await expect(input).toHaveValue(before);
+  await toggle.click();
+  await expect(input).toHaveAttribute("type", "password");
+  await expect(toggle).toHaveAttribute("aria-label", "显示密码");
+  await expect(input).toHaveValue(before);
+}
+
 test.describe("M1 browser flow", () => {
   test.setTimeout(180_000);
 
@@ -31,10 +47,10 @@ test.describe("M1 browser flow", () => {
     const fixture = loadE2eFixture();
     const suffix = uniqueSuffix();
     const parentEmail = `e2e-parent-${suffix}@test.local`;
-    const parentPassword = "ParentPass123!Parent";
+    const parentPassword = "Parent1aXy";
     const studentUsername = `e2e_student_${suffix.slice(-8)}`;
-    const initialPassword = "InitialPass123!Go";
-    const studentPassword = "StudentPass123!Student";
+    const initialPassword = "Init1aPass";
+    const studentPassword = "Stud1aPass";
 
     await loginViaUi(page, fixture.adminEmail, fixture.adminPassword);
     await page.goto("/admin/invitations");
@@ -50,6 +66,7 @@ test.describe("M1 browser flow", () => {
     await fillField(page, "register-display-name", "E2E Parent");
     await fillField(page, "register-email", parentEmail);
     await fillField(page, "register-password", parentPassword);
+    await fillField(page, "register-password-confirm", parentPassword);
     await page.getByRole("button", { name: "注册并继续验证" }).click();
 
     await page.waitForURL("**/verify-contact");
@@ -64,6 +81,7 @@ test.describe("M1 browser flow", () => {
     await fillField(page, "student-username", studentUsername);
     await fillField(page, "student-birth-date", "2015-06-01");
     await fillField(page, "student-initial-password", initialPassword);
+    await fillField(page, "student-initial-password-confirm", initialPassword);
     await page.getByRole("button", { name: "创建学生" }).click();
     await expect(page.getByTestId("created-student-username")).toHaveText(studentUsername);
     await logoutViaUi(page);
@@ -72,6 +90,7 @@ test.describe("M1 browser flow", () => {
     await page.waitForURL("**/student/change-password");
     await fillField(page, "current-password", initialPassword);
     await fillField(page, "new-password", studentPassword);
+    await fillField(page, "confirm-password", studentPassword);
     await page.getByRole("button", { name: "确认修改" }).click();
     await page.waitForURL("/");
 
@@ -143,6 +162,84 @@ test.describe("M1 browser flow", () => {
       `/api/students/${studentIdFromUrl}/training-summary?trainingKey=reaction`,
     );
     expect(summaryResponse.status()).toBe(403);
+  });
+
+  test("register password confirm mismatch and toggle on desktop", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop-chromium", "desktop coverage");
+
+    await page.goto("/register");
+    await fillField(page, "register-invitation-code", "INVITECODE12");
+    await fillField(page, "register-display-name", "Mismatch Parent");
+    await fillField(page, "register-email", `mismatch-${uniqueSuffix()}@test.local`);
+    await fillField(page, "register-password", "Abc123");
+    await fillField(page, "register-password-confirm", "Abc124");
+    await expectPasswordToggle(page, "register-password");
+
+    const registerRequest = page.waitForRequest(
+      (req) => req.url().includes("/api/auth/register") && req.method() === "POST",
+      { timeout: 2_000 },
+    );
+    await page.getByTestId("register-submit").click();
+    await expect(page.getByTestId("register-error")).toHaveText("两次输入的密码不一致");
+    await expect(registerRequest).rejects.toThrow();
+  });
+
+  test("parent change-password confirm, toggle, and short password on mobile", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile-360", "mobile coverage");
+    test.setTimeout(120_000);
+
+    const fixture = loadE2eFixture();
+    const suffix = uniqueSuffix();
+    const parentEmail = `e2e-pwd-${suffix}@test.local`;
+    const parentPassword = "Parent1aXy";
+    const nextPassword = "Abc123";
+
+    await loginViaUi(page, fixture.adminEmail, fixture.adminPassword);
+    await page.goto("/admin/invitations");
+    await page.getByRole("button", { name: "生成邀请码" }).click();
+    const invitationCode = await page.getByTestId("invitation-code").innerText();
+    await logoutViaUi(page);
+
+    await page.goto("/register");
+    await fillField(page, "register-invitation-code", invitationCode);
+    await fillField(page, "register-display-name", "Pwd Parent");
+    await fillField(page, "register-email", parentEmail);
+    await fillField(page, "register-password", parentPassword);
+    await fillField(page, "register-password-confirm", parentPassword);
+    await page.getByTestId("register-submit").click();
+    await page.waitForURL("**/verify-contact");
+    const devOtp = await page.getByTestId("dev-otp").innerText({ timeout: 30_000 });
+    const otpMatch = devOtp.match(/\d{4,8}/);
+    expect(otpMatch).toBeTruthy();
+    await fillField(page, "verify-otp", otpMatch![0]);
+    await page.getByRole("button", { name: "确认验证" }).click();
+    await page.waitForURL("/");
+
+    await page.goto("/parent/change-password");
+    await fillField(page, "current-password", parentPassword);
+    await fillField(page, "new-password", nextPassword);
+    await fillField(page, "confirm-password", "Abc124");
+    await expectPasswordToggle(page, "new-password");
+
+    const changeRequest = page.waitForRequest(
+      (req) => req.url().includes("/api/auth/change-password") && req.method() === "POST",
+      { timeout: 2_000 },
+    );
+    await page.getByTestId("change-password-submit").click();
+    await expect(page.getByTestId("change-password-error")).toHaveText("两次输入的密码不一致");
+    await expect(changeRequest).rejects.toThrow();
+
+    await fillField(page, "confirm-password", nextPassword);
+    const successResponse = page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/auth/change-password") && resp.request().method() === "POST",
+    );
+    await page.getByTestId("change-password-submit").click();
+    const result = await successResponse;
+    expect(result.ok(), await result.text()).toBeTruthy();
+    await expect(page.getByTestId("change-password-success")).toBeVisible();
   });
 
   test("has no horizontal scroll on 360px viewport", async ({ page }) => {

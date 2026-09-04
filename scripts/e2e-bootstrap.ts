@@ -52,12 +52,12 @@ async function main() {
   await seedM5TrainingDefinitions(db);
 
   const parentEmail = `e2e-parent-${runId}@test.local`;
-  const parentPassword = "ParentPass123!Parent";
+  const parentPassword = "Parent1aXy";
   const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
 
   const studentUsername = `e2e_student_${runId}`;
-  const initialPassword = "InitialPass123!Go";
-  const studentPassword = "StudentPass123!Student";
+  const initialPassword = "Init1aPass";
+  const studentPassword = "Stud1aPass";
 
   const created = await createControlledStudent(db, {
     parentId,

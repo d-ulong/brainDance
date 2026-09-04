@@ -56,7 +56,7 @@ describe.skipIf(!hasDb)("outbox transaction", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Outbox Parent",
       email: `parent-${crypto.randomUUID()}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "register-outbox",
     });
 
@@ -199,7 +199,7 @@ describe.skipIf(!hasDb)("outbox transaction", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Outbox Fields Parent",
       email: `parent-fields-${crypto.randomUUID()}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "register-fields",
     });
 

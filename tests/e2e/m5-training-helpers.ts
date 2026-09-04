@@ -227,7 +227,7 @@ export async function createVerifiedSecondParent(
   suffix: string,
 ) {
   const parent2Email = `e2e-parent2-${suffix}@test.local`;
-  const parent2Password = "ParentPass123!Parent";
+  const parent2Password = "Parent1aXy";
 
   await loginApi(request, fixture.adminEmail, fixture.adminPassword);
   const inviteResponse = await request.post("/api/admin/invitations", {

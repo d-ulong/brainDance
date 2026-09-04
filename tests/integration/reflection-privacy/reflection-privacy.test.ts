@@ -402,7 +402,7 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
 
     const parentSession = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-epoch-${suffix}`,
     });
 
@@ -418,7 +418,7 @@ describe.skipIf(!hasDb)("M4 reflection privacy", () => {
 
     const freshSession = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-epoch-fresh-${suffix}`,
     });
     expect(freshSession).not.toBeNull();

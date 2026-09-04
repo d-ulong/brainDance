@@ -6,6 +6,7 @@ import { users } from "@/db/schema";
 import { jsonWithSessionCookie } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { login } from "@/modules/identity/login.service";
+import { PRODUCT_PASSWORD_MAX_LENGTH } from "@/modules/identity/password-policy";
 import { registerParent } from "@/modules/identity/registration.service";
 
 const bodySchema = z
@@ -14,7 +15,7 @@ const bodySchema = z
     displayName: z.string().min(1).max(64),
     email: z.string().email().optional(),
     phone: z.string().min(6).max(32).optional(),
-    password: z.string().min(12).max(128),
+    password: z.string().min(1).max(PRODUCT_PASSWORD_MAX_LENGTH),
     idempotencyKey: z.string().min(8).max(128),
   })
   .refine((value) => Boolean(value.email) !== Boolean(value.phone), {

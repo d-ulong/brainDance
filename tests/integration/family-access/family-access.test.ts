@@ -313,7 +313,7 @@ describe.skipIf(!hasDb)("family access module", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Unverified Parent",
       email: parentEmail,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `register-${parentEmail}`,
     });
 
@@ -342,7 +342,7 @@ describe.skipIf(!hasDb)("family access module", () => {
 
   it("invalidates pre-acceptance parent sessions when relationship is accepted", async () => {
     const parentEmail = `parent-epoch-${crypto.randomUUID()}@test.local`;
-    const parentPassword = "ParentPass123!Parent";
+    const parentPassword = "Parent1aXy";
     const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
     const student = await seedStudentUser(db, {
       username: `student_${crypto.randomUUID().slice(0, 8)}`,

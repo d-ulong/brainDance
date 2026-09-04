@@ -11,7 +11,13 @@ import {
   PrimaryButton,
   TextInput,
 } from "@/components/ui/page-shell";
+import { PasswordField } from "@/components/ui/password-field";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
+import {
+  PRODUCT_PASSWORD_MAX_LENGTH,
+  PRODUCT_PASSWORD_MIN_LENGTH,
+  PRODUCT_PASSWORD_RULE_DESCRIPTION,
+} from "@/modules/identity/password-policy";
 
 export default function ParentCreateStudentPage() {
   const router = useRouter();
@@ -22,7 +28,8 @@ export default function ParentCreateStudentPage() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [birthDate, setBirthDate] = useState("2015-06-01");
-  const [initialPassword, setInitialPassword] = useState("InitialPass123!Go");
+  const [initialPassword, setInitialPassword] = useState("Init1aPass");
+  const [confirmPassword, setConfirmPassword] = useState("Init1aPass");
 
   useEffect(() => {
     void fetchSession().then((session) => {
@@ -40,6 +47,10 @@ export default function ParentCreateStudentPage() {
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (initialPassword !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -104,18 +115,32 @@ export default function ParentCreateStudentPage() {
               required
             />
           </Field>
-          <Field label="初始密码">
-            <TextInput
-              data-testid="student-initial-password"
-              type="password"
-              value={initialPassword}
-              onChange={(e) => setInitialPassword(e.target.value)}
-              minLength={12}
-              required
-            />
-          </Field>
-          {error ? <Alert tone="error">{error}</Alert> : null}
-          <PrimaryButton type="submit" disabled={submitting}>
+          <PasswordField
+            label={`初始密码（${PRODUCT_PASSWORD_RULE_DESCRIPTION}）`}
+            testId="student-initial-password"
+            autoComplete="new-password"
+            value={initialPassword}
+            onChange={setInitialPassword}
+            minLength={PRODUCT_PASSWORD_MIN_LENGTH}
+            maxLength={PRODUCT_PASSWORD_MAX_LENGTH}
+            required
+          />
+          <PasswordField
+            label="确认初始密码"
+            testId="student-initial-password-confirm"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            minLength={PRODUCT_PASSWORD_MIN_LENGTH}
+            maxLength={PRODUCT_PASSWORD_MAX_LENGTH}
+            required
+          />
+          {error ? (
+            <Alert tone="error" data-testid="create-student-error">
+              {error}
+            </Alert>
+          ) : null}
+          <PrimaryButton type="submit" disabled={submitting} data-testid="create-student-submit">
             {submitting ? "创建中…" : "创建学生"}
           </PrimaryButton>
         </form>

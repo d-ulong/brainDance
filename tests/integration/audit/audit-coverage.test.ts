@@ -60,7 +60,7 @@ describe.skipIf(!hasDb)("audit coverage", () => {
       invitationCode: invite.codePlaintext,
       displayName: "Audit Parent",
       email: parentEmail,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: "audit-register",
     });
 
@@ -112,6 +112,6 @@ describe.skipIf(!hasDb)("audit coverage", () => {
     expect(serialized).not.toContain(invite.codePlaintext);
     expect(serialized).not.toContain(code.codePlaintext);
     expect(serialized).not.toContain(issued.devOtpPlaintext);
-    expect(serialized).not.toContain("ParentPass123!Parent");
+    expect(serialized).not.toContain("Parent1aXy");
   });
 });

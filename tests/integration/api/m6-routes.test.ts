@@ -92,7 +92,7 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
 
     const session = await login(db, {
       identifier: email,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-${suffix}`,
     });
     withSessionCookie(session);
@@ -119,7 +119,7 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
 
     const parentSession = await login(db, {
       identifier: `parent_${suffix}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-parent-${suffix}`,
     });
     withSessionCookie(parentSession);
@@ -186,7 +186,7 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
 
     const session = await login(db, {
       identifier: `parent_${suffix}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-ended-${suffix}`,
     });
     withSessionCookie(session);
@@ -286,7 +286,7 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
 
     const otherSession = await login(db, {
       identifier: `other_${suffix}@test.local`,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-other-${suffix}`,
     });
     withSessionCookie(otherSession);
@@ -714,7 +714,7 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
 
     const endedParentSession = await login(db, {
       identifier: linked.parentEmail,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `login-ended-matrix-${crypto.randomUUID().slice(0, 8)}`,
     });
     withSessionCookie(endedParentSession);

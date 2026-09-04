@@ -5,12 +5,13 @@ import { requireParentSession, requireVerifiedParentSession } from "@/lib/auth-r
 import { toErrorResponse } from "@/lib/http-errors";
 import { listLinkedStudentsForParent } from "@/modules/family-access/linked-students.service";
 import { createControlledStudent } from "@/modules/identity/create-controlled-student.service";
+import { PRODUCT_PASSWORD_MAX_LENGTH } from "@/modules/identity/password-policy";
 
 const bodySchema = z.object({
   username: z.string().min(3).max(64),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   displayName: z.string().min(1).max(128).optional(),
-  initialPassword: z.string().min(12).max(128),
+  initialPassword: z.string().min(1).max(PRODUCT_PASSWORD_MAX_LENGTH),
   idempotencyKey: z.string().min(8).max(128),
 });
 

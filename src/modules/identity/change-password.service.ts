@@ -6,6 +6,7 @@ import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { hashPassword, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
 import { IdentityError } from "@/modules/identity/errors";
+import { assertProductPassword } from "@/modules/identity/password-policy";
 
 export type ChangePasswordInput = {
   userId: string;
@@ -81,20 +82,18 @@ export async function changePassword(
     };
   }
 
-  if (input.newPassword.length < 12) {
-    throw new IdentityError("VALIDATION_ERROR", "New password must be at least 12 characters");
-  }
+  assertProductPassword(input.newPassword);
 
   if (input.currentPassword === input.newPassword) {
-    throw new IdentityError("VALIDATION_ERROR", "New password must differ from current password");
+    throw new IdentityError("VALIDATION_ERROR", "新密码不能与当前密码相同");
   }
 
   const [user] = await db.select().from(users).where(eq(users.id, input.userId)).limit(1);
   if (!user) {
     throw new IdentityError("USER_NOT_FOUND", "User not found");
   }
-  if (user.role !== "student") {
-    throw new IdentityError("FORBIDDEN", "Only students can use this password change flow");
+  if (user.role !== "student" && user.role !== "parent") {
+    throw new IdentityError("FORBIDDEN", "Only students or parents can change their own password");
   }
 
   const currentValid = await verifyPassword(input.currentPassword, user.passwordHash);

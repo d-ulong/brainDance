@@ -52,7 +52,7 @@ export async function bootstrapVerifiedParentWithInvite(db: TestDb, email: strin
 
   const parent = await createVerifiedParent(db, {
     email,
-    password: "ParentPass123!Parent",
+    password: "Parent1aXy",
     invitationCode: invite.codePlaintext,
     displayName: "Test Parent",
   });

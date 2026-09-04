@@ -7,6 +7,7 @@ import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashPassword, normalizeAccountKey } from "@/lib/crypto";
 import { IdentityError } from "@/modules/identity/errors";
 import { resolveInvitationByCode } from "@/modules/identity/invitation.service";
+import { assertProductPassword } from "@/modules/identity/password-policy";
 
 export type RegisterParentInput = {
   invitationCode: string;
@@ -104,6 +105,7 @@ export async function registerParent(
     }
   }
 
+  assertProductPassword(input.password);
   const passwordHash = await hashPassword(input.password);
 
   return db.transaction(async (tx) => {

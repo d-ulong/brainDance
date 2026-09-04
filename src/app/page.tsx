@@ -132,6 +132,7 @@ function ParentHome() {
         <NavLink href="/parent/students/new">创建学生账号</NavLink>
         <NavLink href="/parent/link">关联学生</NavLink>
         <NavLink href="/parent/students">查看已关联学生</NavLink>
+        <NavLink href="/parent/change-password">修改密码</NavLink>
       </nav>
     </PageShell>
   );

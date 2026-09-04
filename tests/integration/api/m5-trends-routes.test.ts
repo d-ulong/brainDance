@@ -161,7 +161,7 @@ describe.skipIf(!hasDb)("M5 training trends api routes", () => {
 
     const refreshedParentSession = await login(db, {
       identifier: linked.parentEmail,
-      password: "ParentPass123!Parent",
+      password: "Parent1aXy",
       idempotencyKey: `route-end-login-${crypto.randomUUID()}`,
     });
     withSessionCookie(refreshedParentSession);
