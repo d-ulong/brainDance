@@ -174,7 +174,7 @@ export async function completeDigitSpanTraining(page: Page) {
     await enterDigitSpanAnswer(page, digits);
 
     if (attempt < total - 1) {
-      await expect(page.getByTestId("digit-response")).toHaveText("—", { timeout: 20_000 });
+      await expect(page.getByTestId("digit-response")).toHaveText("ï¿½", { timeout: 20_000 });
     }
   }
 
