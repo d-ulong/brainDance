@@ -17,8 +17,13 @@ import {
 } from "./m2-isolated-database";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import type { TestDb } from "../../helpers/db";
-import { seedM5TrainingDefinitions } from "@/modules/training/definition.service";
-import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
+import {
+  DIGIT_SPAN_TRAINING_KEY,
+  REACTION_TRAINING_KEY,
+  STROOP_TRAINING_KEY,
+} from "@/modules/training/constants";
+import { getActiveTrainingDefinition } from "@/modules/training/definition.service";
+import { resolveTrainingSubject } from "@/modules/training/training-subject";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -91,8 +96,26 @@ async function applySqlMigration(connectionString: string, fileName: string): Pr
   }
 }
 
+function extractPgError(error: unknown): { code: string; constraint: string } {
+  let current: unknown = error;
+  for (let i = 0; i < 6 && current && typeof current === "object"; i += 1) {
+    const record = current as Record<string, unknown>;
+    if (typeof record.code === "string" && /^\d{5}$/.test(record.code)) {
+      return {
+        code: record.code,
+        constraint:
+          (typeof record.constraint_name === "string" && record.constraint_name) ||
+          (typeof record.constraint === "string" && record.constraint) ||
+          "",
+      };
+    }
+    current = record.cause ?? record.originalError;
+  }
+  return { code: "", constraint: "" };
+}
+
 describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
-  it("backfills trainee_id from historical student_id and installs trainee-scoped constraints", async () => {
+  it("backfills trainee_id, installs checks/adult defs without adult seed, and rejects mismatched student_id", async () => {
     const rootUrl = process.env.DATABASE_URL!;
     const dbName = `bd_p2_trainee_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const admin = postgres(adminDatabaseUrl(rootUrl), { max: 1 });
@@ -106,25 +129,35 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
       client = postgres(databaseUrl, { max: 5 });
       const db = drizzle(client, { schema }) as TestDb;
       const suffix = crypto.randomUUID().slice(0, 8);
-      await bootstrapVerifiedParentWithInvite(db, `p2_mig_p_${suffix}@test.local`);
+      const { parentId } = await bootstrapVerifiedParentWithInvite(
+        db,
+        `p2_mig_p_${suffix}@test.local`,
+      );
       const { studentId } = await seedStudentUser(db, {
         username: `p2_mig_s_${suffix}`,
         password: "StudentPass123!Student",
         birthDate: "2015-06-01",
       });
-      await seedM5TrainingDefinitions(db);
 
+      // Child historical definition only — no adult seed / seedM5.
       const [definition] = await db.execute(sql`
-        SELECT id, version, age_band
-        FROM training_definitions
-        WHERE training_key = ${REACTION_TRAINING_KEY}
-          AND age_band = '9-12'
-          AND active = 1
-        LIMIT 1
+        INSERT INTO training_definitions (
+          training_key, version, age_band, metric_schema, active
+        ) VALUES (
+          ${REACTION_TRAINING_KEY}, 1, '9-12', '{"trialCount": 5}'::jsonb, 1
+        )
+        RETURNING id, version, age_band
       `);
       const definitionId = (definition as { id: string }).id;
       const definitionVersion = (definition as { version: number }).version;
       const ageBand = (definition as { age_band: string }).age_band;
+
+      const adultBefore = await db.execute(sql`
+        SELECT training_key
+        FROM training_definitions
+        WHERE age_band = 'adult'
+      `);
+      expect(adultBefore).toHaveLength(0);
 
       const [session] = await db.execute(sql`
         INSERT INTO training_sessions (
@@ -154,6 +187,7 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
       client = undefined;
 
       await applySqlMigration(databaseUrl, "0032_p2_training_trainee_id.sql");
+      await applySqlMigration(databaseUrl, "0033_p2_training_trainee_remediation.sql");
 
       client = postgres(databaseUrl, { max: 5 });
       const after = drizzle(client, { schema }) as TestDb;
@@ -167,9 +201,7 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
       expect((sessionRows[0] as { trainee_id: string; student_id: string }).trainee_id).toBe(
         studentId,
       );
-      expect((sessionRows[0] as { trainee_id: string; student_id: string }).student_id).toBe(
-        studentId,
-      );
+      expect((sessionRows[0] as { student_id: string }).student_id).toBe(studentId);
 
       const projectionRows = await after.execute(sql`
         SELECT trainee_id::text AS trainee_id, student_id::text AS student_id
@@ -178,6 +210,38 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
       `);
       expect(projectionRows).toHaveLength(1);
       expect((projectionRows[0] as { trainee_id: string }).trainee_id).toBe(studentId);
+
+      const childDefs = await after.execute(sql`
+        SELECT id, version, active, age_band
+        FROM training_definitions
+        WHERE training_key = ${REACTION_TRAINING_KEY}
+          AND age_band = '9-12'
+      `);
+      expect(childDefs).toHaveLength(1);
+      expect((childDefs[0] as { version: number; active: number }).version).toBe(1);
+      expect((childDefs[0] as { active: number }).active).toBe(1);
+
+      const adultDefs = await after.execute(sql`
+        SELECT training_key, version, active
+        FROM training_definitions
+        WHERE age_band = 'adult'
+          AND active = 1
+        ORDER BY training_key
+      `);
+      expect(adultDefs).toHaveLength(3);
+      expect(
+        (adultDefs as Array<{ training_key: string }>).map((row) => row.training_key).sort(),
+      ).toEqual([DIGIT_SPAN_TRAINING_KEY, REACTION_TRAINING_KEY, STROOP_TRAINING_KEY].sort());
+
+      const parentSubject = await resolveTrainingSubject(after, parentId);
+      expect(parentSubject.ageBand).toBe("adult");
+      const adultReaction = await getActiveTrainingDefinition(
+        after,
+        REACTION_TRAINING_KEY,
+        "adult",
+      );
+      expect(adultReaction.ageBand).toBe("adult");
+      expect(adultReaction.active).toBe(1);
 
       const indexes = await after.execute(sql`
         SELECT indexname
@@ -220,23 +284,55 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
         ) {
           throw error;
         }
-        let current: unknown = error;
-        let code = "";
-        let constraint = "";
-        for (let i = 0; i < 6 && current && typeof current === "object"; i += 1) {
-          const record = current as Record<string, unknown>;
-          if (typeof record.code === "string" && /^\d{5}$/.test(record.code)) {
-            code = record.code;
-            constraint =
-              (typeof record.constraint_name === "string" && record.constraint_name) ||
-              (typeof record.constraint === "string" && record.constraint) ||
-              "";
-            break;
-          }
-          current = record.cause ?? record.originalError;
-        }
+        const { code, constraint } = extractPgError(error);
         expect(code).toBe("23505");
         expect(constraint).toMatch(/training_sessions_effective_daily/);
+      }
+
+      try {
+        await after.execute(sql`
+          INSERT INTO training_sessions (
+            trainee_id, student_id, training_key, definition_id, definition_version, age_band,
+            family_date, started_at, status
+          ) VALUES (
+            ${studentId}::uuid, ${parentId}::uuid, ${REACTION_TRAINING_KEY}, ${definitionId}::uuid,
+            ${definitionVersion}, ${ageBand}, '2026-03-02', now(), 'active'
+          )
+        `);
+        throw new Error("Expected student_id/trainee_id CHECK violation");
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "Expected student_id/trainee_id CHECK violation"
+        ) {
+          throw error;
+        }
+        const { code, constraint } = extractPgError(error);
+        expect(code).toBe("23514");
+        expect(constraint).toMatch(/training_sessions_student_trainee_match_check/);
+      }
+
+      try {
+        await after.execute(sql`
+          INSERT INTO training_profile_projection (
+            trainee_id, student_id, training_key, definition_version, age_band, metric_key,
+            best_value, last_value
+          ) VALUES (
+            ${studentId}::uuid, ${parentId}::uuid, ${REACTION_TRAINING_KEY}, ${definitionVersion},
+            ${ageBand}, 'mismatch', '1.000000', '1.000000'
+          )
+        `);
+        throw new Error("Expected projection student_id/trainee_id CHECK violation");
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "Expected projection student_id/trainee_id CHECK violation"
+        ) {
+          throw error;
+        }
+        const { code, constraint } = extractPgError(error);
+        expect(code).toBe("23514");
+        expect(constraint).toMatch(/training_profile_projection_student_trainee_match_check/);
       }
     } finally {
       await disposeIsolatedM2DatabaseResources({

@@ -112,6 +112,10 @@ export const trainingSessions = pgTable(
     uniqueIndex("training_sessions_effective_daily_trainee_unique")
       .on(table.traineeId, table.trainingKey, table.familyDate)
       .where(sql`${table.sessionKind} = 'effective' AND ${table.status} = 'completed'`),
+    check(
+      "training_sessions_student_trainee_match_check",
+      sql`${table.studentId} IS NULL OR ${table.studentId} = ${table.traineeId}`,
+    ),
   ],
 );
 
@@ -190,5 +194,9 @@ export const trainingProfileProjection = pgTable(
     ),
     index("training_profile_projection_student_key_idx").on(table.studentId, table.trainingKey),
     index("training_profile_projection_trainee_key_idx").on(table.traineeId, table.trainingKey),
+    check(
+      "training_profile_projection_student_trainee_match_check",
+      sql`${table.studentId} IS NULL OR ${table.studentId} = ${table.traineeId}`,
+    ),
   ],
 );

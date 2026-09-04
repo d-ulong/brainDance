@@ -232,6 +232,13 @@
       "when": 1787761200000,
       "tag": "0032_p2_training_trainee_id",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787764800000,
+      "tag": "0033_p2_training_trainee_remediation",
+      "breakpoints": true
     }
   ]
 }

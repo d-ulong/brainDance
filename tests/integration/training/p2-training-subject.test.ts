@@ -1,6 +1,6 @@
 import { config } from "dotenv";
 import { and, eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   auditEvents,
@@ -10,6 +10,7 @@ import {
   trainingProfileProjection,
   trainingSessions,
 } from "@/db/schema";
+import * as auditModule from "@/modules/audit/append-audit-event";
 import { bootstrapAdmin } from "../../helpers/identity";
 import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "../../helpers/family-access";
 import { closeTestDb, getTestDb, migrateTestDb, resetIdentityTables } from "../../helpers/db";
@@ -24,7 +25,10 @@ import {
   submitTrainingSessionForSubject,
 } from "@/modules/training/session.service";
 import { rebuildTrainingProfileProjectionForTrainee } from "@/modules/training/trends.service";
-import { resolveTrainingSubject } from "@/modules/training/training-subject";
+import {
+  resolveTrainingSubject,
+  type TrainingSubject,
+} from "@/modules/training/training-subject";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -286,5 +290,93 @@ describe.skipIf(!hasDb)("P2 training subject isolation", () => {
         ),
       );
     expect(audits.length).toBeGreaterThan(0);
+  });
+
+  it("rejects forged subject claims at service authority boundary", async () => {
+    const { adminId } = await bootstrapAdmin(db);
+    const parentEmail = `parent-forge-${crypto.randomUUID()}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
+    const student = await seedStudentUser(db, {
+      username: `student_forge_${crypto.randomUUID().slice(0, 8)}`,
+      password: "StudentPass123!Student",
+      birthDate: "2015-06-01",
+    });
+
+    const adminAsParent: TrainingSubject = {
+      traineeId: adminId,
+      traineeRole: "parent",
+      ageBand: "adult",
+    };
+    await expect(
+      startTrainingSessionForSubject(db, {
+        subject: adminAsParent,
+        trainingKey: REACTION_TRAINING_KEY,
+        idempotencyKey: "forge-admin-as-parent",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" } satisfies Partial<TrainingError>);
+
+    const studentAsParentAdult: TrainingSubject = {
+      traineeId: student.studentId,
+      traineeRole: "parent",
+      ageBand: "adult",
+    };
+    await expect(
+      startTrainingSessionForSubject(db, {
+        subject: studentAsParentAdult,
+        trainingKey: REACTION_TRAINING_KEY,
+        idempotencyKey: "forge-student-as-parent",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" } satisfies Partial<TrainingError>);
+
+    await expect(
+      getTrainingSessionForSubject(db, studentAsParentAdult, crypto.randomUUID()),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    // Honest parent still works — forged claims did not poison authority.
+    const parentSubject = await resolveTrainingSubject(db, parentId);
+    const started = await startTrainingSessionForSubject(db, {
+      subject: parentSubject,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "forge-honest-parent",
+    });
+    expect(started.ageBand).toBe("adult");
+  });
+
+  it("rolls back cancel session write when audit append fails", async () => {
+    const parentEmail = `parent-atomic-${crypto.randomUUID()}@test.local`;
+    const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
+    const subject = await resolveTrainingSubject(db, parentId);
+
+    const started = await startTrainingSessionForSubject(db, {
+      subject,
+      trainingKey: REACTION_TRAINING_KEY,
+      idempotencyKey: "atomic-cancel-start",
+    });
+
+    const auditSpy = vi
+      .spyOn(auditModule, "appendAuditEvent")
+      .mockRejectedValueOnce(new Error("audit write failed"));
+
+    await expect(
+      cancelTrainingSessionForSubject(db, {
+        subject,
+        sessionId: started.sessionId,
+      }),
+    ).rejects.toThrow("audit write failed");
+
+    auditSpy.mockRestore();
+
+    const [sessionRow] = await db
+      .select()
+      .from(trainingSessions)
+      .where(eq(trainingSessions.id, started.sessionId));
+    expect(sessionRow?.status).toBe("active");
+    expect(sessionRow?.finishedAt).toBeNull();
+
+    const cancelAudits = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.idempotencyKey, `audit:training-cancel:${started.sessionId}`));
+    expect(cancelAudits).toHaveLength(0);
   });
 });

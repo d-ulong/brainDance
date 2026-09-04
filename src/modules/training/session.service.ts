@@ -141,6 +141,25 @@ type StudentFacadeInput = {
   studentId: string;
 };
 
+/**
+ * Service-layer authority: re-resolve from traineeId and reject forged role/ageBand.
+ * Callers' traineeRole/ageBand are never trusted.
+ */
+async function authorizeTrainingSubject(
+  db: Database,
+  claimed: TrainingSubject,
+): Promise<TrainingSubject> {
+  const resolved = await resolveTrainingSubject(db, claimed.traineeId);
+  if (
+    claimed.traineeId !== resolved.traineeId ||
+    claimed.traineeRole !== resolved.traineeRole ||
+    claimed.ageBand !== resolved.ageBand
+  ) {
+    throw new TrainingError("FORBIDDEN", "Training subject claim mismatch");
+  }
+  return resolved;
+}
+
 async function assertSubjectWritable(db: Database, subject: TrainingSubject): Promise<void> {
   if (subject.traineeRole === "student") {
     await assertStudentAccountNotFrozen(db, subject.traineeId, "write");
@@ -365,19 +384,16 @@ export async function startTrainingSessionForSubject(
   db: Database,
   input: StartTrainingSessionInput,
 ): Promise<StartTrainingSessionResult> {
-  await assertSubjectWritable(db, input.subject);
+  const subject = await authorizeTrainingSubject(db, input.subject);
+  await assertSubjectWritable(db, subject);
 
-  const existing = await findStartSessionByIdempotency(
-    db,
-    input.subject.traineeId,
-    input.idempotencyKey,
-  );
+  const existing = await findStartSessionByIdempotency(db, subject.traineeId, input.idempotencyKey);
 
   if (existing) {
     return buildStartReplayResult(db, existing);
   }
 
-  const ageBand = input.subject.ageBand;
+  const ageBand = subject.ageBand;
   if (!getTrainingProtocol(input.trainingKey)) {
     throw new TrainingError(
       "TRAINING_DEFINITION_NOT_FOUND",
@@ -388,64 +404,62 @@ export async function startTrainingSessionForSubject(
   const schema = resolveDecodedSchema(input.trainingKey, definition.metricSchema ?? {});
   const familyDate = toFamilyDate();
   const startedAt = new Date();
-  const compatStudentId = compatStudentIdForSubject(input.subject);
+  const compatStudentId = compatStudentIdForSubject(subject);
 
   try {
-    const [created] = await db
-      .insert(trainingSessions)
-      .values({
-        traineeId: input.subject.traineeId,
-        studentId: compatStudentId,
-        trainingKey: input.trainingKey,
-        definitionId: definition.id,
-        definitionVersion: definition.version,
-        ageBand,
-        familyDate,
-        startedAt,
-        status: "active",
-        startIdempotencyKey: input.idempotencyKey,
-      })
-      .returning();
+    return await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(trainingSessions)
+        .values({
+          traineeId: subject.traineeId,
+          studentId: compatStudentId,
+          trainingKey: input.trainingKey,
+          definitionId: definition.id,
+          definitionVersion: definition.version,
+          ageBand,
+          familyDate,
+          startedAt,
+          status: "active",
+          startIdempotencyKey: input.idempotencyKey,
+        })
+        .returning();
 
-    if (!created) {
-      throw new Error("Failed to create training session");
-    }
+      if (!created) {
+        throw new Error("Failed to create training session");
+      }
 
-    await appendAuditEvent(db, {
-      actorId: input.subject.traineeId,
-      action: "training_session.started",
-      resourceType: "training_session",
-      resourceId: created.id,
-      requestId: input.requestId,
-      idempotencyKey: `audit:training-start:${input.subject.traineeId}:${input.idempotencyKey}`,
-      metadata: {
-        trainingKey: input.trainingKey,
-        familyDate,
-        ageBand,
-        traineeRole: input.subject.traineeRole,
-      },
+      await appendAuditEvent(tx, {
+        actorId: subject.traineeId,
+        action: "training_session.started",
+        resourceType: "training_session",
+        resourceId: created.id,
+        requestId: input.requestId,
+        idempotencyKey: `audit:training-start:${subject.traineeId}:${input.idempotencyKey}`,
+        metadata: {
+          trainingKey: input.trainingKey,
+          familyDate,
+          ageBand,
+          traineeRole: subject.traineeRole,
+        },
+      });
+
+      return {
+        sessionId: created.id,
+        trainingKey: created.trainingKey,
+        definitionVersion: created.definitionVersion,
+        ageBand: created.ageBand as TrainingAgeBand,
+        familyDate: created.familyDate,
+        expectedTrialCount: getExpectedSessionCount(created.trainingKey, schema),
+        status: "active" as const,
+        idempotentReplay: false,
+      };
     });
-
-    return {
-      sessionId: created.id,
-      trainingKey: created.trainingKey,
-      definitionVersion: created.definitionVersion,
-      ageBand: created.ageBand as TrainingAgeBand,
-      familyDate: created.familyDate,
-      expectedTrialCount: getExpectedSessionCount(created.trainingKey, schema),
-      status: "active",
-      idempotentReplay: false,
-    };
   } catch (error) {
     if (!isPostgresUniqueViolation(error)) {
       throw error;
     }
 
-    const raced = await findStartSessionByIdempotency(
-      db,
-      input.subject.traineeId,
-      input.idempotencyKey,
-    );
+    const raced = await findStartSessionByIdempotency(db, subject.traineeId, input.idempotencyKey);
     if (!raced) {
       throw error;
     }
@@ -476,7 +490,8 @@ export async function appendTrainingEventForSubject(
   db: Database,
   input: AppendTrainingEventInput,
 ): Promise<AppendTrainingEventResult> {
-  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
+  const subject = await authorizeTrainingSubject(db, input.subject);
+  const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
     throw new TrainingError("SESSION_INVALID_STATE", "Session is not active");
@@ -561,25 +576,28 @@ export async function cancelTrainingSessionForSubject(
   db: Database,
   input: { subject: TrainingSubject; sessionId: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "cancelled" }> {
-  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
+  const subject = await authorizeTrainingSubject(db, input.subject);
+  const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
     throw new TrainingError("SESSION_INVALID_STATE", "Only active sessions can be cancelled");
   }
 
   const finishedAt = new Date();
-  await db
-    .update(trainingSessions)
-    .set({ status: "cancelled", finishedAt })
-    .where(eq(trainingSessions.id, input.sessionId));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trainingSessions)
+      .set({ status: "cancelled", finishedAt })
+      .where(eq(trainingSessions.id, input.sessionId));
 
-  await appendAuditEvent(db, {
-    actorId: input.subject.traineeId,
-    action: "training_session.cancelled",
-    resourceType: "training_session",
-    resourceId: input.sessionId,
-    requestId: input.requestId,
-    idempotencyKey: `audit:training-cancel:${input.sessionId}`,
+    await appendAuditEvent(tx, {
+      actorId: subject.traineeId,
+      action: "training_session.cancelled",
+      resourceType: "training_session",
+      resourceId: input.sessionId,
+      requestId: input.requestId,
+      idempotencyKey: `audit:training-cancel:${input.sessionId}`,
+    });
   });
 
   return { sessionId: input.sessionId, status: "cancelled" };
@@ -601,7 +619,8 @@ export async function abandonTrainingSessionForSubject(
   db: Database,
   input: { subject: TrainingSubject; sessionId: string; reason?: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "abandoned" }> {
-  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
+  const subject = await authorizeTrainingSubject(db, input.subject);
+  const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active" && session.status !== "submitted") {
     if (session.status === "abandoned") {
@@ -611,19 +630,21 @@ export async function abandonTrainingSessionForSubject(
   }
 
   const finishedAt = new Date();
-  await db
-    .update(trainingSessions)
-    .set({ status: "abandoned", finishedAt })
-    .where(eq(trainingSessions.id, input.sessionId));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(trainingSessions)
+      .set({ status: "abandoned", finishedAt })
+      .where(eq(trainingSessions.id, input.sessionId));
 
-  await appendAuditEvent(db, {
-    actorId: input.subject.traineeId,
-    action: "training_session.abandoned",
-    resourceType: "training_session",
-    resourceId: input.sessionId,
-    requestId: input.requestId,
-    idempotencyKey: `audit:training-abandon:${input.sessionId}`,
-    metadata: input.reason ? { reason: input.reason } : undefined,
+    await appendAuditEvent(tx, {
+      actorId: subject.traineeId,
+      action: "training_session.abandoned",
+      resourceType: "training_session",
+      resourceId: input.sessionId,
+      requestId: input.requestId,
+      idempotencyKey: `audit:training-abandon:${input.sessionId}`,
+      metadata: input.reason ? { reason: input.reason } : undefined,
+    });
   });
 
   return { sessionId: input.sessionId, status: "abandoned" };
@@ -705,19 +726,21 @@ export async function submitTrainingSessionForSubject(
   db: Database,
   input: SubmitTrainingSessionInput,
 ): Promise<SubmitTrainingSessionResult> {
-  await assertSubjectWritable(db, input.subject);
+  const subject = await authorizeTrainingSubject(db, input.subject);
+  const authorizedInput: SubmitTrainingSessionInput = { ...input, subject };
+  await assertSubjectWritable(db, subject);
 
   const existingBySubmitKey = await findSubmitSessionByIdempotency(
     db,
-    input.subject.traineeId,
+    subject.traineeId,
     input.idempotencyKey,
   );
 
   if (existingBySubmitKey) {
-    return resolveSubmitIdempotencyReplay(db, input, existingBySubmitKey);
+    return resolveSubmitIdempotencyReplay(db, authorizedInput, existingBySubmitKey);
   }
 
-  const session = await loadOwnedSession(db, input.subject.traineeId, input.sessionId);
+  const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (
     session.status === "completed" ||
@@ -740,7 +763,7 @@ export async function submitTrainingSessionForSubject(
         .where(eq(trainingSessions.id, input.sessionId));
     } catch (error) {
       if (isPostgresUniqueViolation(error)) {
-        return replayOrMismatchOnSubmitKeyConflict(db, input);
+        return replayOrMismatchOnSubmitKeyConflict(db, authorizedInput);
       }
       throw error;
     }
@@ -761,7 +784,7 @@ export async function submitTrainingSessionForSubject(
 
   if (!validation.valid) {
     return finalizeInvalidSession(db, {
-      ...input,
+      ...authorizedInput,
       reason: validation.reason,
     });
   }
@@ -769,7 +792,7 @@ export async function submitTrainingSessionForSubject(
   const computed = computeTrainingMetrics(session.trainingKey, validation.data, schema);
   if (computed.rejectReason) {
     return finalizeInvalidSession(db, {
-      ...input,
+      ...authorizedInput,
       reason: computed.rejectReason,
     });
   }
@@ -783,7 +806,7 @@ export async function submitTrainingSessionForSubject(
       );
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${buildSubmitCompetitionLockKey(
-          input.subject.traineeId,
+          subject.traineeId,
           session.trainingKey,
           session.familyDate,
         )}))`,
@@ -807,7 +830,7 @@ export async function submitTrainingSessionForSubject(
         .from(trainingSessions)
         .where(
           and(
-            eq(trainingSessions.traineeId, input.subject.traineeId),
+            eq(trainingSessions.traineeId, subject.traineeId),
             eq(trainingSessions.trainingKey, lockedSession.trainingKey),
             eq(trainingSessions.familyDate, lockedSession.familyDate),
             eq(trainingSessions.sessionKind, "effective"),
@@ -853,7 +876,7 @@ export async function submitTrainingSessionForSubject(
 
       if (sessionKind === "effective") {
         await upsertProfileProjection(tx, {
-          subject: input.subject,
+          subject,
           trainingKey: lockedSession.trainingKey,
           definitionVersion: lockedSession.definitionVersion,
           ageBand: lockedSession.ageBand,
@@ -864,30 +887,30 @@ export async function submitTrainingSessionForSubject(
       }
 
       await appendAuditEvent(tx, {
-        actorId: input.subject.traineeId,
+        actorId: subject.traineeId,
         action: "training_session.completed",
         resourceType: "training_session",
         resourceId: input.sessionId,
         requestId: input.requestId,
-        idempotencyKey: `audit:training-complete:${input.subject.traineeId}:${input.idempotencyKey}`,
+        idempotencyKey: `audit:training-complete:${subject.traineeId}:${input.idempotencyKey}`,
         metadata: {
           sessionKind,
           trainingKey: lockedSession.trainingKey,
           familyDate: lockedSession.familyDate,
-          traineeRole: input.subject.traineeRole,
+          traineeRole: subject.traineeRole,
         },
       });
 
-      if (input.subject.traineeRole === "student") {
+      if (subject.traineeRole === "student") {
         await appendOutboxEvent(tx, {
           aggregateType: "training_session",
           aggregateId: input.sessionId,
           eventType: "training_session.completed",
-          dedupeKey: `outbox:training-complete:${input.subject.traineeId}:${input.idempotencyKey}`,
+          dedupeKey: `outbox:training-complete:${subject.traineeId}:${input.idempotencyKey}`,
           payload: {
             sessionId: input.sessionId,
-            studentId: input.subject.traineeId,
-            traineeId: input.subject.traineeId,
+            studentId: subject.traineeId,
+            traineeId: subject.traineeId,
             trainingKey: lockedSession.trainingKey,
             sessionKind,
             familyDate: lockedSession.familyDate,
@@ -911,16 +934,16 @@ export async function submitTrainingSessionForSubject(
     });
   } catch (error) {
     if (isPostgresUniqueViolation(error)) {
-      return replayOrMismatchOnSubmitKeyConflict(db, input);
+      return replayOrMismatchOnSubmitKeyConflict(db, authorizedInput);
     }
     if (error instanceof TrainingError && error.code === "SESSION_INVALID_STATE") {
       const raced = await findSubmitSessionByIdempotency(
         db,
-        input.subject.traineeId,
+        subject.traineeId,
         input.idempotencyKey,
       );
       if (raced && raced.id === input.sessionId) {
-        return resolveSubmitIdempotencyReplay(db, input, raced);
+        return resolveSubmitIdempotencyReplay(db, authorizedInput, raced);
       }
     }
     throw error;
@@ -946,9 +969,10 @@ export async function submitTrainingSession(
 
 export async function getTrainingSessionForSubject(
   db: Database,
-  subject: TrainingSubject,
+  claimedSubject: TrainingSubject,
   sessionId: string,
 ): Promise<TrainingSessionDetail> {
+  const subject = await authorizeTrainingSubject(db, claimedSubject);
   await assertSubjectReadable(db, subject);
 
   const session = await loadOwnedSession(db, subject.traineeId, sessionId);
