@@ -44,6 +44,11 @@ import {
 } from "@/modules/training/training-subject";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
+import {
+  queryTrainingTrends,
+  type TrainingTrendsResponse,
+} from "@/modules/training/trends.service";
+import type { TrendWindow } from "@/modules/training/trend-window";
 
 export type StartTrainingSessionInput = {
   subject: TrainingSubject;
@@ -135,6 +140,20 @@ export type ParentTrainingSummary = {
     bestValue: number;
     lastValue: number;
   }>;
+};
+
+export type SubjectTrainingSummary = {
+  traineeId: string;
+  trainingKey: string;
+  definitionVersion: number;
+  ageBand: string;
+  familyDate: string;
+  lastSession: ParentTrainingSummary["lastSession"];
+  projection: ParentTrainingSummary["projection"];
+};
+
+export type SubjectTrainingTrends = Omit<TrainingTrendsResponse, "studentId"> & {
+  traineeId: string;
 };
 
 type StudentFacadeInput = {
@@ -1014,12 +1033,24 @@ export async function getTrainingSummaryForParent(
   await requireActiveRelationship(db, parentId, studentId);
   await assertStudentAccountNotFrozen(db, studentId, "read");
 
+  const summary = await loadTrainingSummaryForTrainee(db, studentId, trainingKey);
+  return {
+    studentId,
+    ...summary,
+  };
+}
+
+async function loadTrainingSummaryForTrainee(
+  db: Database,
+  traineeId: string,
+  trainingKey: string,
+): Promise<Omit<SubjectTrainingSummary, "traineeId">> {
   const [latestSession] = await db
     .select()
     .from(trainingSessions)
     .where(
       and(
-        eq(trainingSessions.traineeId, studentId),
+        eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.trainingKey, trainingKey),
         eq(trainingSessions.status, "completed"),
       ),
@@ -1032,7 +1063,7 @@ export async function getTrainingSummaryForParent(
     .from(trainingProfileProjection)
     .where(
       and(
-        eq(trainingProfileProjection.traineeId, studentId),
+        eq(trainingProfileProjection.traineeId, traineeId),
         eq(trainingProfileProjection.trainingKey, trainingKey),
       ),
     );
@@ -1041,7 +1072,7 @@ export async function getTrainingSummaryForParent(
     getProjectionMetricDefinitions(trainingKey).map((definition) => definition.metricKey),
   );
 
-  let lastSession: ParentTrainingSummary["lastSession"] = null;
+  let lastSession: SubjectTrainingSummary["lastSession"] = null;
   if (latestSession) {
     const metrics = await loadSessionMetrics(db, latestSession.id);
     lastSession = {
@@ -1054,7 +1085,6 @@ export async function getTrainingSummaryForParent(
   }
 
   return {
-    studentId,
     trainingKey,
     definitionVersion:
       latestSession?.definitionVersion ?? projectionRows[0]?.definitionVersion ?? 1,
@@ -1068,5 +1098,47 @@ export async function getTrainingSummaryForParent(
         bestValue: Number(row.bestValue),
         lastValue: Number(row.lastValue),
       })),
+  };
+}
+
+export async function getTrainingSummaryForSubject(
+  db: Database,
+  claimedSubject: TrainingSubject,
+  trainingKey: string = REACTION_TRAINING_KEY,
+): Promise<SubjectTrainingSummary> {
+  const subject = await authorizeTrainingSubject(db, claimedSubject);
+  await assertSubjectReadable(db, subject);
+
+  const summary = await loadTrainingSummaryForTrainee(db, subject.traineeId, trainingKey);
+  return {
+    traineeId: subject.traineeId,
+    ...summary,
+  };
+}
+
+export async function getOwnTrainingTrendsForSubject(
+  db: Database,
+  claimedSubject: TrainingSubject,
+  input: {
+    trainingKey: string;
+    window: TrendWindow;
+    referenceFamilyDate?: string;
+  },
+): Promise<SubjectTrainingTrends> {
+  const subject = await authorizeTrainingSubject(db, claimedSubject);
+  await assertSubjectReadable(db, subject);
+
+  const trends = await queryTrainingTrends(db, {
+    studentId: subject.traineeId,
+    trainingKey: input.trainingKey,
+    window: input.window,
+    referenceFamilyDate: input.referenceFamilyDate,
+  });
+
+  const { studentId: _ignoredStudentId, ...rest } = trends;
+  void _ignoredStudentId;
+  return {
+    traineeId: subject.traineeId,
+    ...rest,
   };
 }

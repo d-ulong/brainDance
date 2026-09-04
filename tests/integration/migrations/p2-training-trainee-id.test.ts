@@ -230,7 +230,9 @@ describe.skipIf(!hasDb)("P2 training trainee_id expand migration", () => {
       `);
       expect(adultDefs).toHaveLength(3);
       expect(
-        (adultDefs as Array<{ training_key: string }>).map((row) => row.training_key).sort(),
+        (adultDefs as unknown as Array<{ training_key: string }>)
+          .map((row) => row.training_key)
+          .sort(),
       ).toEqual([DIGIT_SPAN_TRAINING_KEY, REACTION_TRAINING_KEY, STROOP_TRAINING_KEY].sort());
 
       const parentSubject = await resolveTrainingSubject(after, parentId);

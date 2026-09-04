@@ -23,6 +23,24 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export type TrainingSessionLifecycleOptions = {
+  role: "student" | "parent";
+  hubPath: string;
+  resultPathPrefix: string;
+};
+
+export const STUDENT_TRAINING_LIFECYCLE: TrainingSessionLifecycleOptions = {
+  role: "student",
+  hubPath: "/student/training",
+  resultPathPrefix: "/student/training",
+};
+
+export const PARENT_TRAINING_LIFECYCLE: TrainingSessionLifecycleOptions = {
+  role: "parent",
+  hubPath: "/parent/training",
+  resultPathPrefix: "/parent/training",
+};
+
 export type TrainingSessionLifecycle = {
   loading: boolean;
   error: string | null;
@@ -31,6 +49,7 @@ export type TrainingSessionLifecycle = {
   pendingRetry: boolean;
   submitting: boolean;
   terminated: boolean;
+  hubPath: string;
   isInteractionAllowed: () => boolean;
   appendEvent: (
     eventType: string,
@@ -40,7 +59,10 @@ export type TrainingSessionLifecycle = {
   navigateToResult: () => void;
 };
 
-export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingSessionLifecycle {
+export function useTrainingSessionLifecycle(
+  trainingKey: TrainingKey,
+  options: TrainingSessionLifecycleOptions = STUDENT_TRAINING_LIFECYCLE,
+): TrainingSessionLifecycle {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -152,11 +174,15 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
   useEffect(() => {
     void (async () => {
       const auth = await fetchSession();
-      if (!auth || auth.role !== "student") {
+      if (!auth || auth.role !== options.role) {
         router.replace("/login");
         return;
       }
-      if (auth.mustChangePassword) {
+      if (options.role === "parent" && !auth.contactVerified) {
+        router.replace("/verify-contact");
+        return;
+      }
+      if (options.role === "student" && auth.mustChangePassword) {
         router.replace("/student/change-password");
         return;
       }
@@ -177,7 +203,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
         setLoading(false);
       }
     })();
-  }, [router, trainingKey]);
+  }, [options.role, router, trainingKey]);
 
   const submitSession = useCallback(async () => {
     if (!session || submitting || terminatedRef.current) return;
@@ -193,7 +219,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
         setPendingRetry(attempt > 0);
         await submitTrainingSession(session.sessionId, idempotencyKey);
         setPendingRetry(false);
-        router.push(`/student/training/${session.sessionId}`);
+        router.push(`${options.resultPathPrefix}/${session.sessionId}`);
         return;
       } catch (err) {
         lastError = err;
@@ -206,13 +232,13 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     setPendingRetry(false);
     setSubmitting(false);
     setError(lastError instanceof ApiError ? lastError.message : "提交失败，请检查网络后重试");
-  }, [router, session, submitting]);
+  }, [options.resultPathPrefix, router, session, submitting]);
 
   const navigateToResult = useCallback(() => {
     if (session) {
-      router.push(`/student/training/${session.sessionId}`);
+      router.push(`${options.resultPathPrefix}/${session.sessionId}`);
     }
-  }, [router, session]);
+  }, [options.resultPathPrefix, router, session]);
 
   return {
     loading,
@@ -222,6 +248,7 @@ export function useTrainingSessionLifecycle(trainingKey: TrainingKey): TrainingS
     pendingRetry,
     submitting,
     terminated,
+    hubPath: options.hubPath,
     isInteractionAllowed,
     appendEvent,
     submitSession,

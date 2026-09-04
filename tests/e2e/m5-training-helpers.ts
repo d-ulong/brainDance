@@ -36,8 +36,9 @@ export async function waitForReactionReady(page: Page) {
 export async function completeReactionTraining(
   page: Page,
   inputMethod: "pointer" | "keyboard" = "pointer",
+  hubBase: "/student/training" | "/parent/training" = "/student/training",
 ) {
-  await page.goto("/student/training/reaction");
+  await page.goto(`${hubBase}/reaction`);
   await expect(page.getByTestId("training-target")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("training-disclaimer")).toBeVisible();
 
@@ -58,10 +59,13 @@ export async function completeReactionTraining(
     }
     await eventResponse;
     if (trial < 4) {
-      await expect(page.getByText(`第 ${trial + 2} / 5 次`)).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText(new RegExp(`${trial + 2}\\s*/\\s*5`))).toBeVisible({
+        timeout: 20_000,
+      });
     }
   }
 
+  await expect(page).toHaveURL(new RegExp(`${hubBase}/[^/]+$`), { timeout: 30_000 });
   await expect(page.getByTestId("session-status")).toHaveText("completed", { timeout: 30_000 });
   await expect(page.getByTestId("metric-median_reaction_ms")).toBeVisible();
 }
@@ -103,14 +107,14 @@ export async function completeStroopTraining(page: Page) {
   await page.goto("/student/training/stroop");
   await expect(page.getByTestId("stroop-stimulus")).toBeVisible({ timeout: 30_000 });
 
-  const totalText = await page.getByText(/\/ \d+ 次/).innerText();
-  const match = totalText.match(/\/ (\d+) 次/);
+  const totalText = await page.getByText(/\/ \d+ ?/).innerText();
+  const match = totalText.match(/\/ (\d+) ?/);
   const total = match ? Number(match[1]) : 16;
 
   for (let trial = 0; trial < total; trial += 1) {
     await respondToStroopTrial(page, true, "pointer");
     if (trial < total - 1) {
-      await expect(page.getByText(`第 ${trial + 2} / ${total} 次`)).toBeVisible({
+      await expect(page.getByText(`? ${trial + 2} / ${total} ?`)).toBeVisible({
         timeout: 20_000,
       });
     }
@@ -152,7 +156,7 @@ export async function completeDigitSpanTraining(page: Page) {
   await expect(page.getByTestId("digit-stimulus")).toBeVisible({ timeout: 30_000 });
 
   const subtitle = await page.locator("header p").innerText();
-  const match = subtitle.match(/\/ (\d+) 次/);
+  const match = subtitle.match(/\/ (\d+) ?/);
   const total = match ? Number(match[1]) : 14;
 
   for (let attempt = 0; attempt < total; attempt += 1) {
@@ -170,7 +174,7 @@ export async function completeDigitSpanTraining(page: Page) {
     await enterDigitSpanAnswer(page, digits);
 
     if (attempt < total - 1) {
-      await expect(page.getByTestId("digit-response")).toHaveText("—", { timeout: 20_000 });
+      await expect(page.getByTestId("digit-response")).toHaveText("�", { timeout: 20_000 });
     }
   }
 

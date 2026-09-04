@@ -11,8 +11,10 @@ import {
 import { Alert, LoadingState } from "@/components/ui/page-shell";
 import { ApiError } from "@/lib/client/api";
 import {
+  fetchOwnTrainingTrends,
   fetchTrainingTrends,
   type TrainingKey,
+  type SubjectTrainingTrendsResponse,
   type TrainingTrendsResponse,
   type TrendWindow,
 } from "@/lib/client/training-api";
@@ -23,25 +25,46 @@ const WINDOW_OPTIONS: Array<{ value: TrendWindow; label: string }> = [
   { value: "all", label: "全部" },
 ];
 
-type TrendsPanelProps = {
-  studentId: string;
-  trainingKey: TrainingKey;
-  testIdPrefix?: string;
+type TrendsPanelProps =
+  | {
+      mode: "self";
+      trainingKey: TrainingKey;
+      testIdPrefix?: string;
+    }
+  | {
+      mode?: "student";
+      studentId: string;
+      trainingKey: TrainingKey;
+      testIdPrefix?: string;
+    };
+
+type TrendsViewModel = {
+  hasData: boolean;
+  partialCoverage: boolean;
+  segments: TrainingTrendsResponse["segments"] | SubjectTrainingTrendsResponse["segments"];
 };
 
-export function TrendsPanel({ studentId, trainingKey, testIdPrefix = "trends" }: TrendsPanelProps) {
+export function TrendsPanel(props: TrendsPanelProps) {
+  const { trainingKey, testIdPrefix = "trends" } = props;
+  const mode = props.mode === "self" ? "self" : "student";
+  const studentId = props.mode === "self" ? null : props.studentId;
   const [window, setWindow] = useState<TrendWindow>("7d");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [trends, setTrends] = useState<TrainingTrendsResponse | null>(null);
+  const [trends, setTrends] = useState<TrendsViewModel | null>(null);
 
   const loadTrends = useCallback(
     async (selectedWindow: TrendWindow) => {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchTrainingTrends(studentId, trainingKey, selectedWindow);
-        setTrends(data);
+        if (mode === "self") {
+          const data = await fetchOwnTrainingTrends(trainingKey, selectedWindow);
+          setTrends(data);
+        } else {
+          const data = await fetchTrainingTrends(studentId!, trainingKey, selectedWindow);
+          setTrends(data);
+        }
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "无法加载趋势");
         setTrends(null);
@@ -49,7 +72,7 @@ export function TrendsPanel({ studentId, trainingKey, testIdPrefix = "trends" }:
         setLoading(false);
       }
     },
-    [studentId, trainingKey],
+    [mode, studentId, trainingKey],
   );
 
   useEffect(() => {

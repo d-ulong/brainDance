@@ -8,10 +8,19 @@ import { PointsTodayCard } from "@/components/m2/points-today-card";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { apiFetch, fetchSession, type SessionInfo } from "@/lib/client/api";
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavLink({
+  href,
+  children,
+  testId,
+}: {
+  href: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
   return (
     <Link
       href={href}
+      data-testid={testId}
       className="flex min-h-11 items-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium hover:bg-neutral-50"
     >
       {children}
@@ -129,6 +138,9 @@ function ParentHome() {
         </div>
       )}
       <nav className="flex flex-col gap-3">
+        <NavLink href="/parent/training" testId="parent-training-nav">
+          家长训练中心
+        </NavLink>
         <NavLink href="/parent/students/new">创建学生账号</NavLink>
         <NavLink href="/parent/link">关联学生</NavLink>
         <NavLink href="/parent/students">查看已关联学生</NavLink>

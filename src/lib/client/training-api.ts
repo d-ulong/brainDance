@@ -65,6 +65,16 @@ export type TrainingSummary = {
   }>;
 };
 
+export type SubjectTrainingSummary = {
+  traineeId: string;
+  trainingKey: TrainingKey;
+  definitionVersion: number;
+  ageBand: string;
+  familyDate: string;
+  lastSession: TrainingSummary["lastSession"];
+  projection: TrainingSummary["projection"];
+};
+
 export type TrainingTrendPoint = {
   sessionId: string;
   familyDate: string;
@@ -96,31 +106,48 @@ export type TrainingTrendsResponse = {
   segments: TrainingTrendSegment[];
 };
 
-export const TRAINING_OPTIONS: Array<{
+export type SubjectTrainingTrendsResponse = {
+  traineeId: string;
+  trainingKey: TrainingKey;
+  window: TrendWindow;
+  referenceFamilyDate: string;
+  windowStartFamilyDate: string | null;
+  hasData: boolean;
+  partialCoverage: boolean;
+  segments: TrainingTrendSegment[];
+};
+
+const TRAINING_OPTION_DEFS: Array<{
   key: TrainingKey;
   title: string;
   description: string;
-  href: string;
 }> = [
   {
     key: "reaction",
     title: "反应力训练",
     description: "对视觉刺激尽快作出正确响应，记录反应时间。",
-    href: "/student/training/reaction",
   },
   {
     key: "stroop",
     title: "Stroop 抑制",
     description: "忽略文字含义，选择墨水颜色，练习注意力抑制。",
-    href: "/student/training/stroop",
   },
   {
     key: "digit-span",
     title: "数字广度",
     description: "顺背与倒背数字序列，分别记录最长连续正确位数。",
-    href: "/student/training/digit-span",
   },
 ];
+
+export function buildTrainingOptions(entryBase: string) {
+  return TRAINING_OPTION_DEFS.map((option) => ({
+    ...option,
+    href: `${entryBase}/${option.key}`,
+  }));
+}
+
+export const TRAINING_OPTIONS = buildTrainingOptions("/student/training");
+export const PARENT_TRAINING_OPTIONS = buildTrainingOptions("/parent/training");
 
 export async function startTrainingSession(
   trainingKey: TrainingKey,
@@ -179,6 +206,21 @@ export async function fetchTrainingTrends(
 ): Promise<TrainingTrendsResponse> {
   return apiFetch<TrainingTrendsResponse>(
     `/api/family/students/${studentId}/training-trends?trainingKey=${trainingKey}&window=${window}`,
+  );
+}
+
+export async function fetchOwnTrainingSummary(
+  trainingKey: TrainingKey,
+): Promise<SubjectTrainingSummary> {
+  return apiFetch<SubjectTrainingSummary>(`/api/training/summary?trainingKey=${trainingKey}`);
+}
+
+export async function fetchOwnTrainingTrends(
+  trainingKey: TrainingKey,
+  window: TrendWindow = "7d",
+): Promise<SubjectTrainingTrendsResponse> {
+  return apiFetch<SubjectTrainingTrendsResponse>(
+    `/api/training/trends?trainingKey=${trainingKey}&window=${window}`,
   );
 }
 
