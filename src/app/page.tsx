@@ -21,7 +21,7 @@ function NavLink({
     <Link
       href={href}
       data-testid={testId}
-      className="flex min-h-11 items-center rounded-xl border border-neutral-300 bg-white px-4 py-3 text-sm font-medium hover:bg-neutral-50"
+      className="bd-nav-card flex min-h-11 items-center rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm font-bold transition hover:bg-neutral-50"
     >
       {children}
     </Link>

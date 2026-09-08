@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Defines responsive and E2E quality gates for visual/navigation changes."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines accessibility and shared component conformance checks."}
+{"file":".trellis/tasks/09-08-theme-top-tabs/prd.md","reason":"Acceptance criteria to review against fixed implementation SHA."}
+{"file":".trellis/tasks/09-08-theme-top-tabs/design.md","reason":"Review source for role navigation and safe training-leave semantics."}

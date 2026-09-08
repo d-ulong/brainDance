@@ -1,7 +1,12 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { apiLogout } from "@/lib/client/api";
+import { ThemeToggle } from "@/components/ui/app-theme";
+import { TopTabs } from "@/components/ui/top-tabs";
 
 type PageShellProps = {
   title: string;
@@ -9,17 +14,49 @@ type PageShellProps = {
   children: ReactNode;
   showLogout?: boolean;
   backHref?: string;
+  onBeforeNavigate?: () => boolean | Promise<boolean>;
 };
 
-export function PageShell({ title, subtitle, children, showLogout, backHref }: PageShellProps) {
+export function PageShell({
+  title,
+  subtitle,
+  children,
+  showLogout,
+  backHref,
+  onBeforeNavigate,
+}: PageShellProps) {
+  const router = useRouter();
+
+  async function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
+    if (!onBeforeNavigate) return;
+    event.preventDefault();
+    if (await onBeforeNavigate()) {
+      router.push(href);
+    }
+  }
+
+  async function logout() {
+    if (onBeforeNavigate && !(await onBeforeNavigate())) return;
+    await apiLogout();
+    window.location.assign("/login");
+  }
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-6 px-4 py-6 sm:px-6">
+    <main className="bd-shell mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-5 px-4 py-5 sm:px-6">
+      <div className="flex items-center justify-between gap-3">
+        <p className="shrink-0 text-sm font-black tracking-wide text-[var(--bd-primary)]">
+          BrainDance
+        </p>
+        <ThemeToggle />
+      </div>
+      <TopTabs onBeforeNavigate={onBeforeNavigate} />
       <header className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {backHref ? (
             <Link
               href={backHref}
               className="mb-2 inline-block text-sm text-neutral-500 hover:text-neutral-800"
+              onClick={(event) => void navigate(event, backHref)}
             >
               ← 返回
             </Link>
@@ -32,8 +69,8 @@ export function PageShell({ title, subtitle, children, showLogout, backHref }: P
         {showLogout ? (
           <button
             type="button"
-            className="shrink-0 rounded-lg border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100"
-            onClick={() => void apiLogout().then(() => window.location.assign("/login"))}
+            className="shrink-0 rounded-full border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100"
+            onClick={() => void logout()}
           >
             退出
           </button>
@@ -64,7 +101,7 @@ export function Alert({
   return (
     <div
       {...rest}
-      className={`rounded-xl border px-4 py-3 text-sm break-words ${styles} ${className ?? ""}`}
+      className={`rounded-2xl border px-4 py-3 text-sm break-words ${styles} ${className ?? ""}`}
     >
       {children}
     </div>
@@ -93,7 +130,7 @@ export function PrimaryButton({
       disabled={disabled}
       onClick={onClick}
       {...rest}
-      className={`min-h-11 w-full rounded-xl bg-neutral-900 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 ${rest.className ?? ""}`}
+      className={`bd-primary min-h-11 w-full rounded-full px-4 py-3 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${rest.className ?? ""}`}
     >
       {children}
     </button>
@@ -104,7 +141,7 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`min-h-11 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-500 ${props.className ?? ""}`}
+      className={`bd-input min-h-11 w-full rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-base outline-none transition ${props.className ?? ""}`}
     />
   );
 }

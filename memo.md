@@ -67,3 +67,9 @@
 2. 用真实 `POST /api/auth/login` 构造最小复现；隔离库中单独验证账号密码 hash、状态和锁定状态，输出不得含密码。
 3. 若隔离库验证通过而 HTTP 失败，停止已识别的旧开发服务，再用 `scripts/start-closed-pilot.ps1` 启动；随后重跑同一 HTTP 登录请求。
 4. 只在服务连接目标隔离库且 HTTP 返回 200 后才发放或使用邀请码；不要通过重置密码掩盖数据库错连。
+
+## 前端主题与训练页签
+
+- 主题唯一持久化键由 `src/components/ui/app-theme.tsx` 管理，根元素 `data-theme` 是 CSS token 的唯一入口；`space` 为无存储值时的默认主题，`candy` 为替代主题。
+- `PageShell` 负责接入主题控制和 `TopTabs`；角色页签表集中在 `src/components/ui/top-tabs.tsx`，动态详情页按顶层路径高亮，避免逐页复制导航。
+- 训练 runner 通过 `onBeforeNavigate` 接入离开保护；确认后调用 `cancelTrainingSession`，只有接口返回成功才由 `PageShell` 执行页签、返回或退出导航。浏览器关闭只显示 `beforeunload` 提示，不能假定服务端已取消会话。

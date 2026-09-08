@@ -48,7 +48,11 @@ export function StroopTrainingRunner({
   );
 
   const interactionLocked =
-    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+    lifecycle.submitting ||
+    lifecycle.leaving ||
+    lifecycle.paused ||
+    lifecycle.terminated ||
+    Boolean(lifecycle.error);
 
   const showStimulus = useCallback(
     async (plan: StroopTrialPlan) => {
@@ -144,7 +148,11 @@ export function StroopTrainingRunner({
 
   if (lifecycle.error) {
     return (
-      <PageShell title="Stroop 抑制" backHref={lifecycle.hubPath}>
+      <PageShell
+        title="Stroop 抑制"
+        backHref={lifecycle.hubPath}
+        onBeforeNavigate={lifecycle.confirmLeave}
+      >
         <Alert tone="error">{lifecycle.error}</Alert>
       </PageShell>
     );
@@ -156,6 +164,7 @@ export function StroopTrainingRunner({
       subtitle={`第 ${Math.min(trialIndex + 1, trials.length)} / ${trials.length} 次`}
       backHref={lifecycle.hubPath}
       showLogout
+      onBeforeNavigate={lifecycle.confirmLeave}
     >
       <TrainingDisclaimer />
       {lifecycle.paused ? (

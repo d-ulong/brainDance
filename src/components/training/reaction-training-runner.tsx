@@ -37,7 +37,11 @@ export function ReactionTrainingRunner({
   const expectedTrials = lifecycle.session?.expectedTrialCount ?? 5;
 
   const interactionLocked =
-    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+    lifecycle.submitting ||
+    lifecycle.leaving ||
+    lifecycle.paused ||
+    lifecycle.terminated ||
+    Boolean(lifecycle.error);
 
   const showStimulus = useCallback(
     async (index: number) => {
@@ -120,7 +124,11 @@ export function ReactionTrainingRunner({
 
   if (lifecycle.error) {
     return (
-      <PageShell title="反应力训练" backHref={lifecycle.hubPath}>
+      <PageShell
+        title="反应力训练"
+        backHref={lifecycle.hubPath}
+        onBeforeNavigate={lifecycle.confirmLeave}
+      >
         <Alert tone="error">{lifecycle.error}</Alert>
       </PageShell>
     );
@@ -132,6 +140,7 @@ export function ReactionTrainingRunner({
       subtitle={`第 ${Math.min(trialIndex + 1, expectedTrials)} / ${expectedTrials} 次`}
       backHref={lifecycle.hubPath}
       showLogout
+      onBeforeNavigate={lifecycle.confirmLeave}
     >
       <TrainingDisclaimer />
       {lifecycle.paused ? (

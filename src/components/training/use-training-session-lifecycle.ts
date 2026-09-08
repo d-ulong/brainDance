@@ -8,6 +8,7 @@ import { useTrainingBlur } from "@/components/training/use-training-blur";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   appendTrainingEvent,
+  cancelTrainingSession,
   newIdempotencyKey,
   startTrainingSession,
   submitTrainingSession,
@@ -49,6 +50,7 @@ export type TrainingSessionLifecycle = {
   pendingRetry: boolean;
   submitting: boolean;
   terminated: boolean;
+  leaving: boolean;
   hubPath: string;
   isInteractionAllowed: () => boolean;
   appendEvent: (
@@ -57,6 +59,7 @@ export type TrainingSessionLifecycle = {
   ) => Promise<AppendTrainingEventResult>;
   submitSession: () => Promise<void>;
   navigateToResult: () => void;
+  confirmLeave: () => Promise<boolean>;
 };
 
 export function useTrainingSessionLifecycle(
@@ -71,6 +74,7 @@ export function useTrainingSessionLifecycle(
   const [pendingRetry, setPendingRetry] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [terminated, setTerminated] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const sequenceRef = useRef(0);
   const startedRef = useRef(false);
   const submitKeyRef = useRef<string | null>(null);
@@ -206,7 +210,7 @@ export function useTrainingSessionLifecycle(
   }, [options.role, router, trainingKey]);
 
   const submitSession = useCallback(async () => {
-    if (!session || submitting || terminatedRef.current) return;
+    if (!session || submitting || leaving || terminatedRef.current) return;
     setSubmitting(true);
     setError(null);
 
@@ -232,13 +236,43 @@ export function useTrainingSessionLifecycle(
     setPendingRetry(false);
     setSubmitting(false);
     setError(lastError instanceof ApiError ? lastError.message : "提交失败，请检查网络后重试");
-  }, [options.resultPathPrefix, router, session, submitting]);
+  }, [leaving, options.resultPathPrefix, router, session, submitting]);
 
   const navigateToResult = useCallback(() => {
     if (session) {
       router.push(`${options.resultPathPrefix}/${session.sessionId}`);
     }
   }, [options.resultPathPrefix, router, session]);
+
+  const confirmLeave = useCallback(async () => {
+    if (!session || terminatedRef.current || submitting) return true;
+    if (!window.confirm("离开训练会取消本次练习，确定要离开吗？")) return false;
+
+    setLeaving(true);
+    try {
+      await cancelTrainingSession(session.sessionId);
+      terminatedRef.current = true;
+      setTerminated(true);
+      return true;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "取消训练失败，请留在当前页面后重试。");
+      return false;
+    } finally {
+      setLeaving(false);
+    }
+  }, [session, submitting]);
+
+  useEffect(() => {
+    if (!session || terminatedRef.current || submitting) return;
+
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [session, submitting, terminated]);
 
   return {
     loading,
@@ -248,11 +282,13 @@ export function useTrainingSessionLifecycle(
     pendingRetry,
     submitting,
     terminated,
+    leaving,
     hubPath: options.hubPath,
     isInteractionAllowed,
     appendEvent,
     submitSession,
     navigateToResult,
+    confirmLeave,
   };
 }
 

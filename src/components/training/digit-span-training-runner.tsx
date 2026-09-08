@@ -53,7 +53,11 @@ export function DigitSpanTrainingRunner({
   );
 
   const interactionLocked =
-    lifecycle.submitting || lifecycle.paused || lifecycle.terminated || Boolean(lifecycle.error);
+    lifecycle.submitting ||
+    lifecycle.leaving ||
+    lifecycle.paused ||
+    lifecycle.terminated ||
+    Boolean(lifecycle.error);
 
   const clearDisplayTimer = useCallback(() => {
     if (displayTimerRef.current !== null) {
@@ -258,7 +262,11 @@ export function DigitSpanTrainingRunner({
 
   if (lifecycle.error) {
     return (
-      <PageShell title="数字广度" backHref={lifecycle.hubPath}>
+      <PageShell
+        title="数字广度"
+        backHref={lifecycle.hubPath}
+        onBeforeNavigate={lifecycle.confirmLeave}
+      >
         <Alert tone="error">{lifecycle.error}</Alert>
       </PageShell>
     );
@@ -272,6 +280,7 @@ export function DigitSpanTrainingRunner({
       subtitle={`第 ${Math.min(attemptIndex + 1, attempts.length)} / ${attempts.length} 次 · ${modeLabel}`}
       backHref={lifecycle.hubPath}
       showLogout
+      onBeforeNavigate={lifecycle.confirmLeave}
     >
       <TrainingDisclaimer />
       {lifecycle.paused ? (

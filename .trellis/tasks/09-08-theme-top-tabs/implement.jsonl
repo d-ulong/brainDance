@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Shared PageShell, accessible interactive controls, Tailwind styling, and UI composition rules."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Browser-local state and timed training lifecycle constraints."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required responsive, accessibility, and focused Playwright evidence."}
+{"file":".trellis/tasks/09-08-theme-top-tabs/prd.md","reason":"Approved product requirements and acceptance criteria for themes and tabs."}
+{"file":".trellis/tasks/09-08-theme-top-tabs/design.md","reason":"Frozen UI, navigation, persistence, and training leave contracts."}

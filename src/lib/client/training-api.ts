@@ -186,6 +186,13 @@ export async function submitTrainingSession(
   });
 }
 
+export async function cancelTrainingSession(sessionId: string): Promise<{ status: string }> {
+  return apiFetch<{ status: string }>(`/api/training/sessions/${sessionId}/terminate`, {
+    method: "POST",
+    body: JSON.stringify({ action: "cancel" }),
+  });
+}
+
 export async function fetchTrainingSession(sessionId: string): Promise<TrainingSessionDetail> {
   return apiFetch<TrainingSessionDetail>(`/api/training/sessions/${sessionId}`);
 }
