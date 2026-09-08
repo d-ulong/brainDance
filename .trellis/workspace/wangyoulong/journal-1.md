@@ -266,3 +266,37 @@ Completed and final-reviewed unified password UX plus parent personal training a
 ### Next Steps
 
 - No further implementation; optionally push main when authorized.
+
+
+## Session 11: Playful themes and top-tab workspace
+
+**Date**: 2026-09-08
+**Task**: Playful themes and top-tab workspace
+**Branch**: `main`
+
+### Summary
+
+Implemented browser-local space/candy themes, role-aware persistent tabs, and safe training leave handling.
+
+### Main Changes
+
+- Added shared theme tokens, controls, and role route tables through PageShell.
+- Connected training navigation to the existing cancel-session state transition.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27ef8b1` | (see git log) |
+
+### Testing
+
+- [OK] Typecheck and production build passed; lint had only existing warnings; theme persistence browser test passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Re-run the remaining focused Playwright role-tab and training-leave cases when the local worker is stable.
