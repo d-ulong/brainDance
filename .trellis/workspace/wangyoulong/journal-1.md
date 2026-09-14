@@ -300,3 +300,24 @@ Implemented browser-local space/candy themes, role-aware persistent tabs, and sa
 ### Next Steps
 
 - Re-run the remaining focused Playwright role-tab and training-leave cases when the local worker is stable.
+
+
+## Session 12: Complete family planning workspace
+
+**Date**: 2026-09-14
+**Task**: Complete family planning workspace
+**Branch**: `main`
+
+### Summary
+
+Completed the accumulated family planning, push, schedule, goal, account and UI work; verified focused regressions and archived the three remaining Trellis tasks at the user's request.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `aafe07b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
