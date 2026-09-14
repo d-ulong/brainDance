@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
+import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import {
   fetchDailyReflection,
   reflectionVisibilityLabel,
@@ -83,6 +84,7 @@ export default function ParentReflectionPage({
   return (
     <PageShell title="今日总结">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 pb-8">
+        {studentId ? <StudentContextBanner studentId={studentId} label="正在查看总结的学生" /> : null}
         {error ? <Alert tone="error">{error}</Alert> : null}
 
         {forbidden ? (

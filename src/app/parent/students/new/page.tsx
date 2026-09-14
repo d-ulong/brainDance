@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
@@ -27,9 +28,10 @@ export default function ParentCreateStudentPage() {
   const [success, setSuccess] = useState<{ studentId: string; username: string } | null>(null);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [birthDate, setBirthDate] = useState("2015-06-01");
-  const [initialPassword, setInitialPassword] = useState("Init1aPass");
-  const [confirmPassword, setConfirmPassword] = useState("Init1aPass");
+  const [guardianConsent, setGuardianConsent] = useState(false);
+  const [birthDate, setBirthDate] = useState("");
+  const [initialPassword, setInitialPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
     void fetchSession().then((session) => {
@@ -60,7 +62,8 @@ export default function ParentCreateStudentPage() {
           method: "POST",
           body: JSON.stringify({
             username,
-            displayName: displayName || username,
+            displayName,
+            guardianConsent,
             birthDate,
             initialPassword,
             idempotencyKey: newIdempotencyKey("create-student"),
@@ -84,14 +87,24 @@ export default function ParentCreateStudentPage() {
   }
 
   return (
-    <PageShell title="创建学生账号" subtitle="5–12 岁受控学生（路径 A）" backHref="/" showLogout>
+    <PageShell
+      title="创建学生账号"
+      subtitle="为 5–12 岁孩子创建独立账号，创建后直接加入你的家庭，不需要再次关联。"
+      backHref="/parent/students"
+      showLogout
+    >
       {success ? (
         <Alert tone="success">
           <p>
             学生账号已创建：
             <strong data-testid="created-student-username">{success.username}</strong>
           </p>
-          <p className="mt-2 text-sm">请让学生使用初始密码登录并修改密码。</p>
+          <p className="mt-2 text-sm">
+            已自动加入你的家庭，无需再次绑定。请让学生使用初始密码登录并修改密码。
+          </p>
+          <Link className="bd-inline-link" href="/parent/students">
+            查看我的家庭 →
+          </Link>
         </Alert>
       ) : (
         <form className="flex flex-col gap-4" onSubmit={onSubmit}>
@@ -103,8 +116,14 @@ export default function ParentCreateStudentPage() {
               required
             />
           </Field>
-          <Field label="显示名称">
-            <TextInput value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <Field label="姓名或昵称">
+            <TextInput
+              data-testid="student-display-name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+              maxLength={64}
+            />
           </Field>
           <Field label="出生日期">
             <TextInput
@@ -135,6 +154,18 @@ export default function ParentCreateStudentPage() {
             maxLength={PRODUCT_PASSWORD_MAX_LENGTH}
             required
           />
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1 size-5 shrink-0"
+              required
+              checked={guardianConsent}
+              onChange={(e) => setGuardianConsent(e.target.checked)}
+            />
+            <span>
+              我是该学生的家长，同意创建独立学生账号并建立家庭关联，按监护同意与隐私规则陪伴使用。
+            </span>
+          </label>
           {error ? (
             <Alert tone="error" data-testid="create-student-error">
               {error}

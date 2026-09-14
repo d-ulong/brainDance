@@ -8,6 +8,7 @@ import { SettlementError, type SettlementErrorCode } from "@/modules/settlement/
 import { RedemptionError, type RedemptionErrorCode } from "@/modules/redemption/errors";
 import { DataLifecycleError, type DataLifecycleErrorCode } from "@/modules/data-lifecycle/errors";
 import { FamilyContentError, type FamilyContentErrorCode } from "@/modules/family-content/errors";
+import { GoalError, type GoalErrorCode } from "@/modules/goals/errors";
 
 export type M2ErrorBody = {
   error: {
@@ -22,6 +23,8 @@ function scheduleErrorToStatus(code: ScheduleErrorCode): number {
       return 404;
     case "FORBIDDEN":
       return 403;
+    case "VALIDATION_ERROR":
+      return 400;
     case "IDEMPOTENCY_CONFLICT":
     case "STATE_CONFLICT":
     case "WINDOW_EXPIRED":
@@ -148,6 +151,22 @@ function familyContentErrorToStatus(code: FamilyContentErrorCode): number {
   }
 }
 
+function goalErrorToStatus(code: GoalErrorCode): number {
+  switch (code) {
+    case "NOT_FOUND":
+      return 404;
+    case "FORBIDDEN":
+      return 403;
+    case "VALIDATION_ERROR":
+      return 400;
+    case "IDEMPOTENCY_CONFLICT":
+    case "STATE_CONFLICT":
+      return 409;
+    default:
+      return 500;
+  }
+}
+
 function flatToNested(body: { error: string; code?: string }): M2ErrorBody {
   return {
     error: {
@@ -213,6 +232,13 @@ export function toRouteErrorResponse(error: unknown): {
   if (error instanceof FamilyContentError) {
     return {
       status: familyContentErrorToStatus(error.code),
+      body: { error: { code: error.code, message: error.message } },
+    };
+  }
+
+  if (error instanceof GoalError) {
+    return {
+      status: goalErrorToStatus(error.code),
       body: { error: { code: error.code, message: error.message } },
     };
   }

@@ -11,9 +11,21 @@ export type TestDb = PostgresJsDatabase<typeof schema>;
 let sharedClient: ReturnType<typeof postgres> | undefined;
 let resetQueue: Promise<void> = Promise.resolve();
 
+/** Refuse to migrate or truncate a developer/closed-pilot database from tests. */
+function requireIsolatedTestDatabaseUrl(): string {
+  const databaseUrl = requireDatabaseUrl();
+  const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "").toLowerCase();
+  if (!/(^|_)(test|isolated|e2e)(_|$)/.test(databaseName)) {
+    throw new Error(
+      `Refusing destructive test setup for database "${databaseName}". Set DATABASE_URL to an explicitly named *_test_*, *_isolated_*, or *_e2e_* database.`,
+    );
+  }
+  return databaseUrl;
+}
+
 export function getTestDb(): TestDb {
   if (!sharedClient) {
-    sharedClient = postgres(requireDatabaseUrl(), { max: 5 });
+    sharedClient = postgres(requireIsolatedTestDatabaseUrl(), { max: 5 });
   }
   return drizzle(sharedClient, { schema });
 }
@@ -28,7 +40,7 @@ export function getTestSqlClient(): ReturnType<typeof postgres> {
 }
 
 export async function migrateTestDb(): Promise<void> {
-  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const client = postgres(requireIsolatedTestDatabaseUrl(), { max: 1 });
   const db = drizzle(client);
   await migrate(db, { migrationsFolder: "./src/db/migrations" });
   await client.end({ timeout: 5 });
@@ -98,7 +110,7 @@ export function createIndependentTestDb(): {
   db: TestDb;
   close: () => Promise<void>;
 } {
-  const client = postgres(requireDatabaseUrl(), { max: 1 });
+  const client = postgres(requireIsolatedTestDatabaseUrl(), { max: 1 });
   const db = drizzle(client, { schema });
   return {
     db,

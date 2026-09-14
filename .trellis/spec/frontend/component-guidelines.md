@@ -107,6 +107,14 @@ E2E tests use roles and test IDs:
 
 Architecture target viewports (`docs/architecture.md` §6): 360px, 768px, 1024px, 1440px. E2E enforces no horizontal scroll at 360px in `tests/e2e/m2-schedule-points-flow.spec.ts` (`assertNoHorizontalScroll`).
 
+### Dialog layering and destructive actions
+
+- Feature dialogs use the normal modal layer. Error dialogs and blocking confirmations use the critical layer and must remain above feature dialogs and media viewers.
+- A media lightbox may sit above ordinary content, but never above a critical error or confirmation dialog.
+- Deletion, cancellation, redemption, disabling a shared item, and other hard-to-reverse actions require a confirmation dialog. A client precheck improves feedback but never replaces the server-side authority check.
+- When a page has an active feature dialog, route all mutation failures to the shared critical `ErrorDialog`; do not render a hidden inline label behind the dialog.
+- Status cannot be expressed only with color: pair its visual treatment with the shared textual label and test the post-mutation fresh read.
+
 ---
 
 ## Anti-Patterns

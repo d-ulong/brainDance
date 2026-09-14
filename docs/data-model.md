@@ -42,7 +42,9 @@
 
 | 实体 | 关键字段 | 约束 |
 | --- | --- | --- |
-| goals | id、student_id、creator_id、title、status、start_date、due_date、closed_at | 仅 creator 可完成/关闭 |
+| goal_definitions | id、creator_id、responsible_parent_id、source、content、due_date、expected_points、expected_gift、notes | 家长定义直接生效；学生定义是提案；奖励期望不等于结算事实 |
+| goal_assignments | id、definition_id、subject_id、responsible_parent_id、status、actual_points、actual_gift、evaluation_reason、evaluated_by、evaluated_at | 每个目标对象独立状态；责任家长唯一评定；终态不可回退 |
+| goal_commands | actor_id、key、payload_hash、result | 同 actor 幂等；异载荷冲突 |
 | plans | id、student_id、owner_id、goal_id、plan_kind、source_plan_id、status、current_version | personal 归学生；formal 归家长；formal 只归一名学生 |
 | plan_versions | id、plan_id、version、schedule_rule、effective_from、effective_until、created_at | 只追加；变更从次日起生效 |
 | plan_schedule_slots | id、plan_version_id、slot_key、local_time | `(plan_version_id, slot_key)` 唯一；支持同日多时间点 |
@@ -64,10 +66,11 @@
 | point_ledger_entries | id、student_id、settlement_id nullable、amount、reason、source_type、source_id、reverses_entry_id nullable、created_by、idempotency_key | 不更新、不删除；冲销必须指向原流水 |
 | point_balance_projection | student_id、balance、last_ledger_entry_id、updated_at | 可由流水重建；余额可负 |
 | manual_point_rewards | id、student_id、parent_id、amount、reason、ledger_entry_id | 仅正数，且必须有原因 |
+| manual_point_adjustments | id、student_id、actor_parent_id、kind、amount、reason、original_adjustment_id、ledger_entry_id、idempotency_key | 惩罚为不超过余额的负流水；只有原家长可用一条全额正向流水撤销 |
 | redemption_catalog_items | id、student_id、creator_parent_id、title、cost、monthly_limit、active | 线下文本目录；离关联后停用 |
 | point_redemptions | id、student_id、catalog_item_id、cost_snapshot、status、requested_at、confirmed_at、confirmed_by、rejection_reason、ledger_entry_id | pending/approved/rejected/cancelled；批准与扣减流水同事务 |
 
-结算只消费已确认的事实版本；规则只引用系统事实时可立即确认。事实更正不会更新旧结算或旧流水，而是产生冲销结算/流水和基于新事实版本的新结算。负余额拒绝新兑换；每月限次、余额检查、兑换批准和扣减流水必须在同一事务加锁完成。
+结算消费系统事实、经服务端校验的首次完成声明，或已由授权主体确认的质量事实；不同来源必须保留 provenance，不能把学生声明伪装为系统计时。事实更正不会更新旧结算或旧流水，而是产生冲销结算/流水和基于新事实版本的新结算。目标奖励使用独立 `goal_reward` 流水且每个目标实例最多一条；手动惩罚及撤销分别使用 `manual_penalty` / `manual_penalty_reversal`。负余额拒绝新兑换；兑换申请与批准都检查余额，批准和扣减流水必须在同一事务加锁完成。
 
 ## 6. 隐私、删除、导出、审计与异步资源
 

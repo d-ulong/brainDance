@@ -79,9 +79,11 @@ test.describe("M1 browser flow", () => {
 
     await page.goto("/parent/students/new");
     await fillField(page, "student-username", studentUsername);
+    await fillField(page, "student-display-name", "E2E Student");
     await fillField(page, "student-birth-date", "2015-06-01");
     await fillField(page, "student-initial-password", initialPassword);
     await fillField(page, "student-initial-password-confirm", initialPassword);
+    await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "创建学生" }).click();
     await expect(page.getByTestId("created-student-username")).toHaveText(studentUsername);
     await logoutViaUi(page);
@@ -94,27 +96,8 @@ test.describe("M1 browser flow", () => {
     await page.getByRole("button", { name: "确认修改" }).click();
     await page.waitForURL("/");
 
+    // Creation already established the relationship; no second association request.
     await page.goto("/student/link");
-    await page.getByRole("button", { name: "生成关联码" }).click();
-    const associationCode = await page.getByTestId("association-code").innerText();
-    await logoutViaUi(page);
-
-    await loginViaUi(page, parentEmail, parentPassword);
-    await page.goto("/parent/link");
-    await fillField(page, "association-code-input", associationCode);
-    await page.getByRole("button", { name: "发送关联申请" }).click();
-    await expect(page.getByText("关联申请已发送")).toBeVisible();
-    await logoutViaUi(page);
-
-    await loginViaUi(page, studentUsername, studentPassword);
-    await page.goto("/student/link");
-    await expect(page.getByRole("button", { name: "接受关联" })).toBeVisible({ timeout: 15_000 });
-    const acceptResponse = page.waitForResponse(
-      (resp) => resp.url().includes("/accept") && resp.request().method() === "POST",
-    );
-    await page.getByRole("button", { name: "接受关联" }).click();
-    const acceptResult = await acceptResponse;
-    expect(acceptResult.ok(), await acceptResult.text()).toBeTruthy();
     await expect(page.getByText("暂无待处理的关联申请")).toBeVisible({ timeout: 15_000 });
 
     await completeTraining(page);
@@ -245,7 +228,7 @@ test.describe("M1 browser flow", () => {
   test("has no horizontal scroll on 360px viewport", async ({ page }) => {
     const fixture = loadE2eFixture();
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "BrainDance" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "欢迎来到脑力乐园" })).toBeVisible();
 
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);

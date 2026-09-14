@@ -11,11 +11,12 @@ import {
   transitionFamilyPush,
 } from "@/modules/family-content/push-lifecycle.service";
 import { FamilyContentError } from "@/modules/family-content/errors";
+import { MAX_PUSH_IMAGES } from "@/modules/family-content/constants";
 
 const editBodySchema = z.object({
   body: z.string().optional().nullable(),
   linkUrl: z.string().optional().nullable(),
-  mediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
+  mediaIds: z.array(z.string().uuid()).max(MAX_PUSH_IMAGES).optional().nullable(),
   scheduledPublishAt: z.string().datetime().optional().nullable(),
 });
 

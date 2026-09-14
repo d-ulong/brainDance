@@ -7,11 +7,12 @@ import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireParentSession, requireVerifiedParentSession } from "@/lib/auth-request";
 import { createFamilyPush } from "@/modules/family-content/create-push.service";
 import { listFamilyPushes } from "@/modules/family-content/push-lifecycle.service";
+import { MAX_PUSH_IMAGES } from "@/modules/family-content/constants";
 
 const createBodySchema = z.object({
   body: z.string().optional().nullable(),
   linkUrl: z.string().optional().nullable(),
-  mediaIds: z.array(z.string().uuid()).max(1).optional().nullable(),
+  mediaIds: z.array(z.string().uuid()).max(MAX_PUSH_IMAGES).optional().nullable(),
   publishMode: z.enum(["draft", "immediate", "scheduled"]),
   scheduledPublishAt: z.string().datetime().optional().nullable(),
 });

@@ -31,6 +31,7 @@ export type CreateFamilyPushInput = {
   mediaIds?: string[] | null;
   publishMode: FamilyPushPublishMode;
   scheduledPublishAt?: string | null;
+  answerDisclosureDays?: number | null;
   idempotencyKey: string;
   requestId?: string;
   now?: Date;
@@ -59,6 +60,7 @@ async function toPushDto(
     media,
     scheduledPublishAt: push.scheduledPublishAt?.toISOString() ?? null,
     publishedAt: push.publishedAt?.toISOString() ?? null,
+    answerDisclosureDays: push.answerDisclosureDays,
     canEdit,
     createdAt: push.createdAt.toISOString(),
     updatedAt: push.updatedAt.toISOString(),
@@ -117,6 +119,9 @@ export async function createFamilyPush(
     linkUrl: input.linkUrl,
     mediaIds: input.mediaIds,
   });
+  if (input.answerDisclosureDays !== undefined && input.answerDisclosureDays !== null && (!Number.isInteger(input.answerDisclosureDays) || input.answerDisclosureDays < 0 || input.answerDisclosureDays > 365)) {
+    throw new FamilyContentError("VALIDATION_ERROR", "answerDisclosureDays must be an integer from 0 to 365");
+  }
 
   let status: FamilyPushStatus;
   let scheduledPublishAt: Date | null = null;
@@ -148,6 +153,7 @@ export async function createFamilyPush(
     mediaIds: content.mediaIds,
     publishMode: input.publishMode,
     scheduledPublishAt: scheduledPublishAt?.toISOString() ?? null,
+    answerDisclosureDays: input.answerDisclosureDays ?? null,
   });
 
   const replay = await findCreateReplay(db, input.actorId, input.idempotencyKey, payloadHash);
@@ -177,6 +183,7 @@ export async function createFamilyPush(
         currentVersion: 1,
         scheduledPublishAt,
         publishedAt,
+        answerDisclosureDays: input.answerDisclosureDays ?? null,
         createIdempotencyKey: input.idempotencyKey,
         createIdempotencyPayloadHash: payloadHash,
         createdAt: now,

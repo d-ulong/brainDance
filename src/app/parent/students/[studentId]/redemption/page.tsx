@@ -11,8 +11,10 @@ import {
   PrimaryButton,
   TextInput,
 } from "@/components/ui/page-shell";
+import { ErrorDialog } from "@/components/ui/error-dialog";
 import { PointsTodayCard } from "@/components/m2/points-today-card";
 import { ApiError, fetchSession } from "@/lib/client/api";
+import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import {
   approveRedemption,
   createCatalogItem,
@@ -47,6 +49,7 @@ export default function ParentRedemptionPage({
   const [description, setDescription] = useState("");
   const [cost, setCost] = useState("20");
   const [monthlyLimit, setMonthlyLimit] = useState("");
+  const [editingItem, setEditingItem] = useState<CatalogItemDto | null>(null);
 
   const loadData = useCallback(async (sid: string) => {
     setError(null);
@@ -93,23 +96,38 @@ export default function ParentRedemptionPage({
     })();
   }, [loadData, params, router]);
 
-  async function onCreateCatalog(event: React.FormEvent) {
+  function resetCatalogForm() {
+    setEditingItem(null);
+    setTitle("周末外出");
+    setDescription("");
+    setCost("20");
+    setMonthlyLimit("");
+  }
+
+  async function onSaveCatalog(event: React.FormEvent) {
     event.preventDefault();
     if (!studentId) return;
     setCreating(true);
     setActionMessage(null);
     setError(null);
     try {
-      await createCatalogItem(studentId, {
+      const values = {
         title,
         description: description.trim() ? description : null,
         cost: Number(cost),
         monthlyLimit: monthlyLimit.trim() ? Number(monthlyLimit) : null,
-      });
-      setActionMessage("目录项已创建");
+      };
+      if (editingItem) {
+        await updateCatalogItem(studentId, editingItem.id, values);
+        setActionMessage("兑换项目已更新");
+      } else {
+        await createCatalogItem(studentId, values);
+        setActionMessage("兑换项目已创建");
+      }
+      resetCatalogForm();
       await loadData(studentId);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "创建目录项失败");
+      setError(err instanceof ApiError ? err.message : "创建兑换项目失败");
     } finally {
       setCreating(false);
     }
@@ -122,10 +140,10 @@ export default function ParentRedemptionPage({
     setError(null);
     try {
       await updateCatalogItem(studentId, item.id, { active: !item.active });
-      setActionMessage(item.active ? "目录项已停用" : "目录项已启用");
+      setActionMessage(item.active ? "兑换项目已停用" : "兑换项目已启用");
       await loadData(studentId);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "更新目录项失败");
+      setError(err instanceof ApiError ? err.message : "更新兑换项目失败");
     } finally {
       setSubmittingId(null);
     }
@@ -172,7 +190,7 @@ export default function ParentRedemptionPage({
 
   if (loading) {
     return (
-      <PageShell title="兑换目录">
+      <PageShell title="兑换项目">
         <LoadingState />
       </PageShell>
     );
@@ -180,7 +198,7 @@ export default function ParentRedemptionPage({
 
   if (forbidden) {
     return (
-      <PageShell title="兑换目录" backHref="/parent/students" showLogout>
+      <PageShell title="兑换项目" backHref="/parent/students" showLogout>
         <Alert tone="error" data-testid="parent-forbidden">
           无权限访问该学生数据。
         </Alert>
@@ -189,12 +207,14 @@ export default function ParentRedemptionPage({
   }
 
   return (
-    <PageShell
-      title="兑换目录"
+      <PageShell
+      title="兑换项目"
       subtitle="管理目录与审批申请"
       backHref="/parent/students"
       showLogout
-    >
+      >
+        {studentId ? <StudentContextBanner studentId={studentId} label="正在管理兑换的学生" /> : null}
+      <ErrorDialog message={error} onClose={() => setError(null)} />
       {studentId ? <PointsTodayCard studentId={studentId} /> : null}
 
       {actionMessage ? (
@@ -202,15 +222,12 @@ export default function ParentRedemptionPage({
           {actionMessage}
         </Alert>
       ) : null}
-      {error ? (
-        <Alert tone="error" data-testid="parent-redemption-error">
-          {error}
-        </Alert>
-      ) : null}
-
       <section className="rounded-xl border border-neutral-300 bg-white p-4">
-        <h2 className="text-sm font-semibold">创建目录项</h2>
-        <form className="mt-3 flex flex-col gap-4" onSubmit={onCreateCatalog}>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold">{editingItem ? "编辑兑换项目" : "创建兑换项目"}</h2>
+          {editingItem ? <button type="button" className="min-h-11 text-sm underline" onClick={resetCatalogForm}>取消编辑</button> : null}
+        </div>
+        <form className="mt-3 flex flex-col gap-4" onSubmit={onSaveCatalog}>
           <Field label="名称">
             <TextInput
               data-testid="catalog-title"
@@ -246,15 +263,15 @@ export default function ParentRedemptionPage({
             />
           </Field>
           <PrimaryButton type="submit" disabled={creating} data-testid="create-catalog-button">
-            {creating ? "创建中…" : "创建目录项"}
+            {creating ? "保存中…" : editingItem ? "保存修改" : "创建兑换项目"}
           </PrimaryButton>
         </form>
       </section>
 
       <section className="rounded-xl border border-neutral-300 bg-white p-4">
-        <h2 className="text-sm font-semibold">目录列表</h2>
+        <h2 className="text-sm font-semibold">项目列表</h2>
         {catalog.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-500">暂无目录项</p>
+          <p className="mt-2 text-sm text-neutral-500">暂无兑换项目</p>
         ) : (
           <ul className="mt-3 flex flex-col gap-3">
             {catalog.map((item) => (
@@ -278,6 +295,19 @@ export default function ParentRedemptionPage({
                   data-testid={`toggle-catalog-${item.id}`}
                 >
                   {submittingId === item.id ? "更新中…" : item.active ? "停用" : "启用"}
+                </PrimaryButton>
+                <PrimaryButton
+                  className="mt-3"
+                  type="button"
+                  onClick={() => {
+                    setEditingItem(item);
+                    setTitle(item.title);
+                    setDescription(item.description ?? "");
+                    setCost(String(item.cost));
+                    setMonthlyLimit(item.monthlyLimit === null ? "" : String(item.monthlyLimit));
+                  }}
+                >
+                  编辑
                 </PrimaryButton>
               </li>
             ))}

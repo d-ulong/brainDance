@@ -239,6 +239,76 @@
       "when": 1787764800000,
       "tag": "0033_p2_training_trainee_remediation",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788393600000,
+      "tag": "0034_independent_plan_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788397200000,
+      "tag": "0035_independent_push_library",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788400800000,
+      "tag": "0036_local_media_scan_exception",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788487200000,
+      "tag": "0037_plan_execution_facts_and_signed_settlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788490800000,
+      "tag": "0038_plan_activation_rule_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788494400000,
+      "tag": "0039_parallel_plans_and_push_threads",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788580800000,
+      "tag": "0040_push_answer_disclosure",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1789231200000,
+      "tag": "0041_manual_schedule_completion",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1789354800000,
+      "tag": "0042_goals_and_manual_penalties",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1789362000000,
+      "tag": "0043_goal_edits_and_notes",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
-import { eq, sql } from "drizzle-orm";
+import { asc, and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { familyPushes, pushAnswerVersions, pushAnswers } from "@/db/schema";
+import { familyPushes, pushAnswerVersions, pushAnswers, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   assertStudentNotFrozenForFamilyContent,
@@ -20,6 +20,7 @@ import {
 } from "@/modules/family-content/media-reference.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
+import { isAnswerDisclosed, relatedPushesForStudentRead } from "./answer-disclosure.service";
 
 async function toAnswerDto(
   db: Database,
@@ -27,37 +28,42 @@ async function toAnswerDto(
   version: typeof pushAnswerVersions.$inferSelect,
 ): Promise<PushAnswerDto> {
   const media = await listActiveMediaDtosForResource(db, "push_answer_version", version.id);
+  const [author] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, answer.studentId)).limit(1);
   return {
     answerId: answer.id,
     pushId: answer.pushId,
     studentId: answer.studentId,
+    authorName: author?.displayName ?? "学生",
     currentVersion: answer.currentVersion,
     body: version.body,
     media,
+    createdAt: answer.createdAt.toISOString(),
     updatedAt: answer.updatedAt.toISOString(),
   };
 }
 
 export async function getPushAnswer(db: Database, pushId: string): Promise<PushAnswerDto | null> {
-  const [answer] = await db
+  const answers = await listPushAnswers(db, pushId);
+  return answers.at(-1) ?? null;
+}
+
+/** Answers are attempts, not revisions of a single attempt. */
+export async function listPushAnswers(db: Database, pushId: string, viewer?: { actorId: string; actorRole: "parent" | "student" }): Promise<PushAnswerDto[]> {
+  const related = viewer?.actorRole === "student" ? await relatedPushesForStudentRead(db, pushId) : null;
+  const visibleIds = related ? related.filter((push) => isAnswerDisclosed(push, viewer!.actorId)).map((push) => push.id) : [pushId];
+  const answers = await db
     .select()
     .from(pushAnswers)
-    .where(eq(pushAnswers.pushId, pushId))
-    .limit(1);
-  if (!answer) {
-    return null;
-  }
-  const [version] = await db
-    .select()
-    .from(pushAnswerVersions)
-    .where(
+    .where(inArray(pushAnswers.pushId, visibleIds))
+    .orderBy(asc(pushAnswers.createdAt));
+  const result: PushAnswerDto[] = [];
+  for (const answer of answers) {
+    const [version] = await db.select().from(pushAnswerVersions).where(
       sql`${pushAnswerVersions.answerId} = ${answer.id}::uuid AND ${pushAnswerVersions.version} = ${answer.currentVersion}`,
-    )
-    .limit(1);
-  if (!version) {
-    return null;
+    ).limit(1);
+    if (version) result.push(await toAnswerDto(db, answer, version));
   }
-  return toAnswerDto(db, answer, version);
+  return result;
 }
 
 export type SubmitPushAnswerInput = {
@@ -115,6 +121,7 @@ export async function submitPushAnswer(
     handwritingMediaIds: input.handwritingMediaIds,
   });
   const payloadHash = hashIdempotencyPayload({
+    pushId: input.pushId,
     body: content.body,
     mediaIds: content.mediaIds,
     handwritingMediaIds: content.handwritingMediaIds,
@@ -135,10 +142,13 @@ export async function submitPushAnswer(
     const [existingAnswer] = await tx
       .select()
       .from(pushAnswers)
-      .where(eq(pushAnswers.pushId, push.id))
+      .where(and(eq(pushAnswers.studentId, input.studentId), eq(pushAnswers.createIdempotencyKey, input.idempotencyKey)))
       .limit(1);
 
     if (existingAnswer) {
+      if (existingAnswer.pushId !== push.id) {
+        throw new FamilyContentError("IDEMPOTENCY_CONFLICT", "Answer idempotency payload mismatch");
+      }
       const [replayVersion] = await tx
         .select()
         .from(pushAnswerVersions)
@@ -167,65 +177,7 @@ export async function submitPushAnswer(
         };
       }
 
-      await tx.execute(sql`SELECT id FROM push_answers WHERE id = ${existingAnswer.id} FOR UPDATE`);
-      const now = input.now ?? new Date();
-      const nextVersion = existingAnswer.currentVersion + 1;
-      const [updated] = await tx
-        .update(pushAnswers)
-        .set({ currentVersion: nextVersion, updatedAt: now })
-        .where(eq(pushAnswers.id, existingAnswer.id))
-        .returning();
-
-      const [version] = await tx
-        .insert(pushAnswerVersions)
-        .values({
-          answerId: existingAnswer.id,
-          version: nextVersion,
-          body: content.body,
-          submitIdempotencyKey: input.idempotencyKey,
-          submitIdempotencyPayloadHash: payloadHash,
-          createdAt: now,
-        })
-        .returning();
-
-      await attachAnswerMedia(tx, {
-        studentId: input.studentId,
-        versionId: version!.id,
-        mediaIds: content.mediaIds,
-        handwritingMediaIds: content.handwritingMediaIds,
-        now,
-      });
-
-      await appendAuditEvent(tx, {
-        actorId: input.studentId,
-        action: "family_push.answered",
-        resourceType: "push_answer",
-        resourceId: existingAnswer.id,
-        requestId: input.requestId ?? null,
-        idempotencyKey: `audit:push-answer:${input.idempotencyKey}`,
-        metadata: {
-          pushId: push.id,
-          studentId: push.studentId,
-          version: nextVersion,
-          bodyLength: content.body.length,
-          mediaCount: content.mediaIds.length + content.handwritingMediaIds.length,
-        },
-      });
-
-      await appendOutboxEvent(tx, {
-        aggregateType: "family_push",
-        aggregateId: push.id,
-        eventType: FAMILY_CONTENT_EVENT_TYPES.ANSWERED,
-        dedupeKey: `family_push.answered:${existingAnswer.id}:v${nextVersion}`,
-        payload: {
-          pushId: push.id,
-          answerId: existingAnswer.id,
-          studentId: push.studentId,
-          version: nextVersion,
-        },
-      });
-
-      return { answer: await toAnswerDto(tx, updated!, version!), idempotentReplay: false };
+      throw new FamilyContentError("STATE_CONFLICT", "Answer idempotency replay record is incomplete");
     }
 
     const now = input.now ?? new Date();

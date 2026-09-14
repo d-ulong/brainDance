@@ -84,6 +84,8 @@ export type AppendLedgerInput = {
   amount: number;
   completionKind: "on_time" | "late";
   idempotencyKey: string;
+  reason?: string;
+  explanation?: string;
   now?: Date;
 };
 
@@ -136,7 +138,7 @@ export async function appendLedgerForSettlement(
   input: AppendLedgerInput,
   options?: { testHooks?: AppendLedgerTestHooks },
 ): Promise<AppendLedgerResult> {
-  const explanation = buildLedgerExplanation(input.completionKind);
+  const explanation = input.explanation ?? buildLedgerExplanation(input.completionKind);
 
   if (options?.testHooks?.beforeLedgerInsert) {
     await options.testHooks.beforeLedgerInsert();
@@ -157,7 +159,7 @@ export async function appendLedgerForSettlement(
       ${input.studentId}::uuid,
       ${input.settlementId}::uuid,
       ${input.amount},
-      'schedule_complete',
+      ${input.reason ?? "schedule_complete"},
       'settlement',
       ${explanation},
       ${input.settlementId}::uuid,

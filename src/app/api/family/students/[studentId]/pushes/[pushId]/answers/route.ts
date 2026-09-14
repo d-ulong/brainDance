@@ -5,7 +5,7 @@ import { m2UuidParamSchema } from "@/app/api/_lib/m2-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireAuthenticatedSession, requireStudentSessionForWrites } from "@/lib/auth-request";
-import { getPushAnswer, submitPushAnswer } from "@/modules/family-content/answer.service";
+import { listPushAnswers, submitPushAnswer } from "@/modules/family-content/answer.service";
 import { getFamilyPush } from "@/modules/family-content/push-lifecycle.service";
 import { FamilyContentError } from "@/modules/family-content/errors";
 
@@ -39,8 +39,11 @@ export async function GET(_request: Request, context: RouteContext) {
       throw new FamilyContentError("NOT_FOUND", "Push not found");
     }
 
-    const answer = await getPushAnswer(db, pushId);
-    return NextResponse.json({ answer });
+    const answers = await listPushAnswers(db, pushId, { actorId: dbUser.id, actorRole: dbUser.role });
+    const ownAnswers = dbUser.role === "student"
+      ? answers.filter((answer) => answer.studentId === dbUser.id)
+      : answers;
+    return NextResponse.json({ answers, answer: ownAnswers.at(-1) ?? null });
   } catch (error) {
     const { status, body } = toRouteErrorResponse(error);
     return NextResponse.json(body, { status });

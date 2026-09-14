@@ -130,6 +130,7 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
 
   it("enforces monthly limit", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    await seedStudentBalance(db, studentId, 100);
     const { item } = await bootstrapCatalogItem(db, {
       parentId,
       studentId,
@@ -168,6 +169,16 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
 
     await seedStudentBalance(db, studentId, 5);
     await expect(
+      createRedemptionRequest(db, {
+        studentId,
+        actorId: studentId,
+        catalogItemId,
+        idempotencyKey: "req-insufficient",
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
+
+    await expect(
       approveRedemptionRequest(db, {
         parentId,
         studentId,
@@ -178,20 +189,12 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
     ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
 
     await seedStudentBalance(db, studentId, -1);
-    const exact = await createRedemptionRequest(db, {
-      studentId,
-      actorId: studentId,
-      catalogItemId,
-      idempotencyKey: "req-exact",
-      now: FIXED_NOW,
-    });
-
     await expect(
-      approveRedemptionRequest(db, {
-        parentId,
+      createRedemptionRequest(db, {
         studentId,
-        redemptionId: exact.redemption.id,
-        idempotencyKey: "approve-neg",
+        actorId: studentId,
+        catalogItemId,
+        idempotencyKey: "req-negative",
         now: FIXED_NOW,
       }),
     ).rejects.toMatchObject({ code: "INSUFFICIENT_BALANCE" });
@@ -522,6 +525,7 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
 
   it("AC-M6-01: Asia/Shanghai requestMonth boundary at month rollover", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    await seedStudentBalance(db, studentId, 100);
     const { item } = await bootstrapCatalogItem(db, { parentId, studentId });
 
     const endOfMonth = new Date("2026-01-31T15:59:59.000Z");

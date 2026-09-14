@@ -31,9 +31,11 @@ export type PushAnswerDto = {
   answerId: string;
   pushId: string;
   studentId: string;
+  authorName: string;
   currentVersion: number;
   body: string;
   media: MediaAttachmentDto[];
+  createdAt: string;
   updatedAt: string;
   idempotentReplay?: boolean;
 };
@@ -42,7 +44,15 @@ export type PushCommentDto = {
   commentId: string;
   pushId: string;
   authorId: string;
+  authorName: string;
   parentCommentId: string | null;
+  quotedAnswerId: string | null;
+  quotedCommentId: string | null;
+  reference?: {
+    kind: "reply" | "quoted_comment" | "quoted_answer";
+    authorName: string;
+    body: string;
+  } | null;
   currentVersion: number;
   body: string | null;
   deleted: boolean;
@@ -149,7 +159,7 @@ export async function deletePush(studentId: string, pushId: string) {
 }
 
 export async function getAnswer(studentId: string, pushId: string) {
-  return apiFetch<{ answer: PushAnswerDto | null }>(
+  return apiFetch<{ answer: PushAnswerDto | null; answers: PushAnswerDto[] }>(
     `/api/family/students/${studentId}/pushes/${pushId}/answers`,
   );
 }
@@ -221,11 +231,12 @@ export async function createComment(
   pushId: string,
   body: string,
   parentCommentId?: string | null,
+  quote?: { answerId?: string | null; commentId?: string | null },
 ) {
   return apiFetch<PushCommentDto>(`/api/family/students/${studentId}/pushes/${pushId}/comments`, {
     method: "POST",
     headers: { "Idempotency-Key": newIdempotencyKey("create-comment") },
-    body: JSON.stringify({ body, parentCommentId: parentCommentId ?? null }),
+    body: JSON.stringify({ body, parentCommentId: parentCommentId ?? null, quotedAnswerId: quote?.answerId ?? null, quotedCommentId: quote?.commentId ?? null }),
   });
 }
 

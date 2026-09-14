@@ -49,6 +49,46 @@ For each boundary:
 - What is the exact output format?
 - What errors can occur?
 
+### Shared-resource scope changes
+
+When a product concept changes from entity-scoped to family/team-shared, trace all four contracts before calling it implemented:
+
+1. list/read visibility authority;
+2. command authorization for creating child facts;
+3. quota, idempotency and lock keys (usually retain the acting subject dimension);
+4. management aggregation, so a shared resource is not duplicated once per member.
+
+Renaming the UI or broadening only the GET query is insufficient; add a regression with one owner and at least two members that reads and performs the primary command from the non-anchor member.
+
+### Shared conversation references
+
+For a publication delivered as separate per-recipient records, do not assume a visible
+reply target belongs to the current delivery. Before release, verify these contracts use
+the same readable sibling-delivery set:
+
+- list answers/comments;
+- authorize reply/quote creation;
+- project the referenced author and current excerpt into the DTO;
+- render that projection in every detail surface.
+
+Add one integration test where recipient B replies to recipient A's disclosed answer,
+then assert both the write succeeds and a fresh read contains the reference author/body.
+
+### Fact-derived UI state
+
+When a command records a fact that changes a user-visible state, trace the whole path
+before calling the feature complete:
+
+1. authority table and transactional write;
+2. query join and precedence rule for effective state;
+3. DTO field and shared client union/label;
+4. every list, summary, calendar, and detail consumer;
+5. a write-then-fresh-read regression, not only a command response assertion.
+
+For schedules, follow [Schedule Execution Contracts](../backend/schedule-execution-contracts.md).
+Never invent `in_progress` locally from a click or optimistic flag when the server owns
+the start fact.
+
 ---
 
 ## Common Cross-Layer Mistakes

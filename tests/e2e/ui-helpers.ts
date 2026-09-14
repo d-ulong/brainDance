@@ -12,6 +12,7 @@ export type E2eFixture = {
   studentUsername: string;
   studentPassword: string;
   studentId: string;
+  secondStudentId?: string;
 };
 
 const FIXTURE_PATH = path.join(process.cwd(), "tests/e2e/.fixture.json");
@@ -43,7 +44,7 @@ export async function loginViaUi(page: Page, identifier: string, password: strin
   const loginResponse = page.waitForResponse(
     (resp) => resp.url().includes("/api/auth/login") && resp.request().method() === "POST",
   );
-  await page.getByRole("textbox", { name: "密码" }).press("Enter");
+  await page.getByTestId("login-password").press("Enter");
   const response = await loginResponse;
   expect(response.ok(), await response.text()).toBeTruthy();
 
@@ -52,8 +53,7 @@ export async function loginViaUi(page: Page, identifier: string, password: strin
 
 export async function logoutViaUi(page: Page) {
   const logoutButton = page.getByRole("button", { name: "退出" });
-  if (await logoutButton.isVisible()) {
-    await logoutButton.click();
-    await page.waitForURL("**/login");
-  }
+  await expect(logoutButton).toBeVisible();
+  await logoutButton.click();
+  await page.waitForURL("**/login");
 }

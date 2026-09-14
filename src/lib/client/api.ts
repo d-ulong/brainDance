@@ -61,6 +61,8 @@ export async function apiLogout(): Promise<void> {
 
 export type SessionInfo = {
   userId: string;
+  displayName?: string;
+  account?: string;
   role: "admin" | "parent" | "student";
   contactVerified: boolean;
   status?: string;

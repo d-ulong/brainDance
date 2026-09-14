@@ -11,6 +11,8 @@ import { FamilyContentError } from "@/modules/family-content/errors";
 const createBodySchema = z.object({
   body: z.string(),
   parentCommentId: z.string().uuid().optional().nullable(),
+  quotedAnswerId: z.string().uuid().optional().nullable(),
+  quotedCommentId: z.string().uuid().optional().nullable(),
 });
 
 type RouteContext = {
@@ -66,6 +68,8 @@ export async function POST(request: Request, context: RouteContext) {
       pushId,
       body: parsed.body,
       parentCommentId: parsed.parentCommentId,
+      quotedAnswerId: parsed.quotedAnswerId,
+      quotedCommentId: parsed.quotedCommentId,
       idempotencyKey: idempotency.key,
       requestId: request.headers.get("x-request-id") ?? undefined,
     });

@@ -1,8 +1,10 @@
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { scheduleItems } from "@/db/schema";
+import { factVersions, planItemRules, scheduleItems } from "@/db/schema";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
+import { isPastPlanSettlementDeadline } from "@/modules/time-policy/plan-settlement-deadline";
+import { settleForFact } from "@/modules/settlement/settlement.service";
 
 /** Test-only seam; production callers must omit. */
 export type PersistExpiredOptions = {
@@ -27,11 +29,10 @@ export async function persistExpiredPastWindow(
       familyDate: scheduleItems.familyDate,
     })
     .from(scheduleItems)
-    .where(and(eq(scheduleItems.studentId, studentId), eq(scheduleItems.status, "pending")));
+    .where(and(eq(scheduleItems.studentId, studentId), eq(scheduleItems.status, "pending"), isNull(scheduleItems.suppressedByScheduleItemId)));
 
-  const expiredIds = pending
-    .filter((item) => isPastCompletionWindow(item.familyDate, now))
-    .map((item) => item.id);
+  const planRuleIds = new Set((await db.select({ scheduleItemId: planItemRules.scheduleItemId }).from(planItemRules).where(inArray(planItemRules.scheduleItemId, pending.map((item) => item.id)))).map((row) => row.scheduleItemId));
+  const expiredIds = pending.filter((item) => planRuleIds.has(item.id) ? isPastPlanSettlementDeadline(item.familyDate, now) : isPastCompletionWindow(item.familyDate, now)).map((item) => item.id);
 
   if (expiredIds.length === 0) {
     return 0;
@@ -51,7 +52,14 @@ export async function persistExpiredPastWindow(
         inArray(scheduleItems.id, expiredIds),
       ),
     )
-    .returning({ id: scheduleItems.id });
+    .returning({ id: scheduleItems.id, studentId: scheduleItems.studentId, familyDate: scheduleItems.familyDate });
+
+  for (const item of updated) {
+    if (!planRuleIds.has(item.id)) continue;
+    const idempotencyKey = `plan-incomplete:${item.id}`;
+    const [fact] = await db.insert(factVersions).values({ scheduleItemId: item.id, studentId: item.studentId, factKey: "schedule.incomplete", sourceKind: "system", value: { finalised_at: now.toISOString() }, idempotencyKey, idempotencyPayloadHash: idempotencyKey, completionKind: "not_applicable", occurredAt: now, assertedAt: now, recordedAt: now }).onConflictDoNothing({ target: [factVersions.scheduleItemId, factVersions.idempotencyKey] }).returning({ id: factVersions.id });
+    if (fact) await settleForFact(db, { factVersionId: fact.id });
+  }
 
   return updated.length;
 }

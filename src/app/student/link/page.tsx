@@ -9,6 +9,7 @@ import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/clien
 type PendingRequest = {
   requestId: string;
   parentId: string;
+  parentName: string;
   status: string;
   expiresAt: string;
 };
@@ -117,7 +118,7 @@ export default function StudentLinkPage() {
               key={request.requestId}
               className="rounded-xl border border-neutral-300 bg-white p-4"
             >
-              <p className="text-sm text-neutral-600">家长 ID：{request.parentId.slice(0, 8)}…</p>
+              <p className="text-sm text-neutral-600">家长：{request.parentName}</p>
               <PrimaryButton
                 data-testid={`accept-request-${request.requestId}`}
                 disabled={acceptingId === request.requestId}

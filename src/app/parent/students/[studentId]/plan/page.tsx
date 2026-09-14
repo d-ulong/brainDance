@@ -12,6 +12,7 @@ import {
   TextInput,
 } from "@/components/ui/page-shell";
 import { PointsTodayCard } from "@/components/m2/points-today-card";
+import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   createFormalPlan,
@@ -33,7 +34,7 @@ import { addFamilyDays } from "@/modules/time-policy/add-family-days";
 export default function ParentPlanPage({ params }: { params: Promise<{ studentId: string }> }) {
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [plan, setPlan] = useState<CurrentFormalPlanDto | null>(null);
@@ -101,13 +102,11 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
         return;
       }
 
-      try {
-        await loadReadOnlyData(sid);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "加载失败");
-      } finally {
-        setLoading(false);
-      }
+      // Legacy single-plan page is retired: reusable plans now live in the
+      // student's multi-plan tab. Redirect before its old aggregates can load.
+      router.replace(`/parent/students/${sid}/plans`);
+      return;
+
     })();
   }, [loadReadOnlyData, params, router]);
 
@@ -231,6 +230,7 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
 
   return (
     <PageShell title="学习计划" subtitle="正式计划与积分" backHref="/parent/students" showLogout>
+      {studentId ? <StudentContextBanner studentId={studentId} label="正在管理计划的学生" /> : null}
       {studentId ? <PointsTodayCard studentId={studentId} /> : null}
 
       {actionMessage ? (

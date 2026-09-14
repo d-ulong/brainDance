@@ -9,7 +9,7 @@ import {
   requireParentLinkedToStudent,
 } from "@/modules/family-content/access";
 import { FamilyContentError } from "@/modules/family-content/errors";
-import type { MediaScanner } from "@/modules/family-content/media-scanner";
+import { isMediaScanAccepted, type MediaScanner } from "@/modules/family-content/media-scanner";
 import { reencodeSafeImage } from "@/modules/family-content/media-reencode";
 import type { PrivateMediaStore } from "@/modules/family-content/private-media-store";
 import type { MediaUploadIdempotencyLock } from "@/modules/family-content/media-upload-idempotency-lock";
@@ -106,6 +106,9 @@ async function continueFromExistingUploadRow(
     );
   }
   if (existing.status === "ready") {
+    if (!isMediaScanAccepted(existing.scanResult)) {
+      throw new FamilyContentError("MEDIA_UNAVAILABLE", "该图片未扫描，当前环境不允许使用，请联系维护者");
+    }
     return { media: toMediaDto(existing), idempotentReplay: true };
   }
   if (
@@ -188,6 +191,7 @@ async function finalizeReadyInShortTx(
     idempotencyKey: string;
     requestId?: string;
     declaredMime: string;
+    scanResult: "clean" | "skipped";
     reencoded: {
       mime: string;
       sha256: string;
@@ -226,7 +230,7 @@ async function finalizeReadyInShortTx(
       .update(mediaObjects)
       .set({
         status: "ready",
-        scanResult: "clean",
+        scanResult: input.scanResult,
         scanErrorCategory: null,
         detectedMime: input.reencoded.mime,
         contentSha256: input.reencoded.sha256,
@@ -250,6 +254,7 @@ async function finalizeReadyInShortTx(
       metadata: {
         studentId: input.studentId,
         status: "ready",
+        scanResult: input.scanResult,
         declaredMime: input.declaredMime,
         detectedMime: input.reencoded.mime,
         byteSize: input.byteSize,
@@ -302,7 +307,7 @@ async function runUploadPipeline(
   }
   if (scan.outcome === "error") {
     await markRecoverableFailure(db, media.id, "processing", scan.category, new Date());
-    throw new FamilyContentError("MEDIA_UNAVAILABLE", "Media scan temporarily unavailable");
+    throw new FamilyContentError("MEDIA_UNAVAILABLE", "图片处理服务暂不可用，请联系维护者检查图片扫描配置");
   }
 
   let reencoded;
@@ -342,6 +347,7 @@ async function runUploadPipeline(
       idempotencyKey: input.idempotencyKey,
       requestId: input.requestId,
       declaredMime,
+      scanResult: scan.outcome,
       reencoded,
       safeKey,
       byteSize: input.bytes.length,
@@ -475,7 +481,7 @@ export async function assertMediaReadyForAttach(
 ): Promise<typeof mediaObjects.$inferSelect> {
   await db.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
   const [media] = await db.select().from(mediaObjects).where(eq(mediaObjects.id, mediaId)).limit(1);
-  if (!media || media.status !== "ready" || media.revokedAt) {
+  if (!media || media.status !== "ready" || media.revokedAt || !isMediaScanAccepted(media.scanResult)) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
   void actorId;

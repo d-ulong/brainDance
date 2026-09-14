@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import Link from "next/link";
+import { PasswordField } from "@/components/ui/password-field";
 
 import { Alert, Field, PageShell, PrimaryButton, TextInput } from "@/components/ui/page-shell";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
@@ -12,6 +14,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
 
   useEffect(() => {
     void fetchSession().then((session) => {
@@ -23,6 +26,8 @@ export default function LoginPage() {
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setError(null);
     try {
@@ -47,6 +52,7 @@ export default function LoginPage() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "登录失败");
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   }
@@ -63,20 +69,21 @@ export default function LoginPage() {
             required
           />
         </Field>
-        <Field label="密码">
-          <TextInput
-            data-testid="login-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </Field>
+        <PasswordField
+          label="密码"
+          testId="login-password"
+          autoComplete="current-password"
+          value={password}
+          onChange={setPassword}
+          required
+        />
         {error ? <Alert tone="error">{error}</Alert> : null}
         <PrimaryButton type="submit" disabled={loading}>
           {loading ? "登录中…" : "登录"}
         </PrimaryButton>
+        <Link href="/register" className="bd-inline-link justify-center">
+          还没有账号？受邀注册 →
+        </Link>
       </form>
     </PageShell>
   );

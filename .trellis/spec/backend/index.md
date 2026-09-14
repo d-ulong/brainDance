@@ -21,6 +21,10 @@ These guidelines describe **current** patterns in the codebase. Match them when 
 | [Error Handling](./error-handling.md) | Domain errors and HTTP mapping |
 | [Logging Guidelines](./logging-guidelines.md) | Current logging posture and boundaries |
 | [Quality Guidelines](./quality-guidelines.md) | Tests, lint, typecheck, build gates |
+| [Family Content Contracts](./family-content-contracts.md) | Shared push threads, reference visibility, and DTO rules |
+| [Schedule Execution Contracts](./schedule-execution-contracts.md) | Started-state projection, direct completion, and safe schedule clearing |
+| [Dependency Recovery](./dependency-recovery.md) | Atomic Windows dependency repair and real startup verification |
+| [Goal and Manual Points Contracts](./goal-and-manual-points-contracts.md) | Goal responsibility, rewards, penalties, reversals, and period summaries |
 
 ---
 

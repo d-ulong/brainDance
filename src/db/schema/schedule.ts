@@ -51,9 +51,6 @@ export const plans = pgTable(
     uniqueIndex("plans_deactivate_idempotency_unique")
       .on(table.id, table.deactivateIdempotencyKey)
       .where(sql`${table.deactivateIdempotencyKey} is not null`),
-    uniqueIndex("plans_active_formal_student_unique")
-      .on(table.studentId)
-      .where(sql`${table.status} = 'active' AND ${table.planKind} = 'formal'`),
   ],
 );
 
@@ -119,6 +116,10 @@ export const scheduleItems = pgTable(
     source: text("source").notNull().default("plan"),
     occurrenceKey: text("occurrence_key").notNull(),
     planSnapshot: jsonb("plan_snapshot").$type<Record<string, unknown>>(),
+    priority: integer("priority").notNull().default(0),
+    suppressedByScheduleItemId: uuid("suppressed_by_schedule_item_id").references(
+      (): AnyPgColumn => scheduleItems.id,
+    ),
   },
   (table) => [
     check(

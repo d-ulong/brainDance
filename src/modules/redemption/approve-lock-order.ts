@@ -19,6 +19,7 @@ export async function lockStudentBalanceThenMonthlyUsage(
     monthlyLimit: number | null;
     lockMonthlyRows: (
       tx: Database,
+      studentId: string,
       catalogItemId: string,
       requestMonth: string,
     ) => Promise<MonthlyRow[]>;
@@ -36,7 +37,12 @@ export async function lockStudentBalanceThenMonthlyUsage(
   const balance = balanceRow?.balance ?? 0;
 
   if (input.monthlyLimit != null) {
-    const monthlyRows = await input.lockMonthlyRows(tx, input.catalogItemId, input.requestMonth);
+    const monthlyRows = await input.lockMonthlyRows(
+      tx,
+      input.studentId,
+      input.catalogItemId,
+      input.requestMonth,
+    );
     if ((await input.countMonthlyUsage(monthlyRows)) > input.monthlyLimit) {
       throw new RedemptionError("MONTHLY_LIMIT_EXCEEDED", "Monthly redemption limit exceeded");
     }

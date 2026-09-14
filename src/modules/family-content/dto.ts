@@ -19,6 +19,7 @@ export type FamilyPushDto = {
   media: MediaAttachmentDto[];
   scheduledPublishAt: string | null;
   publishedAt: string | null;
+  answerDisclosureDays: number | null;
   canEdit: boolean;
   createdAt: string;
   updatedAt: string;
@@ -28,9 +29,11 @@ export type PushAnswerDto = {
   answerId: string;
   pushId: string;
   studentId: string;
+  authorName: string;
   currentVersion: number;
   body: string;
   media: MediaAttachmentDto[];
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -38,7 +41,15 @@ export type PushCommentDto = {
   commentId: string;
   pushId: string;
   authorId: string;
+  authorName: string;
   parentCommentId: string | null;
+  quotedAnswerId: string | null;
+  quotedCommentId: string | null;
+  reference: {
+    kind: "reply" | "quoted_comment" | "quoted_answer";
+    authorName: string;
+    body: string;
+  } | null;
   currentVersion: number;
   body: string | null;
   deleted: boolean;

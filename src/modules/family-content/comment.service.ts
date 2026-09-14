@@ -1,7 +1,13 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { pushCommentVersions, pushComments } from "@/db/schema";
+import {
+  pushAnswers,
+  pushAnswerVersions,
+  pushCommentVersions,
+  pushComments,
+  users,
+} from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { hasActiveRelationship } from "@/modules/family-access/authorization.service";
 import {
@@ -19,18 +25,26 @@ import type { PushCommentDto } from "@/modules/family-content/dto";
 import { FamilyContentError } from "@/modules/family-content/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
+import { isAnswerDisclosed, relatedPushesForStudentRead } from "./answer-disclosure.service";
 
-function toCommentDto(
+async function toCommentDto(
+  db: Database,
   comment: typeof pushComments.$inferSelect,
   version: typeof pushCommentVersions.$inferSelect | null,
   actorId: string,
-): PushCommentDto {
+): Promise<PushCommentDto> {
+  const [author] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, comment.authorId)).limit(1);
+  const reference = await loadCommentReference(db, comment);
   const deleted = comment.deletedAt !== null;
   return {
     commentId: comment.id,
     pushId: comment.pushId,
     authorId: comment.authorId,
+    authorName: author?.displayName ?? "成员",
     parentCommentId: comment.parentCommentId,
+    quotedAnswerId: comment.quotedAnswerId,
+    quotedCommentId: comment.quotedCommentId,
+    reference,
     currentVersion: comment.currentVersion,
     body: deleted ? null : (version?.body ?? null),
     deleted,
@@ -38,6 +52,68 @@ function toCommentDto(
     createdAt: comment.createdAt.toISOString(),
     updatedAt: comment.updatedAt.toISOString(),
   };
+}
+
+async function loadCommentReference(
+  db: Database,
+  comment: typeof pushComments.$inferSelect,
+): Promise<PushCommentDto["reference"]> {
+  const targetCommentId = comment.parentCommentId ?? comment.quotedCommentId;
+  if (targetCommentId) {
+    const [target] = await db
+      .select()
+      .from(pushComments)
+      .where(eq(pushComments.id, targetCommentId))
+      .limit(1);
+    if (!target) return null;
+    const [author] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, target.authorId))
+      .limit(1);
+    const [targetVersion] = target.deletedAt
+      ? [null]
+      : await db
+          .select({ body: pushCommentVersions.body })
+          .from(pushCommentVersions)
+          .where(
+            sql`${pushCommentVersions.commentId} = ${target.id}::uuid AND ${pushCommentVersions.version} = ${target.currentVersion}`,
+          )
+          .limit(1);
+    return {
+      kind: comment.parentCommentId ? "reply" : "quoted_comment",
+      authorName: author?.displayName ?? "成员",
+      body: target.deletedAt ? "评论已删除" : (targetVersion?.body ?? "原评论暂不可见"),
+    };
+  }
+
+  if (comment.quotedAnswerId) {
+    const [target] = await db
+      .select()
+      .from(pushAnswers)
+      .where(eq(pushAnswers.id, comment.quotedAnswerId))
+      .limit(1);
+    if (!target) return null;
+    const [author] = await db
+      .select({ displayName: users.displayName })
+      .from(users)
+      .where(eq(users.id, target.studentId))
+      .limit(1);
+    const [targetVersion] = await db
+      .select({ body: pushAnswerVersions.body })
+      .from(pushAnswerVersions)
+      .where(
+        sql`${pushAnswerVersions.answerId} = ${target.id}::uuid AND ${pushAnswerVersions.version} = ${target.currentVersion}`,
+      )
+      .limit(1);
+    return {
+      kind: "quoted_answer",
+      authorName: author?.displayName ?? "学生",
+      body: targetVersion?.body || "图片作答或原作答暂不可见",
+    };
+  }
+
+  return null;
 }
 
 export async function listPushComments(
@@ -51,16 +127,30 @@ export async function listPushComments(
     push,
   });
 
+  const related = input.actorRole === "student" ? await relatedPushesForStudentRead(db, input.pushId) : null;
+  // Parent comments are immediately visible unless their thread/quote would reveal a
+  // still-private peer answer. Peer-authored comments follow the same disclosure gate
+  // as the peer answer they belong to.
+  const readablePushIds = related?.map((candidate) => candidate.id) ?? [push.id];
   const comments = await db
     .select()
     .from(pushComments)
-    .where(eq(pushComments.pushId, push.id))
+    .where(inArray(pushComments.pushId, readablePushIds))
     .orderBy(asc(pushComments.createdAt));
 
   const result: PushCommentDto[] = [];
   for (const comment of comments) {
+    if (input.actorRole === "student" && comment.authorId !== input.actorId) {
+      const [author] = await db.select({ role: users.role }).from(users).where(eq(users.id, comment.authorId)).limit(1);
+      const source = related?.find((candidate) => candidate.id === comment.pushId);
+      if (author?.role === "student") {
+        if (!source || !isAnswerDisclosed(source, input.actorId)) continue;
+      } else if (!source || (!isAnswerDisclosed(source, input.actorId) && (comment.parentCommentId || comment.quotedAnswerId || comment.quotedCommentId))) {
+        continue;
+      }
+    }
     if (comment.deletedAt) {
-      result.push(toCommentDto(comment, null, input.actorId));
+      result.push(await toCommentDto(db, comment, null, input.actorId));
       continue;
     }
     const [version] = await db
@@ -70,7 +160,7 @@ export async function listPushComments(
         sql`${pushCommentVersions.commentId} = ${comment.id}::uuid AND ${pushCommentVersions.version} = ${comment.currentVersion}`,
       )
       .limit(1);
-    result.push(toCommentDto(comment, version ?? null, input.actorId));
+    result.push(await toCommentDto(db, comment, version ?? null, input.actorId));
   }
   return result;
 }
@@ -81,6 +171,8 @@ export type CreatePushCommentInput = {
   pushId: string;
   body: string;
   parentCommentId?: string | null;
+  quotedAnswerId?: string | null;
+  quotedCommentId?: string | null;
   idempotencyKey: string;
   requestId?: string;
   now?: Date;
@@ -95,6 +187,8 @@ export async function createPushComment(
     pushId: input.pushId,
     body,
     parentCommentId: input.parentCommentId ?? null,
+    quotedAnswerId: input.quotedAnswerId ?? null,
+    quotedCommentId: input.quotedCommentId ?? null,
   });
 
   const [existing] = await db
@@ -120,7 +214,7 @@ export async function createPushComment(
       )
       .limit(1);
     return {
-      comment: toCommentDto(existing, version ?? null, input.actorId),
+      comment: await toCommentDto(db, existing, version ?? null, input.actorId),
       idempotentReplay: true,
     };
   }
@@ -142,6 +236,16 @@ export async function createPushComment(
       throw new FamilyContentError("FORBIDDEN", "Access denied");
     }
 
+    const referencePushIds =
+      input.actorRole === "student"
+        ? (await relatedPushesForStudentRead(tx, push.id))
+            .filter(
+              (candidate) =>
+                candidate.id === push.id || isAnswerDisclosed(candidate, input.actorId),
+            )
+            .map((candidate) => candidate.id)
+        : [push.id];
+
     if (input.parentCommentId) {
       const [parent] = await tx
         .select()
@@ -149,7 +253,7 @@ export async function createPushComment(
         .where(
           and(
             eq(pushComments.id, input.parentCommentId),
-            eq(pushComments.pushId, push.id),
+            inArray(pushComments.pushId, referencePushIds),
             isNull(pushComments.deletedAt),
           ),
         )
@@ -157,6 +261,17 @@ export async function createPushComment(
       if (!parent) {
         throw new FamilyContentError("NOT_FOUND", "Parent comment not found");
       }
+    }
+    if (input.quotedAnswerId && input.quotedCommentId) {
+      throw new FamilyContentError("VALIDATION_ERROR", "A comment can quote one answer or one comment");
+    }
+    if (input.quotedAnswerId) {
+      const [quoted] = await tx.select({ id: pushAnswers.id }).from(pushAnswers).where(and(eq(pushAnswers.id, input.quotedAnswerId), inArray(pushAnswers.pushId, referencePushIds))).limit(1);
+      if (!quoted) throw new FamilyContentError("NOT_FOUND", "Quoted answer not found");
+    }
+    if (input.quotedCommentId) {
+      const [quoted] = await tx.select({ id: pushComments.id }).from(pushComments).where(and(eq(pushComments.id, input.quotedCommentId), inArray(pushComments.pushId, referencePushIds), isNull(pushComments.deletedAt))).limit(1);
+      if (!quoted) throw new FamilyContentError("NOT_FOUND", "Quoted comment not found");
     }
 
     const now = input.now ?? new Date();
@@ -166,6 +281,8 @@ export async function createPushComment(
         pushId: push.id,
         authorId: input.actorId,
         parentCommentId: input.parentCommentId ?? null,
+        quotedAnswerId: input.quotedAnswerId ?? null,
+        quotedCommentId: input.quotedCommentId ?? null,
         currentVersion: 1,
         createIdempotencyKey: input.idempotencyKey,
         createIdempotencyPayloadHash: payloadHash,
@@ -200,7 +317,7 @@ export async function createPushComment(
         )
         .limit(1);
       return {
-        comment: toCommentDto(raced, version ?? null, input.actorId),
+        comment: await toCommentDto(tx, raced, version ?? null, input.actorId),
         idempotentReplay: true,
       };
     }
@@ -245,7 +362,7 @@ export async function createPushComment(
       },
     });
 
-    return { comment: toCommentDto(comment, version!, input.actorId), idempotentReplay: false };
+    return { comment: await toCommentDto(tx, comment, version!, input.actorId), idempotentReplay: false };
   });
 }
 
@@ -297,7 +414,7 @@ export async function mutatePushComment(
           )
           .limit(1);
     return {
-      comment: toCommentDto(comment, version ?? null, input.actorId),
+      comment: await toCommentDto(client, comment, version ?? null, input.actorId),
       idempotentReplay: true,
     };
   }
@@ -378,7 +495,7 @@ export async function mutatePushComment(
         },
       });
 
-      return { comment: toCommentDto(updated!, null, input.actorId), idempotentReplay: false };
+      return { comment: await toCommentDto(tx, updated!, null, input.actorId), idempotentReplay: false };
     }
 
     if (!input.body) {
@@ -421,6 +538,6 @@ export async function mutatePushComment(
       },
     });
 
-    return { comment: toCommentDto(updated!, version!, input.actorId), idempotentReplay: false };
+    return { comment: await toCommentDto(tx, updated!, version!, input.actorId), idempotentReplay: false };
   });
 }

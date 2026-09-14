@@ -14,7 +14,7 @@ import {
   FAMILY_CONTENT_EVENT_TYPES,
   READABLE_STATUSES_FOR_FAMILY,
   STUDENT_READABLE_STATUSES,
-  UNPUBLISHED_EDITABLE_STATUSES,
+  EDITABLE_PUSH_STATUSES,
   type FamilyPushStatus,
 } from "@/modules/family-content/constants";
 import { normalizePushContent } from "@/modules/family-content/content";
@@ -95,8 +95,8 @@ export async function editFamilyPush(
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
     await requireCreatorOwnership(tx, { actorId: input.actorId, push });
 
-    if (!UNPUBLISHED_EDITABLE_STATUSES.has(push.status as FamilyPushStatus)) {
-      throw new FamilyContentError("STATE_CONFLICT", "Only unpublished pushes can be edited");
+    if (!EDITABLE_PUSH_STATUSES.has(push.status as FamilyPushStatus)) {
+      throw new FamilyContentError("STATE_CONFLICT", "当前状态的推送不能编辑");
     }
 
     const now = input.now ?? new Date();

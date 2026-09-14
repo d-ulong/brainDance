@@ -27,6 +27,7 @@ export const familyPushes = pgTable(
     currentVersion: integer("current_version").notNull().default(1),
     scheduledPublishAt: timestamp("scheduled_publish_at", { withTimezone: true }),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    answerDisclosureDays: integer("answer_disclosure_days"),
     createIdempotencyKey: text("create_idempotency_key").notNull(),
     createIdempotencyPayloadHash: text("create_idempotency_payload_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -97,8 +98,6 @@ export const pushAnswers = pgTable(
   },
   (table) => [
     check("push_answers_current_version_positive_check", sql`${table.currentVersion} > 0`),
-    unique("push_answers_push_unique").on(table.pushId),
-    unique("push_answers_push_student_unique").on(table.pushId, table.studentId),
   ],
 );
 
@@ -137,6 +136,8 @@ export const pushComments = pgTable(
       .notNull()
       .references(() => users.id),
     parentCommentId: uuid("parent_comment_id"),
+    quotedAnswerId: uuid("quoted_answer_id").references(() => pushAnswers.id),
+    quotedCommentId: uuid("quoted_comment_id"),
     currentVersion: integer("current_version").notNull().default(1),
     createIdempotencyKey: text("create_idempotency_key").notNull(),
     createIdempotencyPayloadHash: text("create_idempotency_payload_hash").notNull(),
@@ -146,6 +147,10 @@ export const pushComments = pgTable(
   },
   (table) => [
     check("push_comments_current_version_positive_check", sql`${table.currentVersion} > 0`),
+    check(
+      "push_comments_single_quote_check",
+      sql`NOT (${table.quotedAnswerId} IS NOT NULL AND ${table.quotedCommentId} IS NOT NULL)`,
+    ),
     unique("push_comments_author_create_idempotency_unique").on(
       table.authorId,
       table.createIdempotencyKey,
@@ -218,7 +223,7 @@ export const mediaObjects = pgTable(
     ),
     check(
       "media_objects_scan_result_check",
-      sql`${table.scanResult} IS NULL OR ${table.scanResult} IN ('pending', 'clean', 'rejected', 'error')`,
+      sql`${table.scanResult} IS NULL OR ${table.scanResult} IN ('pending', 'clean', 'skipped', 'rejected', 'error')`,
     ),
     check("media_objects_reference_count_check", sql`${table.referenceCount} >= 0`),
     check(
@@ -230,7 +235,7 @@ export const mediaObjects = pgTable(
       sql`(
         (${table.status} <> 'ready')
         OR (
-          ${table.scanResult} = 'clean'
+          ${table.scanResult} IN ('clean', 'skipped')
           AND ${table.safeObjectKey} IS NOT NULL
           AND ${table.detectedMime} IS NOT NULL
           AND ${table.contentSha256} IS NOT NULL

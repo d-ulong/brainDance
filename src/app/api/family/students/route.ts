@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireParentSession, requireVerifiedParentSession } from "@/lib/auth-request";
+import {
+  requireParentSession,
+  requireVerifiedParentSession,
+  refreshSessionCookieAfterEpochChange,
+  jsonWithSessionCookie,
+} from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { listLinkedStudentsForParent } from "@/modules/family-access/linked-students.service";
 import { createControlledStudent } from "@/modules/identity/create-controlled-student.service";
@@ -10,7 +15,8 @@ import { PRODUCT_PASSWORD_MAX_LENGTH } from "@/modules/identity/password-policy"
 const bodySchema = z.object({
   username: z.string().min(3).max(64),
   birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  displayName: z.string().min(1).max(128).optional(),
+  displayName: z.string().trim().min(1).max(64),
+  guardianConsent: z.literal(true),
   initialPassword: z.string().min(1).max(PRODUCT_PASSWORD_MAX_LENGTH),
   idempotencyKey: z.string().min(8).max(128),
 });
@@ -29,7 +35,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { db, dbUser } = await requireVerifiedParentSession();
+    const { db, dbUser, session } = await requireVerifiedParentSession();
     const body = bodySchema.parse(await request.json());
 
     const result = await createControlledStudent(db, {
@@ -42,8 +48,14 @@ export async function POST(request: Request) {
       requestId: request.headers.get("x-request-id") ?? undefined,
     });
 
-    return NextResponse.json(result);
+    const cookie = await refreshSessionCookieAfterEpochChange(db, dbUser.id, session.id);
+    return jsonWithSessionCookie(result, cookie);
   } catch (error) {
+    if (error instanceof z.ZodError)
+      return NextResponse.json(
+        { error: "请完整填写学生姓名、账号、生日，并确认监护同意", code: "VALIDATION_ERROR" },
+        { status: 400 },
+      );
     const { status, body } = toErrorResponse(error);
     return NextResponse.json(body, { status });
   }

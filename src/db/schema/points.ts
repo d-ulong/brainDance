@@ -47,7 +47,7 @@ export const factVersions = pgTable(
     check("fact_versions_source_kind_check", sql`${table.sourceKind} IN ('system', 'manual')`),
     check(
       "fact_versions_completion_kind_check",
-      sql`(${table.sourceKind} = 'system' AND ${table.completionKind} IN ('on_time', 'late')) OR (${table.sourceKind} = 'manual' AND ${table.completionKind} = 'not_applicable')`,
+      sql`(${table.sourceKind} = 'system' AND ${table.completionKind} IN ('on_time', 'late', 'not_applicable')) OR (${table.sourceKind} = 'manual' AND ${table.completionKind} IN ('on_time', 'late', 'not_applicable'))`,
     ),
     check(
       "fact_versions_schedule_item_binding_check",
@@ -59,11 +59,11 @@ export const factVersions = pgTable(
     ),
     check(
       "fact_versions_manual_invariants_check",
-      sql`${table.sourceKind} <> 'manual' OR (${table.scheduleItemId} IS NOT NULL AND ${table.factKey} = 'schedule.error_count' AND ${table.submittedBy} IS NOT NULL AND ${table.completionKind} = 'not_applicable' AND ${table.value} ? 'error_count' AND ((${table.value}->>'error_count') ~ '^[0-9]+$'))`,
+      sql`${table.sourceKind} <> 'manual' OR (${table.scheduleItemId} IS NOT NULL AND ${table.submittedBy} IS NOT NULL AND ((${table.factKey} = 'schedule.error_count' AND ${table.completionKind} = 'not_applicable' AND ${table.value} ? 'error_count' AND ((${table.value}->>'error_count') ~ '^[0-9]+$')) OR (${table.factKey} = 'schedule.completed' AND ${table.completionKind} IN ('on_time', 'late') AND ${table.value} ?& ARRAY['started_at','completed_at','duration_minutes'])))`,
     ),
     check(
       "fact_versions_system_invariants_check",
-      sql`${table.sourceKind} <> 'system' OR (${table.scheduleItemId} IS NOT NULL AND ${table.factKey} = 'schedule.completed' AND ${table.completionKind} IN ('on_time', 'late') AND ${table.confirmedAt} IS NULL AND ${table.confirmedBy} IS NULL AND ${table.submittedBy} IS NULL AND ${table.supersedesFactVersionId} IS NULL)`,
+      sql`${table.sourceKind} <> 'system' OR (${table.scheduleItemId} IS NOT NULL AND ${table.confirmedAt} IS NULL AND ${table.confirmedBy} IS NULL AND ${table.submittedBy} IS NULL AND ${table.supersedesFactVersionId} IS NULL AND ((${table.factKey} = 'schedule.completed' AND ${table.completionKind} IN ('on_time', 'late')) OR (${table.factKey} IN ('schedule.started', 'schedule.incomplete') AND ${table.completionKind} = 'not_applicable')))`,
     ),
     check(
       "fact_versions_correction_reason_check",
@@ -194,7 +194,7 @@ export const pointLedgerEntries = pgTable(
       .where(sql`${table.settlementId} IS NOT NULL`),
     check(
       "point_ledger_entries_source_check",
-      sql`(${table.sourceType} = 'settlement' AND ${table.settlementId} IS NOT NULL AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL AND ${table.amount} >= 0) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'redemption' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0)`,
+      sql`(${table.sourceType} = 'settlement' AND ${table.settlementId} IS NOT NULL AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'redemption' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'goal_reward' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} > 0) OR (${table.sourceType} = 'manual_penalty' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'manual_penalty_reversal' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} > 0)`,
     ),
     uniqueIndex("point_ledger_entries_reversal_unique")
       .on(table.reversesEntryId)
@@ -202,6 +202,9 @@ export const pointLedgerEntries = pgTable(
     uniqueIndex("point_ledger_entries_redemption_source_unique")
       .on(table.sourceId)
       .where(sql`${table.sourceType} = 'redemption'`),
+    uniqueIndex("point_ledger_entries_goal_reward_source_unique")
+      .on(table.sourceId)
+      .where(sql`${table.sourceType} = 'goal_reward'`),
   ],
 );
 

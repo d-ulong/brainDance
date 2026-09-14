@@ -23,6 +23,9 @@ __pycache__/
 .braindance-artifacts/
 .braindance-media/
 
+# Local PostgreSQL recovery exports (never commit pilot data)
+backups/
+
 # User-local Codex and shared-agent runtime integration
 .agents/
 .codex/

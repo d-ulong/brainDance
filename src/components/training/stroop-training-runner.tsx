@@ -162,6 +162,7 @@ export function StroopTrainingRunner({
     <PageShell
       title="Stroop 抑制"
       subtitle={`第 ${Math.min(trialIndex + 1, trials.length)} / ${trials.length} 次`}
+      subtitleKind="status"
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}

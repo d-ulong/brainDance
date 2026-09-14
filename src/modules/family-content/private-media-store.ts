@@ -240,7 +240,17 @@ export function createFilesystemMediaStore(rootDir: string): PrivateMediaStore {
 export function createConfiguredFilesystemMediaStore(
   env: NodeJS.ProcessEnv = process.env,
 ): PrivateMediaStore {
-  return createFilesystemMediaStore(resolveConfiguredMediaRoot(env));
+  try {
+    return createFilesystemMediaStore(resolveConfiguredMediaRoot(env));
+  } catch (error) {
+    if (error instanceof FamilyContentError) {
+      throw new FamilyContentError(
+        "MEDIA_UNAVAILABLE",
+        "图片服务尚未配置，请联系维护者检查私有媒体目录并重新启动服务",
+      );
+    }
+    throw error;
+  }
 }
 
 /** Test-only absolute temp root helper. */

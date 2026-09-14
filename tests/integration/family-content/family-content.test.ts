@@ -495,7 +495,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
     ).rejects.toMatchObject({ code: "FROZEN" });
   });
 
-  it("AC-M7-03/04: versioned answers and comments; no body in audit", async () => {
+  it("AC-M7-03/04: preserves multiple answers and quoted comments; no body in audit", async () => {
     const { creatorId, student, suffix } = await seedFamily();
     const answerSecret = `answer-${suffix}`;
     const commentSecret = `comment-${suffix}`;
@@ -522,14 +522,14 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       body: `${answerSecret}-v2`,
       idempotencyKey: `ans2-${suffix}`,
     });
-    expect(a2.answer.currentVersion).toBe(2);
-    expect(a2.answer.body).toBe(`${answerSecret}-v2`);
+    expect(a2.answer.currentVersion).toBe(1);
+    expect(a2.answer.answerId).not.toBe(a1.answer.answerId);
 
     const versions = await db
       .select()
       .from(pushAnswerVersions)
       .where(eq(pushAnswerVersions.answerId, a1.answer.answerId));
-    expect(versions).toHaveLength(2);
+    expect(versions).toHaveLength(1);
 
     await expect(
       submitPushAnswer(db, {
@@ -545,6 +545,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       actorRole: "parent",
       pushId: created.push.pushId,
       body: commentSecret,
+      quotedAnswerId: a1.answer.answerId,
       idempotencyKey: `c1-${suffix}`,
     });
 
@@ -557,6 +558,7 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       idempotencyKey: `c2-${suffix}`,
     });
     expect(reply.comment.parentCommentId).toBe(comment.comment.commentId);
+    expect(comment.comment.quotedAnswerId).toBe(a1.answer.answerId);
 
     await mutatePushComment(db, {
       actorId: creatorId,
@@ -752,6 +754,17 @@ describe.skipIf(!hasDb)("M7 family content P1", () => {
       idempotencyKey: `f01-pub-${suffix}`,
     });
     expect(published.push.status).toBe("published");
+
+    const publishedEdit = await editFamilyPush(db, {
+      actorId: creatorId,
+      pushId: draft.push.pushId,
+      body: "发布后的新版本",
+      linkUrl: "https://example.com/video.mp4",
+      mediaIds: [],
+      idempotencyKey: `f01-published-edit-${suffix}`,
+    });
+    expect(publishedEdit.push).toMatchObject({ status: "published", body: "发布后的新版本" });
+    expect(publishedEdit.push.currentVersion).toBeGreaterThan(published.push.currentVersion);
 
     const pubReplay = await transitionFamilyPush(db, {
       actorId: creatorId,

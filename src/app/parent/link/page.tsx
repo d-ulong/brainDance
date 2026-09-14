@@ -65,7 +65,7 @@ export default function ParentLinkPage() {
   }
 
   return (
-    <PageShell title="关联学生" subtitle="输入学生提供的关联码" backHref="/" showLogout>
+    <PageShell title="关联学生" subtitle="输入学生提供的关联码" backHref="/parent/students" showLogout>
       {success ? (
         <Alert tone="success">
           <p>关联申请已发送，请等待学生确认。</p>

@@ -13,7 +13,7 @@ export function resolveAgeBand(birthDate: Date, referenceDate: Date = new Date()
   return "13-18";
 }
 
-function ageInYearsAt(birthDate: Date, referenceDate: Date): number {
+export function ageInYearsAt(birthDate: Date, referenceDate: Date = new Date()): number {
   const birthParts = datePartsInFamilyTz(birthDate);
   const refParts = datePartsInFamilyTz(referenceDate);
 

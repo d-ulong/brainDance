@@ -3,6 +3,7 @@ import {
   MAX_ANSWER_BODY_LENGTH,
   MAX_COMMENT_BODY_LENGTH,
   MAX_PUSH_BODY_LENGTH,
+  MAX_PUSH_IMAGES,
   MAX_PUSH_LINK_LENGTH,
 } from "@/modules/family-content/constants";
 
@@ -31,8 +32,8 @@ export function normalizePushContent(input: {
   if (linkUrl && linkUrl.length > MAX_PUSH_LINK_LENGTH) {
     throw new FamilyContentError("VALIDATION_ERROR", "Push link URL is too long");
   }
-  if (mediaIds.length > 1) {
-    throw new FamilyContentError("VALIDATION_ERROR", "Only one push image is allowed");
+  if (mediaIds.length > MAX_PUSH_IMAGES) {
+    throw new FamilyContentError("VALIDATION_ERROR", `A push allows at most ${MAX_PUSH_IMAGES} images`);
   }
   if (linkUrl) {
     assertRawHttpUrl(linkUrl);

@@ -8,6 +8,8 @@ export * from "./identity";
 export * from "./notifications";
 export * from "./outbox";
 export * from "./points";
+export * from "./plan-library";
+export * from "./push-library";
 export * from "./redemption";
 export * from "./reflection-privacy";
 export * from "./schedule";

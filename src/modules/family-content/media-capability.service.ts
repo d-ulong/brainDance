@@ -23,6 +23,7 @@ import {
   getUserAuthorizationEpoch,
 } from "@/modules/identity/user-role.service";
 import { IdentityError } from "@/modules/identity/errors";
+import { isMediaScanAccepted } from "@/modules/family-content/media-scanner";
 
 async function loadStudentAuthorizationEpoch(db: Database, studentId: string): Promise<number> {
   try {
@@ -139,6 +140,7 @@ export async function issueMediaReadCapability(
   if (
     !media ||
     media.status !== "ready" ||
+    !isMediaScanAccepted(media.scanResult) ||
     !media.safeObjectKey ||
     media.studentId !== reference.studentId ||
     media.revokedAt
@@ -229,7 +231,7 @@ export async function readMediaWithCapability(
     .from(mediaObjects)
     .where(eq(mediaObjects.id, capability.mediaId))
     .limit(1);
-  if (!media || media.status !== "ready" || !media.safeObjectKey || media.revokedAt) {
+  if (!media || media.status !== "ready" || !media.safeObjectKey || media.revokedAt || !isMediaScanAccepted(media.scanResult)) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
 

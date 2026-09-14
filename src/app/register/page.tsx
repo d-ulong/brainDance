@@ -24,6 +24,9 @@ export default function RegisterPage() {
   const [invitationCode, setInvitationCode] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"parent" | "student">("parent");
+  const [username, setUsername] = useState("");
+  const [birthDate, setBirthDate] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -52,14 +55,15 @@ export default function RegisterPage() {
       await apiFetch("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({
+          role,
           invitationCode,
           displayName,
-          email,
+          ...(role === "parent" ? { email } : { username, birthDate }),
           password,
           idempotencyKey: newIdempotencyKey("register"),
         }),
       });
-      router.push("/verify-contact");
+      router.push(role === "parent" ? "/verify-contact" : "/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "注册失败");
     } finally {
@@ -69,15 +73,29 @@ export default function RegisterPage() {
 
   if (checking) {
     return (
-      <PageShell title="家长注册">
+      <PageShell title="注册账号">
         <LoadingState />
       </PageShell>
     );
   }
 
   return (
-    <PageShell title="家长注册" subtitle="使用管理员提供的邀请码创建账号" backHref="/">
+    <PageShell
+      title="注册账号"
+      subtitle="使用对应角色的邀请码加入。5–12 岁学生由家长创建；13–18 岁学生可自主注册。"
+      backHref="/"
+    >
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+        <Field label="我是">
+          <select
+            className="bd-input min-h-11 rounded-xl border p-3"
+            value={role}
+            onChange={(event) => setRole(event.target.value === "student" ? "student" : "parent")}
+          >
+            <option value="parent">家长</option>
+            <option value="student">学生（13–18 岁）</option>
+          </select>
+        </Field>
         <Field label="邀请码">
           <TextInput
             data-testid="register-invitation-code"
@@ -86,23 +104,50 @@ export default function RegisterPage() {
             required
           />
         </Field>
-        <Field label="显示名称">
+        <Field label="姓名或昵称">
           <TextInput
             data-testid="register-display-name"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             required
+            maxLength={64}
           />
         </Field>
-        <Field label="邮箱">
-          <TextInput
-            data-testid="register-email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </Field>
+        {role === "parent" ? (
+          <Field label="邮箱">
+            <TextInput
+              data-testid="register-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </Field>
+        ) : (
+          <>
+            <Field label="用户名">
+              <TextInput
+                data-testid="register-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                minLength={3}
+                maxLength={64}
+                pattern="[a-zA-Z0-9_-]+"
+                autoComplete="username"
+              />
+            </Field>
+            <Field label="出生日期">
+              <TextInput
+                data-testid="register-birth-date"
+                type="date"
+                value={birthDate}
+                onChange={(e) => setBirthDate(e.target.value)}
+                required
+              />
+            </Field>
+          </>
+        )}
         <PasswordField
           label={`密码（${PRODUCT_PASSWORD_RULE_DESCRIPTION}）`}
           testId="register-password"
@@ -129,7 +174,7 @@ export default function RegisterPage() {
           </Alert>
         ) : null}
         <PrimaryButton type="submit" disabled={loading} data-testid="register-submit">
-          {loading ? "注册中…" : "注册并继续验证"}
+          {loading ? "注册中…" : role === "parent" ? "注册并继续验证" : "创建我的学生账号"}
         </PrimaryButton>
       </form>
     </PageShell>

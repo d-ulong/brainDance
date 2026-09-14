@@ -49,6 +49,7 @@ export type AllowedMediaMime = (typeof ALLOWED_MIMES)[number];
 
 export const MAX_PUSH_BODY_LENGTH = 10_000;
 export const MAX_PUSH_LINK_LENGTH = 2_048;
+export const MAX_PUSH_IMAGES = 5;
 export const MAX_ANSWER_BODY_LENGTH = 10_000;
 export const MAX_COMMENT_BODY_LENGTH = 4_000;
 export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -57,9 +58,10 @@ export const MAX_IMAGE_DIMENSION = 8192;
 export const MEDIA_READ_TTL_MS = 5 * 60 * 1000;
 export const MEDIA_PURGE_DAYS = 90;
 
-export const UNPUBLISHED_EDITABLE_STATUSES: ReadonlySet<FamilyPushStatus> = new Set([
+export const EDITABLE_PUSH_STATUSES: ReadonlySet<FamilyPushStatus> = new Set([
   "draft",
   "scheduled",
+  "published",
 ]);
 
 export const READABLE_STATUSES_FOR_FAMILY: ReadonlySet<FamilyPushStatus> = new Set([

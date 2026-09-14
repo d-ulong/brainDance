@@ -10,6 +10,7 @@ import {
   formatTrainingKeyLabel,
 } from "@/components/training/metric-labels";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import { TrendsPanel } from "@/components/training/trends-panel";
 import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
@@ -154,6 +155,7 @@ export default function ParentTrainingSummaryPage({
       backHref="/parent/students"
       showLogout
     >
+      {studentId ? <StudentContextBanner studentId={studentId} label="正在查看训练的学生" /> : null}
       <TrainingDisclaimer />
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="训练类型">
         {TRAINING_OPTIONS.map((option) => (

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { auditEvents, users } from "@/db/schema";
@@ -7,6 +7,8 @@ import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { assertProductPassword } from "@/modules/identity/password-policy";
 import { resolveAgeBand } from "@/modules/time-policy/resolve-age-band";
+import { activateFamilyRelationship } from "@/modules/family-access/relationship-request.service";
+import { assertStudentBirthDate } from "./student-birth-date";
 
 export type CreateControlledStudentInput = {
   parentId: string;
@@ -118,6 +120,7 @@ export async function createControlledStudent(
   }
 
   assertControlledStudentAge(input.birthDate);
+  assertStudentBirthDate(input.birthDate, 5, 12);
   assertProductPassword(input.initialPassword);
 
   const [existingUsername] = await db
@@ -133,6 +136,17 @@ export async function createControlledStudent(
   const now = new Date();
 
   return db.transaction(async (tx) => {
+    // Same parent's concurrent creations join the same active family and replay once.
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.parentId} FOR UPDATE`);
+    const [currentParent] = await tx.select().from(users).where(eq(users.id, input.parentId));
+    if (
+      !currentParent ||
+      currentParent.role !== "parent" ||
+      currentParent.status !== "active" ||
+      !currentParent.contactVerifiedAt
+    ) {
+      throw new FamilyAccessError("FORBIDDEN", "Only active verified parents can create students");
+    }
     const replayInTx = await findControlledStudentReplay(tx, input);
     if (replayInTx) {
       return replayInTx;
@@ -155,6 +169,15 @@ export async function createControlledStudent(
     if (!created) {
       throw new Error("Failed to create controlled student");
     }
+
+    await activateFamilyRelationship(tx, {
+      parentId: input.parentId,
+      studentId: created.id,
+      actorId: input.parentId,
+      idempotencyKey: `controlled:${input.parentId}:${input.idempotencyKey}`,
+      requestId: input.requestId,
+      evidence: { source: "parent_created_student", creationIdempotencyKey: input.idempotencyKey },
+    });
 
     await appendAuditEvent(tx, {
       actorId: input.parentId,

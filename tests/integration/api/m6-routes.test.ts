@@ -159,6 +159,51 @@ describe.skipIf(!hasDb)("m6 api routes", () => {
     expect(approveResp.status).toBe(200);
   });
 
+  it("family redemption project is visible and redeemable by another linked student", async () => {
+    const { parentId, studentId: ownerStudentId, suffix } =
+      await bootstrapParentStudentRelationship(db);
+    const second = await seedStudentUser(db, {
+      username: `second_${suffix}`,
+      password: "StudentPass123!Student",
+      displayName: "Second Student",
+    });
+    await acceptParentForStudent(db, {
+      parentId,
+      studentId: second.studentId,
+      idempotencySuffix: `second-${suffix}`,
+    });
+    await seedStudentBalance(db, second.studentId, 50);
+    const { item } = await bootstrapCatalogItem(db, {
+      parentId,
+      studentId: ownerStudentId,
+      title: "Family Reward",
+    });
+
+    const studentSession = await login(db, {
+      identifier: second.username,
+      password: second.password,
+      idempotencyKey: `login-second-${suffix}`,
+    });
+    withSessionCookie(studentSession);
+
+    const catalogResponse = await getCatalogRoute(new Request(
+      `http://localhost/api/family/students/${second.studentId}/redemption-catalog?activeOnly=true`,
+    ), { params: Promise.resolve({ studentId: second.studentId }) });
+    expect(catalogResponse.status).toBe(200);
+    const catalogBody = (await catalogResponse.json()) as { items: Array<{ id: string }> };
+    expect(catalogBody.items.map((candidate) => candidate.id)).toContain(item.id);
+
+    const createResponse = await createRedemptionRoute(
+      jsonRequest(`http://localhost/api/family/students/${second.studentId}/redemptions`, {
+        method: "POST",
+        idempotencyKey: `redeem-shared-${suffix}`,
+        body: JSON.stringify({ catalogItemId: item.id }),
+      }),
+      { params: Promise.resolve({ studentId: second.studentId }) },
+    );
+    expect(createResponse.status).toBe(200);
+  });
+
   it("ended parent cannot approve redemption", async () => {
     const { parentId, studentId, suffix } = await bootstrapParentStudentRelationship(db);
     await seedStudentBalance(db, studentId, 50);

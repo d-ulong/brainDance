@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
+import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import {
   createExportJob,
   downloadExportArtifact,
@@ -204,6 +205,7 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
       backHref="/parent/students"
       showLogout
     >
+      {studentId ? <StudentContextBanner studentId={studentId} label="正在导出数据的学生" /> : null}
       {actionMessage ? (
         <Alert tone="success" data-testid="parent-export-action-message">
           {actionMessage}

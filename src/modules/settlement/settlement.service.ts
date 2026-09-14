@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions, scheduleItems, settlements } from "@/db/schema";
+import { factVersions, planItemRules, scheduleItems, settlements } from "@/db/schema";
 import type { SettleForFactInput } from "@/modules/schedule/complete-schedule.service";
 import {
   appendLedgerForSettlement,
@@ -12,6 +12,7 @@ import {
   SCHEDULE_SYSTEM_COMPLETE_V1,
 } from "@/modules/settlement/point-rule.service";
 import { SettlementError } from "@/modules/settlement/errors";
+import { scorePlanEntry, type PlanEntry } from "@/modules/schedule/plan-definition";
 
 export type SettleForFactResult = {
   settlementId: string;
@@ -20,10 +21,13 @@ export type SettleForFactResult = {
 
 type FactSettlementContext = {
   factVersionId: string;
+  scheduleItemId: string;
   studentId: string;
-  completionKind: "on_time" | "late";
+  completionKind: "on_time" | "late" | "not_applicable";
   familyDate: string;
   idempotencyKey: string;
+  factKey: string;
+  occurredAt: Date;
 };
 
 function resolveRewardAmount(
@@ -79,17 +83,28 @@ async function loadFactSettlementContext(
     throw new SettlementError("STATE_CONFLICT", "Fact and schedule item student mismatch");
   }
 
-  if (fact.completionKind !== "on_time" && fact.completionKind !== "late") {
-    throw new SettlementError("STATE_CONFLICT", "Fact completion kind is invalid");
-  }
-
   return {
     factVersionId: fact.id,
+    scheduleItemId: fact.scheduleItemId,
     studentId: fact.studentId,
-    completionKind: fact.completionKind,
+    completionKind: fact.completionKind as FactSettlementContext["completionKind"],
     familyDate: item.familyDate,
     idempotencyKey: fact.idempotencyKey,
+    factKey: fact.factKey,
+    occurredAt: fact.occurredAt,
   };
+}
+
+async function settlePlanEntryFact(tx: Database, ctx: FactSettlementContext): Promise<SettleForFactResult | null> {
+  const [rule] = await tx.select().from(planItemRules).where(eq(planItemRules.scheduleItemId, ctx.scheduleItemId)).limit(1);
+  if (!rule) return null;
+  if (ctx.factKey !== "schedule.completed" && ctx.factKey !== "schedule.incomplete") throw new SettlementError("STATE_CONFLICT", "计划事实不可结算");
+  const scored = scorePlanEntry(rule.entry as PlanEntry, { startedAt: rule.startedAt, completedAt: ctx.factKey === "schedule.completed" ? ctx.occurredAt : null, familyDate: ctx.familyDate });
+  const explanation = `Plan item ${scored.condition}: ${scored.amount} points`;
+  const [inserted] = await tx.insert(settlements).values({ studentId: ctx.studentId, factVersionId: ctx.factVersionId, ruleVersionId: rule.ruleVersionId, settlementPeriod: ctx.familyDate, result: "reward", explanation, idempotencyKey: ctx.idempotencyKey }).onConflictDoNothing({ target: [settlements.factVersionId, settlements.ruleVersionId, settlements.settlementPeriod, settlements.result] }).returning({ id: settlements.id });
+  const settlement = inserted ?? await findExistingSettlement(tx, { factVersionId: ctx.factVersionId, ruleVersionId: rule.ruleVersionId, settlementPeriod: ctx.familyDate, result: "reward" });
+  const ledger = await appendLedgerForSettlement(tx, { studentId: ctx.studentId, settlementId: settlement.id, amount: scored.amount, completionKind: ctx.factKey === "schedule.completed" && ctx.completionKind === "late" ? "late" : "on_time", idempotencyKey: ctx.idempotencyKey, reason: "plan_entry", explanation });
+  return { settlementId: settlement.id, ledgerEntryId: ledger.ledgerEntryId };
 }
 
 async function findExistingSettlement(
@@ -127,6 +142,13 @@ export async function settleForFact(
   options?: { testHooks?: SettleForFactTestHooks },
 ): Promise<SettleForFactResult> {
   const ctx = await loadFactSettlementContext(tx, input.factVersionId);
+
+  const planSettlement = await settlePlanEntryFact(tx, ctx);
+  if (planSettlement) return planSettlement;
+
+  if (ctx.completionKind !== "on_time" && ctx.completionKind !== "late") {
+    throw new SettlementError("STATE_CONFLICT", "Fact completion kind is invalid");
+  }
 
   const activeRule = await loadActivePointRuleForStudent(
     tx,

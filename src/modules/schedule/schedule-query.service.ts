@@ -1,7 +1,7 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { planScheduleSlots, plans, scheduleItems } from "@/db/schema";
+import { planItemRules, planScheduleSlots, plans, scheduleItems } from "@/db/schema";
 import { effectiveStatus } from "@/modules/schedule/effective-status";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
@@ -73,6 +73,10 @@ export type ScheduleItemDto = {
   source: string;
   occurrenceKey: string;
   effectiveStatus: string;
+  title: string;
+  planTitle: string;
+  priority: number;
+  startedAt: Date | null;
 };
 
 export type QueryScheduleItemsInput = {
@@ -94,8 +98,10 @@ export async function queryScheduleItems(
   const now = input.now ?? new Date();
 
   const rows = await db
-    .select()
+    .select({ item: scheduleItems, planTitle: plans.title, startedAt: planItemRules.startedAt })
     .from(scheduleItems)
+    .innerJoin(plans, eq(plans.id, scheduleItems.planId))
+    .leftJoin(planItemRules, eq(planItemRules.scheduleItemId, scheduleItems.id))
     .where(
       and(
         eq(scheduleItems.studentId, input.studentId),
@@ -104,18 +110,26 @@ export async function queryScheduleItems(
       ),
     );
 
-  return rows.map((row) => ({
-    id: row.id,
-    planId: row.planId,
-    planVersionId: row.planVersionId,
-    studentId: row.studentId,
-    ownerId: row.ownerId,
-    familyDate: row.familyDate,
-    slotKey: row.slotKey,
-    scheduledAt: row.scheduledAt,
-    status: row.status,
-    source: row.source,
-    occurrenceKey: row.occurrenceKey,
-    effectiveStatus: effectiveStatus({ status: row.status, familyDate: row.familyDate }, now),
-  }));
+  return rows.map(({ item, planTitle, startedAt }) => {
+    const entry = item.planSnapshot?.entry;
+    const title = typeof entry === "object" && entry !== null && "title" in entry && typeof entry.title === "string" ? entry.title : planTitle;
+    return {
+      id: item.id,
+      planId: item.planId,
+      planVersionId: item.planVersionId,
+      studentId: item.studentId,
+      ownerId: item.ownerId,
+      familyDate: item.familyDate,
+      slotKey: item.slotKey,
+      scheduledAt: item.scheduledAt,
+      status: item.status,
+      source: item.source,
+      occurrenceKey: item.occurrenceKey,
+      effectiveStatus: effectiveStatus({ status: item.status, familyDate: item.familyDate, startedAt }, now),
+      title,
+      planTitle,
+      priority: item.priority,
+      startedAt,
+    };
+  });
 }

@@ -138,6 +138,7 @@ export function ReactionTrainingRunner({
     <PageShell
       title="反应力训练"
       subtitle={`第 ${Math.min(trialIndex + 1, expectedTrials)} / ${expectedTrials} 次`}
+      subtitleKind="status"
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}

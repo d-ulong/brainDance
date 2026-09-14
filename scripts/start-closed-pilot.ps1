@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 
 $databaseUrl = $env:DATABASE_URL
 if (-not $databaseUrl) {
@@ -29,6 +30,17 @@ if (-not $databaseUrl) {
 $builder = [System.UriBuilder]([System.Uri]$databaseUrl)
 $builder.Path = "/$DatabaseName"
 $env:DATABASE_URL = $builder.Uri.AbsoluteUri
+$env:LOCAL_PILOT_MODE = "true"
+$env:NEXT_PUBLIC_APP_URL = "http://localhost:3002"
+if (-not $env:BRAIN_DANCE_MEDIA_ROOT) {
+  $env:BRAIN_DANCE_MEDIA_ROOT = Join-Path (Get-Location).Path ".braindance-media/closed-pilot"
+}
+# Explicit local-only policy; never disguise skipped scanning as a clean verdict.
+$env:BRAIN_DANCE_MEDIA_SCANNER = "local-no-scan"
+& node node_modules/tsx/dist/cli.mjs scripts/check-local-pilot-media.ts
+if ($LASTEXITCODE -ne 0) {
+  throw "Media storage startup check failed. Fix the configuration or directory permissions and retry."
+}
 
-& pnpm.cmd dev
+& node node_modules/next/dist/bin/next dev -H 127.0.0.1 -p 3002
 exit $LASTEXITCODE

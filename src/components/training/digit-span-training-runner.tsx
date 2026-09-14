@@ -278,6 +278,7 @@ export function DigitSpanTrainingRunner({
     <PageShell
       title="数字广度"
       subtitle={`第 ${Math.min(attemptIndex + 1, attempts.length)} / ${attempts.length} 次 · ${modeLabel}`}
+      subtitleKind="status"
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}

@@ -10,6 +10,7 @@ export default function AdminInvitationsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [targetRole, setTargetRole] = useState<"parent" | "student">("parent");
   const [error, setError] = useState<string | null>(null);
   const [invitationCode, setInvitationCode] = useState<string | null>(null);
 
@@ -35,7 +36,7 @@ export default function AdminInvitationsPage() {
       const result = await apiFetch<{ code?: string }>("/api/admin/invitations", {
         method: "POST",
         body: JSON.stringify({
-          targetRole: "parent",
+          targetRole,
           idempotencyKey: newIdempotencyKey("admin-invite"),
         }),
       });
@@ -59,7 +60,21 @@ export default function AdminInvitationsPage() {
   }
 
   return (
-    <PageShell title="创建家长邀请码" backHref="/" showLogout>
+    <PageShell title="创建邀请码" backHref="/" showLogout>
+      <Field label="邀请谁加入">
+        <select
+          className="bd-input min-h-11 rounded-xl border bg-white p-3"
+          value={targetRole}
+          onChange={(e) => {
+            setTargetRole(e.target.value === "student" ? "student" : "parent");
+            setInvitationCode(null);
+          }}
+          disabled={submitting}
+        >
+          <option value="parent">家长</option>
+          <option value="student">学生（13–18 岁）</option>
+        </select>
+      </Field>
       <PrimaryButton disabled={submitting} onClick={() => void createInvitation()}>
         {submitting ? "创建中…" : "生成邀请码"}
       </PrimaryButton>
@@ -74,7 +89,8 @@ export default function AdminInvitationsPage() {
       {error ? <Alert tone="error">{error}</Alert> : null}
       <Field label="说明">
         <p className="text-sm font-normal text-neutral-600">
-          将邀请码提供给家长，在注册页使用。邀请码仅显示一次，请复制保存。
+          将邀请码交给所选角色的注册人使用。邀请码仅显示一次，请复制保存。5–12
+          岁学生由家长创建，无需邀请码。
         </p>
       </Field>
     </PageShell>

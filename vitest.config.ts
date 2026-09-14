@@ -3,8 +3,10 @@ import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import { defineConfig } from "vitest/config";
 
-loadEnv({ path: ".env.local", override: true });
-loadEnv({ override: true });
+// Command-line DATABASE_URL must win so destructive test setup can be pointed
+// at an explicitly named isolated database.
+loadEnv({ path: ".env.local" });
+loadEnv();
 
 const artifactRoot = path.resolve(process.cwd(), ".braindance-artifacts", "vitest");
 const mediaRoot = path.resolve(process.cwd(), ".braindance-media", "vitest");

@@ -9,11 +9,6 @@ import { requireDatabaseUrl } from "../src/lib/env";
 import { hashPassword } from "../src/lib/crypto";
 import { changePassword } from "../src/modules/identity/change-password.service";
 import { createControlledStudent } from "../src/modules/identity/create-controlled-student.service";
-import { issueAssociationCode } from "../src/modules/family-access/association-code.service";
-import {
-  acceptRelationshipRequest,
-  createRelationshipRequest,
-} from "../src/modules/family-access/relationship-request.service";
 import { seedM5TrainingDefinitions } from "../src/modules/training/definition.service";
 import { seedAdminUser } from "../src/modules/identity/seed-admin";
 import { migrateTestDb } from "../tests/helpers/db";
@@ -76,20 +71,24 @@ async function main() {
     idempotencyKey: `e2e-change-password-${runId}`,
   });
 
-  const code = await issueAssociationCode(db, {
-    studentId: created.studentId,
-    idempotencyKey: `e2e-issue-${runId}`,
-  });
-  const request = await createRelationshipRequest(db, {
+  const secondCreated = await createControlledStudent(db, {
     parentId,
-    associationCodePlaintext: code.codePlaintext,
-    idempotencyKey: `e2e-req-${runId}`,
+    username: `e2e_student_second_${runId}`,
+    birthDate: "2014-06-01",
+    displayName: "E2E Second Student",
+    initialPassword,
+    idempotencyKey: `e2e-create-second-student-${runId}`,
   });
-  await acceptRelationshipRequest(db, {
-    studentId: created.studentId,
-    requestId: request.requestId,
-    idempotencyKey: `e2e-accept-${runId}`,
+
+  await changePassword(db, {
+    userId: secondCreated.studentId,
+    currentSessionId: "bootstrap-second-session",
+    currentPassword: initialPassword,
+    newPassword: studentPassword,
+    idempotencyKey: `e2e-change-second-password-${runId}`,
   });
+
+  // Parent-created students are already linked by the creation transaction.
 
   // Ledger-backed seed so lifecycle-worker `points.settled` rebuild keeps the balance.
   await seedRebuildSafeStudentBalance(db, {
@@ -117,6 +116,7 @@ async function main() {
         studentUsername,
         studentPassword,
         studentId: created.studentId,
+        secondStudentId: secondCreated.studentId,
         catalogItemId: catalogItem.id,
       },
       null,

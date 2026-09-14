@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { relationshipRequests } from "@/db/schema";
+import { relationshipRequests, users } from "@/db/schema";
 import { requireParentSession, requireStudentSession } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { createRelationshipRequest } from "@/modules/family-access/relationship-request.service";
@@ -20,11 +20,13 @@ export async function GET() {
       .select({
         requestId: relationshipRequests.id,
         parentId: relationshipRequests.parentId,
+        parentName: users.displayName,
         status: relationshipRequests.status,
         expiresAt: relationshipRequests.expiresAt,
         createdAt: relationshipRequests.createdAt,
       })
       .from(relationshipRequests)
+      .innerJoin(users, eq(users.id, relationshipRequests.parentId))
       .where(
         and(
           eq(relationshipRequests.studentId, dbUser.id),
@@ -36,6 +38,7 @@ export async function GET() {
       requests: rows.map((row) => ({
         requestId: row.requestId,
         parentId: row.parentId,
+        parentName: row.parentName,
         status: row.status,
         expiresAt: row.expiresAt.toISOString(),
         createdAt: row.createdAt.toISOString(),

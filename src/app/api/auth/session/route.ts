@@ -39,7 +39,9 @@ export async function GET() {
     return Response.json({
       userId: user.id,
       role: user.role,
-      contactVerified: user.role === "admin" || Boolean(dbUser?.contactVerifiedAt),
+      displayName: dbUser?.displayName,
+      account: dbUser?.username ?? dbUser?.email ?? dbUser?.phone ?? "",
+      contactVerified: user.role !== "parent" || Boolean(dbUser?.contactVerifiedAt),
       status: dbUser?.status,
       authorizationEpoch: user.authorizationEpoch,
       mustChangePassword: dbUser?.mustChangePassword ?? false,

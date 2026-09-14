@@ -320,6 +320,108 @@ async function incrementAuthorizationEpoch(tx: Database, userId: string) {
     .where(eq(users.id, userId));
 }
 
+/** Caller owns the transaction and consent authority; never forge a student response. */
+export async function activateFamilyRelationship(
+  tx: Database,
+  input: {
+    parentId: string;
+    studentId: string;
+    actorId: string;
+    idempotencyKey: string;
+    requestId?: string;
+    evidence: Record<string, string | number | boolean | null>;
+  },
+): Promise<{ relationshipId: string; familyId: string }> {
+  const acceptedAt = new Date();
+  const familyId = await resolveFamilyIdForAcceptance(tx, input.parentId, input.studentId);
+
+  const [relationship] = await tx
+    .insert(relationships)
+    .values({
+      familyId,
+      parentId: input.parentId,
+      studentId: input.studentId,
+      status: "active",
+      acceptedAt,
+    })
+    .returning();
+
+  if (!relationship) {
+    throw new Error("Failed to create relationship");
+  }
+
+  await ensureActiveMembership(tx, {
+    familyId,
+    userId: input.parentId,
+    memberRole: "parent",
+    relationshipId: relationship.id,
+    joinedAt: acceptedAt,
+  });
+  await ensureActiveMembership(tx, {
+    familyId,
+    userId: input.studentId,
+    memberRole: "student",
+    relationshipId: relationship.id,
+    joinedAt: acceptedAt,
+  });
+
+  const consentIdempotencyKey = `guardian-consent:${relationship.id}`;
+  await tx
+    .insert(guardianConsents)
+    .values({
+      studentId: input.studentId,
+      parentId: input.parentId,
+      consentType: M1_GUARDIAN_CONSENT_TYPE,
+      policyVersion: M1_GUARDIAN_POLICY_VERSION,
+      acceptedAt,
+      evidence: input.evidence,
+      recordIdempotencyKey: consentIdempotencyKey,
+    })
+    .onConflictDoNothing({ target: guardianConsents.recordIdempotencyKey });
+
+  await incrementAuthorizationEpoch(tx, input.parentId);
+  await incrementAuthorizationEpoch(tx, input.studentId);
+
+  await appendAuditEvent(tx, {
+    actorId: input.actorId,
+    action: "guardian_consent.recorded",
+    resourceType: "guardian_consent",
+    resourceId: relationship.id,
+    requestId: input.requestId,
+    idempotencyKey: `audit:guardian-consent:${input.idempotencyKey}`,
+    metadata: {
+      policyVersion: M1_GUARDIAN_POLICY_VERSION,
+      consentType: M1_GUARDIAN_CONSENT_TYPE,
+      parentId: input.parentId,
+    },
+  });
+
+  await appendAuditEvent(tx, {
+    actorId: input.actorId,
+    action: "relationship.accepted",
+    resourceType: "relationship",
+    resourceId: relationship.id,
+    requestId: input.requestId,
+    idempotencyKey: `audit:rel-accept:${input.idempotencyKey}`,
+    metadata: { familyId, parentId: input.parentId },
+  });
+
+  await appendOutboxEvent(tx, {
+    aggregateType: "relationship",
+    aggregateId: relationship.id,
+    eventType: "relationship.accepted",
+    dedupeKey: `outbox:rel-accept:${input.idempotencyKey}`,
+    payload: {
+      relationshipId: relationship.id,
+      familyId,
+      parentId: input.parentId,
+      studentId: input.studentId,
+    },
+  });
+
+  return { relationshipId: relationship.id, familyId };
+}
+
 export async function acceptRelationshipRequest(
   db: Database,
   input: RespondRelationshipRequestInput,
@@ -399,55 +501,15 @@ export async function acceptRelationshipRequest(
 
     await assertNoActiveRelationshipPair(tx, request.parentId, request.studentId);
 
+    const { relationshipId, familyId } = await activateFamilyRelationship(tx, {
+      parentId: request.parentId,
+      studentId: request.studentId,
+      actorId: input.studentId,
+      idempotencyKey: input.idempotencyKey,
+      requestId: input.requestIdHeader,
+      evidence: { relationshipRequestId: request.id },
+    });
     const acceptedAt = new Date();
-    const familyId = await resolveFamilyIdForAcceptance(tx, request.parentId, request.studentId);
-
-    const [relationship] = await tx
-      .insert(relationships)
-      .values({
-        familyId,
-        parentId: request.parentId,
-        studentId: request.studentId,
-        status: "active",
-        acceptedAt,
-      })
-      .returning();
-
-    if (!relationship) {
-      throw new Error("Failed to create relationship");
-    }
-
-    await ensureActiveMembership(tx, {
-      familyId,
-      userId: request.parentId,
-      memberRole: "parent",
-      relationshipId: relationship.id,
-      joinedAt: acceptedAt,
-    });
-    await ensureActiveMembership(tx, {
-      familyId,
-      userId: request.studentId,
-      memberRole: "student",
-      relationshipId: relationship.id,
-      joinedAt: acceptedAt,
-    });
-
-    const consentIdempotencyKey = `guardian-consent:${relationship.id}`;
-    await tx
-      .insert(guardianConsents)
-      .values({
-        studentId: request.studentId,
-        parentId: request.parentId,
-        consentType: M1_GUARDIAN_CONSENT_TYPE,
-        policyVersion: M1_GUARDIAN_POLICY_VERSION,
-        acceptedAt,
-        evidence: { relationshipRequestId: request.id },
-        recordIdempotencyKey: consentIdempotencyKey,
-      })
-      .onConflictDoNothing({ target: guardianConsents.recordIdempotencyKey });
-
-    await incrementAuthorizationEpoch(tx, request.parentId);
-    await incrementAuthorizationEpoch(tx, request.studentId);
 
     await tx
       .update(relationshipRequests)
@@ -458,45 +520,8 @@ export async function acceptRelationshipRequest(
       })
       .where(eq(relationshipRequests.id, request.id));
 
-    await appendAuditEvent(tx, {
-      actorId: input.studentId,
-      action: "guardian_consent.recorded",
-      resourceType: "guardian_consent",
-      resourceId: relationship.id,
-      requestId: input.requestIdHeader,
-      idempotencyKey: `audit:guardian-consent:${input.idempotencyKey}`,
-      metadata: {
-        policyVersion: M1_GUARDIAN_POLICY_VERSION,
-        consentType: M1_GUARDIAN_CONSENT_TYPE,
-        parentId: request.parentId,
-      },
-    });
-
-    await appendAuditEvent(tx, {
-      actorId: input.studentId,
-      action: "relationship.accepted",
-      resourceType: "relationship",
-      resourceId: relationship.id,
-      requestId: input.requestIdHeader,
-      idempotencyKey: `audit:rel-accept:${input.idempotencyKey}`,
-      metadata: { familyId, parentId: request.parentId },
-    });
-
-    await appendOutboxEvent(tx, {
-      aggregateType: "relationship",
-      aggregateId: relationship.id,
-      eventType: "relationship.accepted",
-      dedupeKey: `outbox:rel-accept:${input.idempotencyKey}`,
-      payload: {
-        relationshipId: relationship.id,
-        familyId,
-        parentId: request.parentId,
-        studentId: request.studentId,
-      },
-    });
-
     return {
-      relationshipId: relationship.id,
+      relationshipId,
       familyId,
       idempotentReplay: false,
     };

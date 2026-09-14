@@ -12,6 +12,10 @@ import { bootstrapVerifiedParentWithInvite, seedStudentUser } from "./family-acc
 
 const M2_TABLES = [
   "schedule_horizon_maintains",
+  "goal_commands",
+  "goal_assignments",
+  "goal_definitions",
+  "manual_point_adjustments",
   "point_balance_projection",
   "point_ledger_entries",
   "settlements",

@@ -1,6 +1,7 @@
 export type ScheduleErrorCode =
   | "NOT_FOUND"
   | "FORBIDDEN"
+  | "VALIDATION_ERROR"
   | "IDEMPOTENCY_CONFLICT"
   | "STATE_CONFLICT"
   | "WINDOW_EXPIRED"

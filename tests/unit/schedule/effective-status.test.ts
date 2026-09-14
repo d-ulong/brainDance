@@ -20,4 +20,13 @@ describe("effective-status", () => {
     const now = new Date("2026-01-01T12:00:00.000Z");
     expect(effectiveStatus({ status: "pending", familyDate }, now)).toBe("pending");
   });
+
+  it("returns in progress for a pending item with a start fact", () => {
+    expect(
+      effectiveStatus(
+        { status: "pending", familyDate, startedAt: new Date("2026-01-01T02:00:00.000Z") },
+        new Date("2026-01-01T03:00:00.000Z"),
+      ),
+    ).toBe("in_progress");
+  });
 });

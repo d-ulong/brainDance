@@ -1,11 +1,11 @@
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { loginSecurityEvents, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { normalizeAccountKey, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
-import { LOGIN_LOCK_DURATION_MS, MAX_LOGIN_FAILURES } from "@/modules/identity/constants";
+import { loginPolicy } from "@/modules/identity/login-policy";
 import { IdentityError } from "@/modules/identity/errors";
 
 export type LoginInput = {
@@ -60,7 +60,7 @@ export async function findUserByIdentifier(db: Database, identifier: string) {
 }
 
 async function countRecentFailures(db: Database, accountKey: string): Promise<number> {
-  const since = new Date(Date.now() - LOGIN_LOCK_DURATION_MS);
+  const since = new Date(Date.now() - loginPolicy().lockDurationMs);
   const events = await db
     .select({
       eventType: loginSecurityEvents.eventType,
@@ -112,10 +112,27 @@ async function recordSecurityEvent(
     eventType: input.eventType,
     ipAddress: input.ipAddress,
     idempotencyKey: input.idempotencyKey,
+    occurredAt: sql`clock_timestamp()`,
   });
 }
 
 export async function login(db: Database, input: LoginInput): Promise<LoginResult> {
+  // Commit failure accounting too; serialize a known account's checks and counters.
+  const outcome = await db.transaction(async (tx) => {
+    const found = await findUserByIdentifier(tx, input.identifier);
+    if (found) await tx.execute(sql`SELECT id FROM users WHERE id = ${found.id} FOR UPDATE`);
+    try {
+      return await loginInTransaction(tx, input);
+    } catch (error) {
+      if (error instanceof IdentityError) return error;
+      throw error;
+    }
+  });
+  if (outcome instanceof IdentityError) throw outcome;
+  return outcome;
+}
+
+async function loginInTransaction(db: Database, input: LoginInput): Promise<LoginResult> {
   const user = await findUserByIdentifier(db, input.identifier);
   const accountKey = normalizeAccountKey(input.identifier);
 
@@ -134,7 +151,32 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
   }
 
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
-    throw new IdentityError("ACCOUNT_LOCKED", "Account is temporarily locked");
+    const seconds = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000);
+    throw new IdentityError(
+      "ACCOUNT_LOCKED",
+      `尝试次数较多，请在 ${seconds} 秒后重试。等待期间无需重复点击。`,
+    );
+  }
+
+  if (user.status === "locked") {
+    await db
+      .update(users)
+      .set({
+        status:
+          user.role !== "parent" || user.contactVerifiedAt ? "active" : "pending_verification",
+        lockedUntil: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
+    await recordSecurityEvent(db, { accountKey, eventType: "account_unlocked" });
+    await appendAuditEvent(db, {
+      actorId: user.id,
+      action: "account.unlocked",
+      resourceType: "user",
+      resourceId: user.id,
+      reasonCode: "lock_expired",
+      requestId: input.requestId,
+    });
   }
 
   const passwordValid = await verifyPassword(input.password, user.passwordHash);
@@ -147,8 +189,8 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     });
 
     const failures = await countRecentFailures(db, accountKey);
-    if (failures >= MAX_LOGIN_FAILURES) {
-      const lockedUntil = new Date(Date.now() + LOGIN_LOCK_DURATION_MS);
+    if (failures >= loginPolicy().maxFailures) {
+      const lockedUntil = new Date(Date.now() + loginPolicy().lockDurationMs);
       await db
         .update(users)
         .set({ lockedUntil, status: "locked", updatedAt: new Date() })
@@ -173,7 +215,12 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
       });
     }
 
-    throw new IdentityError("INVALID_CREDENTIALS", "Invalid credentials");
+    throw new IdentityError(
+      "INVALID_CREDENTIALS",
+      failures >= loginPolicy().maxFailures
+        ? `账号或密码不正确，已暂时锁定 ${Math.ceil(loginPolicy().lockDurationMs / 1000)} 秒。`
+        : "账号或密码不正确，请检查输入或点击小眼睛核对密码。",
+    );
   }
 
   // Frozen students must not obtain a generic session (P2 freeze contract).
@@ -186,16 +233,6 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
     if (freeze) {
       throw new IdentityError("FORBIDDEN", "Account is frozen for deletion");
     }
-  }
-
-  if (user.status === "locked") {
-    await db
-      .update(users)
-      .set({
-        status: user.contactVerifiedAt ? "active" : "pending_verification",
-        lockedUntil: null,
-      })
-      .where(eq(users.id, user.id));
   }
 
   await recordSecurityEvent(db, {
@@ -233,7 +270,7 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
         sameSite: sessionCookie.attributes.sameSite ?? "lax",
       },
     },
-    contactVerified: user.role === "admin" || user.contactVerifiedAt !== null,
+    contactVerified: user.role !== "parent" || user.contactVerifiedAt !== null,
   };
 }
 

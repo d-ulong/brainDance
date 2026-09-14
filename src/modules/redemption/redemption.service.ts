@@ -1,9 +1,12 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { auditEvents, pointRedemptions, redemptionCatalogItems } from "@/db/schema";
+import { auditEvents, pointBalanceProjection, pointRedemptions, redemptionCatalogItems } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
-import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
+import {
+  listActiveParentIdsForStudent,
+  requireActiveRelationship,
+} from "@/modules/family-access/authorization.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
@@ -63,6 +66,7 @@ async function lockRedemptionRow(tx: Database, redemptionId: string) {
 
 async function lockMonthlyRedemptions(
   tx: Database,
+  studentId: string,
   catalogItemId: string,
   requestMonth: string,
 ): Promise<Array<typeof pointRedemptions.$inferSelect>> {
@@ -71,6 +75,7 @@ async function lockMonthlyRedemptions(
     .from(pointRedemptions)
     .where(
       and(
+        eq(pointRedemptions.studentId, studentId),
         eq(pointRedemptions.catalogItemId, catalogItemId),
         eq(pointRedemptions.requestMonth, requestMonth),
         inArray(pointRedemptions.status, ["pending", "approved"]),
@@ -190,13 +195,18 @@ export async function createRedemptionRequest(
       return { redemption: toRedemptionDto(replay), idempotentReplay: true };
     }
 
+    const activeParentIds = await listActiveParentIdsForStudent(tx, input.studentId);
+    if (activeParentIds.length === 0) {
+      throw new RedemptionError("NOT_FOUND", "Catalog item not found");
+    }
+
     const [catalogItem] = await tx
       .select()
       .from(redemptionCatalogItems)
       .where(
         and(
           eq(redemptionCatalogItems.id, input.catalogItemId),
-          eq(redemptionCatalogItems.studentId, input.studentId),
+          inArray(redemptionCatalogItems.creatorParentId, activeParentIds),
         ),
       )
       .limit(1);
@@ -209,11 +219,23 @@ export async function createRedemptionRequest(
       throw new RedemptionError("CATALOG_INACTIVE", "Catalog item is not active");
     }
 
+    await tx.execute(sql`SELECT student_id FROM point_balance_projection WHERE student_id = ${input.studentId}::uuid FOR UPDATE`);
+    const [balanceRow] = await tx.select({ balance: pointBalanceProjection.balance }).from(pointBalanceProjection).where(eq(pointBalanceProjection.studentId, input.studentId)).limit(1);
+    const availableBalance = balanceRow?.balance ?? 0;
+    if (availableBalance < catalogItem.cost) {
+      throw new RedemptionError("INSUFFICIENT_BALANCE", `积分不足：当前 ${availableBalance} 分，需要 ${catalogItem.cost} 分`);
+    }
+
     if (catalogItem.monthlyLimit != null) {
       await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${`redemption-monthly-create:${catalogItem.id}:${requestMonth}`}))`,
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`redemption-monthly-create:${input.studentId}:${catalogItem.id}:${requestMonth}`}))`,
       );
-      const monthlyRows = await lockMonthlyRedemptions(tx, catalogItem.id, requestMonth);
+      const monthlyRows = await lockMonthlyRedemptions(
+        tx,
+        input.studentId,
+        catalogItem.id,
+        requestMonth,
+      );
       if ((await countMonthlyUsage(monthlyRows)) >= catalogItem.monthlyLimit) {
         throw new RedemptionError("MONTHLY_LIMIT_EXCEEDED", "Monthly redemption limit exceeded");
       }

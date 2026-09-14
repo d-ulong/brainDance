@@ -22,13 +22,6 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
   student: [
     { id: "home", href: "/", label: "首页", icon: "🏠", matches: (path) => path === "/" },
     {
-      id: "schedule",
-      href: "/student/schedule",
-      label: "日程",
-      icon: "📅",
-      matches: (path) => path.startsWith("/student/schedule"),
-    },
-    {
       id: "training",
       href: "/student/training",
       label: "训练",
@@ -43,21 +36,23 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
       matches: (path) => path.startsWith("/student/pushes"),
     },
     {
-      id: "rewards",
-      href: "/student/redemption",
-      label: "积分",
-      icon: "⭐",
-      matches: (path) => path.startsWith("/student/redemption"),
+      id: "plans",
+      href: "/student/plans",
+      label: "计划日程",
+      icon: "🗓️",
+      matches: (path) => path.startsWith("/student/plans") || path.startsWith("/student/schedule"),
     },
     {
       id: "profile",
-      href: "/student/link",
+      href: "/account",
       label: "我的",
       icon: "🌟",
       matches: (path) =>
+        path === "/account" ||
         path.startsWith("/student/link") ||
         path.startsWith("/student/export") ||
         path.startsWith("/student/reflection") ||
+        path.startsWith("/student/redemption") ||
         path.startsWith("/student/account-deletion") ||
         path.startsWith("/student/change-password"),
     },
@@ -65,32 +60,27 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
   parent: [
     { id: "home", href: "/", label: "首页", icon: "🏠", matches: (path) => path === "/" },
     {
-      id: "training",
-      href: "/parent/training",
-      label: "我的训练",
-      icon: "🧩",
-      matches: (path) => path.startsWith("/parent/training"),
-    },
-    {
       id: "students",
       href: "/parent/students",
       label: "学生",
       icon: "🧒",
-      matches: (path) => path.startsWith("/parent/students"),
-    },
-    {
-      id: "link",
-      href: "/parent/link",
-      label: "关联",
-      icon: "🔗",
-      matches: (path) => path.startsWith("/parent/link"),
+      matches: (path) =>
+        path.startsWith("/parent/students") ||
+        path.startsWith("/parent/goals") ||
+        path.startsWith("/parent/plans") ||
+        path.startsWith("/parent/pushes") ||
+        path.startsWith("/parent/redemption") ||
+        path.startsWith("/parent/link"),
     },
     {
       id: "profile",
-      href: "/parent/change-password",
+      href: "/account",
       label: "我的",
       icon: "🌟",
-      matches: (path) => path.startsWith("/parent/change-password"),
+      matches: (path) =>
+        path === "/account" ||
+        path.startsWith("/parent/change-password") ||
+        path.startsWith("/parent/training"),
     },
   ],
   admin: [
@@ -101,6 +91,13 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
       label: "邀请码",
       icon: "✉️",
       matches: (path) => path.startsWith("/admin/invitations"),
+    },
+    {
+      id: "profile",
+      href: "/account",
+      label: "我的",
+      icon: "🌟",
+      matches: (path) => path === "/account",
     },
   ],
 };

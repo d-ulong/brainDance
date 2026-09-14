@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { auditEvents, redemptionCatalogItems, users } from "@/db/schema";
@@ -8,6 +8,7 @@ import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency
 import { RedemptionError } from "@/modules/redemption/errors";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
+import { listActiveParentIdsForStudent } from "@/modules/family-access/authorization.service";
 
 export type CatalogItemDto = {
   id: string;
@@ -362,7 +363,14 @@ export async function listCatalogItems(
 
   const activeOnly = options.viewerRole === "student" ? true : (options.activeOnly ?? false);
 
-  const conditions = [eq(redemptionCatalogItems.studentId, studentId)];
+  const conditions = options.viewerRole === "student"
+    ? [
+        inArray(
+          redemptionCatalogItems.creatorParentId,
+          await listActiveParentIdsForStudent(db, studentId),
+        ),
+      ]
+    : [eq(redemptionCatalogItems.studentId, studentId)];
   if (activeOnly) {
     conditions.push(eq(redemptionCatalogItems.active, true));
   }
@@ -382,11 +390,17 @@ export async function getCatalogItemForStudent(
 ): Promise<typeof redemptionCatalogItems.$inferSelect | null> {
   await assertStudentAccountNotFrozen(db, studentId, "read");
 
+  const activeParentIds = await listActiveParentIdsForStudent(db, studentId);
+  if (activeParentIds.length === 0) return null;
+
   const [item] = await db
     .select()
     .from(redemptionCatalogItems)
     .where(
-      and(eq(redemptionCatalogItems.id, itemId), eq(redemptionCatalogItems.studentId, studentId)),
+      and(
+        eq(redemptionCatalogItems.id, itemId),
+        inArray(redemptionCatalogItems.creatorParentId, activeParentIds),
+      ),
     )
     .limit(1);
 
