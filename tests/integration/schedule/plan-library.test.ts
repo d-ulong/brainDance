@@ -480,4 +480,56 @@ describe.skipIf(!hasDb)("plan library activation", () => {
       generatedThrough: "2026-01-20",
     });
   });
+
+  it("projects entry description snapshot and generatedDatesByStudent from schedule facts", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const withDescription = {
+      ...definition,
+      entries: [
+        {
+          ...definition.entries[0],
+          description: "先完成今日阅读笔记",
+        },
+        definition.entries[1],
+      ],
+    };
+    const saved = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition: withDescription,
+      idempotencyKey: "desc-dates-library",
+    });
+    const active = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      effectiveFrom: "2026-01-15",
+      idempotencyKey: "desc-dates-activate",
+      now: FIXED_NOW,
+    });
+    await generatePlanLibraryRange(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      from: "2026-01-15",
+      through: "2026-01-17",
+      idempotencyKey: "desc-dates-generate",
+      now: FIXED_NOW,
+    });
+
+    const listed = (await listPlanLibrary(db, parentId)).find((plan) => plan.id === saved.id);
+    expect(listed?.generatedDatesByStudent?.[studentId]).toEqual(
+      expect.arrayContaining(["2026-01-15", "2026-01-16", "2026-01-17"]),
+    );
+
+    const projected = (
+      await queryScheduleItems(db, {
+        studentId,
+        from: "2026-01-15",
+        to: "2026-01-15",
+        now: new Date("2026-01-15T10:40:00.000Z"),
+      })
+    ).find((item) => item.slotKey === "reading" && item.planId === active.planId);
+    expect(projected?.description).toBe("先完成今日阅读笔记");
+  });
+
 });

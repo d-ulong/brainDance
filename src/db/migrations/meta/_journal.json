@@ -309,6 +309,13 @@
       "when": 1789362000000,
       "tag": "0043_goal_edits_and_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1789369200000,
+      "tag": "0044_goal_horizon_and_gift_redemptions",
+      "breakpoints": true
     }
   ]
 }

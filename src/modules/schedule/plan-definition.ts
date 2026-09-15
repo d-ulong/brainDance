@@ -30,7 +30,7 @@ const planEntrySchema = z
   .object({
     key: z.string().trim().min(1).max(128),
     title: z.string().trim().min(1).max(200),
-    description: z.string().trim().max(4000).optional(),
+    description: z.string().trim().max(500).optional(),
     startDate: dateSchema.nullish(),
     endDate: dateSchema.nullish(),
     expectedTime: timeSchema,

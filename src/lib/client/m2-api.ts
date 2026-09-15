@@ -29,6 +29,7 @@ export type ScheduleItemDto = {
   planTitle: string;
   priority: number;
   startedAt: string | null;
+  description?: string | null;
 };
 
 export type PointsBalanceDto = {
@@ -288,6 +289,7 @@ export type PlanDefinitionDto = {
   entries: {
     key: string;
     title: string;
+    description?: string;
     expectedTime: string;
     latestStartTime?: string | null;
     durationMinutes?: number | null;
@@ -314,6 +316,7 @@ export type PlanLibraryDto = {
   ownerName?: string;
   canEdit?: boolean;
   boundToSelf?: boolean;
+  generatedDatesByStudent?: Record<string, string[]>;
 };
 export async function fetchPlanLibrary() {
   return apiFetch<{ plans: PlanLibraryDto[] }>("/api/plan-library");
@@ -396,17 +399,20 @@ export type GoalDto = {
   expectedPoints: number | null;
   expectedGift: string | null;
   notes: string | null;
+  horizon: "short" | "medium" | "long";
   status: "pending_approval" | "active" | "succeeded" | "failed";
   actualPoints: number | null;
   actualGift: string | null;
   evaluationReason: string | null;
   evaluatedAt: string | null;
+  giftRedeemedAt: string | null;
   revision: number;
   postNotes: Array<{ id: string; authorId: string; authorName: string; body: string; createdAt: string }>;
   canApprove: boolean;
   canEvaluate: boolean;
   canEdit: boolean;
   canAddNote: boolean;
+  canRecordGiftRedemption: boolean;
   isPersonal: boolean;
 };
 
@@ -421,6 +427,7 @@ export async function createGoals(body: {
   expectedPoints?: number | null;
   expectedGift?: string | null;
   notes?: string | null;
+  horizon: "short" | "medium" | "long";
 }) {
   return apiWriteWithIdempotency<{ definitionId: string; assignmentIds: string[] }>("/api/goals", {
     method: "POST",
@@ -436,6 +443,7 @@ export async function updateGoal(assignmentId: string, body: {
   expectedPoints?: number | null;
   expectedGift?: string | null;
   notes?: string | null;
+  horizon: "short" | "medium" | "long";
 }) {
   return apiWriteWithIdempotency<{ assignmentId: string; revision: number }>(`/api/goals/${assignmentId}`, {
     method: "PATCH",
@@ -473,6 +481,14 @@ export async function evaluateGoal(
     method: "POST",
     idempotencyKeyPrefix: "evaluate-goal",
     body,
+  });
+}
+
+export async function recordGoalGiftRedemption(assignmentId: string, redeemedAt: string) {
+  return apiWriteWithIdempotency<{ assignmentId: string; giftRedeemedAt: string }>(`/api/goals/${assignmentId}/gift-redemption`, {
+    method: "POST",
+    idempotencyKeyPrefix: "goal-gift-redemption",
+    body: { redeemedAt },
   });
 }
 

@@ -32,10 +32,10 @@ describe.skipIf(!hasDb)("goals and manual penalties", () => {
     ]);
     await db.insert(pointBalanceProjection).values({ studentId: student!.id, balance: 10, updatedAt: new Date() });
 
-    const proposed = await createGoals(db, { actorId: student!.id, content: "完成阅读目标", dueDate: "2026-09-30", expectedPoints: 7, expectedGift: "一本书", idempotencyKey: "goal-propose" });
+    const proposed = await createGoals(db, { actorId: student!.id, content: "完成阅读目标", dueDate: "2026-09-30", expectedPoints: 7, expectedGift: "一本书", horizon: "medium", idempotencyKey: "goal-propose" });
     const assignmentId = proposed.assignmentIds[0]!;
     const proposal = (await listGoals(db, student!.id)).find((goal) => goal.assignmentId === assignmentId)!;
-    await updateGoal(db, { actorId: student!.id, assignmentId, revision: proposal.revision, content: "完成一周阅读目标", dueDate: "2026-09-30", expectedPoints: 7, expectedGift: "一本书", idempotencyKey: "goal-proposal-edit" });
+    await updateGoal(db, { actorId: student!.id, assignmentId, revision: proposal.revision, content: "完成一周阅读目标", dueDate: "2026-09-30", expectedPoints: 7, expectedGift: "一本书", horizon: "medium", idempotencyKey: "goal-proposal-edit" });
     await approveGoal(db, { actorId: parentOne!.id, assignmentId, idempotencyKey: "goal-approve" });
     await expect(evaluateGoal(db, { actorId: parentTwo!.id, assignmentId, outcome: "succeeded", actualPoints: 7, actualGift: "一本书", idempotencyKey: "wrong-parent" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await evaluateGoal(db, { actorId: parentOne!.id, assignmentId, outcome: "succeeded", actualPoints: 7, actualGift: "一本书", idempotencyKey: "goal-evaluate" });
@@ -62,14 +62,14 @@ describe.skipIf(!hasDb)("goals and manual penalties", () => {
     const [family] = await db.insert(families).values({}).returning({ id: families.id });
     await db.insert(relationships).values({ familyId: family!.id, parentId: parent!.id, studentId: student!.id, acceptedAt: new Date() });
 
-    const created = await createGoals(db, { actorId: parent!.id, subjectIds: [student!.id], content: "旧目标", dueDate: "2026-09-30", idempotencyKey: "editable-goal" });
+    const created = await createGoals(db, { actorId: parent!.id, subjectIds: [student!.id], content: "旧目标", dueDate: "2026-09-30", horizon: "long", idempotencyKey: "editable-goal" });
     const assignmentId = created.assignmentIds[0]!;
     const before = (await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)!;
-    await updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision, content: "新目标", dueDate: "2026-10-01", expectedPoints: 8, expectedGift: "新礼物", notes: "新备注", idempotencyKey: "update-goal" });
+    await updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision, content: "新目标", dueDate: "2026-10-01", expectedPoints: 8, expectedGift: "新礼物", notes: "新备注", horizon: "long", idempotencyKey: "update-goal" });
     expect((await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)).toMatchObject({ content: "新目标", revision: before.revision + 1, canEdit: true });
 
     await evaluateGoal(db, { actorId: parent!.id, assignmentId, outcome: "succeeded", actualPoints: 8, actualGift: "新礼物", idempotencyKey: "evaluate-edited-goal" });
-    await expect(updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision + 1, content: "不能覆盖", dueDate: "2026-10-02", idempotencyKey: "update-terminal-goal" })).rejects.toMatchObject({ code: "STATE_CONFLICT" });
+    await expect(updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision + 1, content: "不能覆盖", dueDate: "2026-10-02", horizon: "long", idempotencyKey: "update-terminal-goal" })).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     await addGoalNote(db, { actorId: parent!.id, assignmentId, body: "评定后的补充说明", idempotencyKey: "terminal-note" });
     const terminal = (await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)!;
     expect(terminal.postNotes).toHaveLength(1);

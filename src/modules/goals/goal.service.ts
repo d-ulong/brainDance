@@ -5,6 +5,7 @@ import {
   goalAssignments,
   goalCommands,
   goalDefinitions,
+  goalGiftRedemptions,
   goalNotes,
   pointLedgerEntries,
   relationships,
@@ -34,17 +35,20 @@ export type GoalDto = {
   expectedPoints: number | null;
   expectedGift: string | null;
   notes: string | null;
+  horizon: "short" | "medium" | "long";
   status: "pending_approval" | "active" | "succeeded" | "failed";
   actualPoints: number | null;
   actualGift: string | null;
   evaluationReason: string | null;
   evaluatedAt: string | null;
+  giftRedeemedAt: string | null;
   revision: number;
   postNotes: Array<{ id: string; authorId: string; authorName: string; body: string; createdAt: string }>;
   canApprove: boolean;
   canEvaluate: boolean;
   canEdit: boolean;
   canAddNote: boolean;
+  canRecordGiftRedemption: boolean;
   isPersonal: boolean;
 };
 
@@ -101,12 +105,16 @@ export async function createGoals(
     expectedPoints?: number | null;
     expectedGift?: string | null;
     notes?: string | null;
+    horizon: "short" | "medium" | "long";
     idempotencyKey: string;
   },
 ) {
   const actor = await requireGoalActor(db, input.actorId);
   const content = input.content.trim();
   if (content.length < 1 || content.length > 500) throw new GoalError("VALIDATION_ERROR", "目标内容须为 1 到 500 字");
+  if (input.horizon !== "short" && input.horizon !== "medium" && input.horizon !== "long") {
+    throw new GoalError("VALIDATION_ERROR", "目标期限须为近期、中期或远期");
+  }
   const expectedPoints = input.expectedPoints ?? null;
   if (expectedPoints !== null && (!Number.isInteger(expectedPoints) || expectedPoints < 0 || expectedPoints > 1_000_000)) {
     throw new GoalError("VALIDATION_ERROR", "期望积分必须为非负整数");
@@ -125,6 +133,7 @@ export async function createGoals(
     expectedPoints,
     expectedGift: normalizeText(input.expectedGift, 200),
     notes: normalizeText(input.notes, 1_000),
+    horizon: input.horizon,
   };
   const hash = hashIdempotencyPayload(payload);
   return db.transaction(async (tx) => {
@@ -142,6 +151,7 @@ export async function createGoals(
         expectedPoints,
         expectedGift: payload.expectedGift,
         notes: payload.notes,
+        horizon: payload.horizon,
       })
       .returning({ id: goalDefinitions.id });
     if (!definition) throw new GoalError("STATE_CONFLICT", "目标创建失败");
@@ -210,6 +220,10 @@ export async function listGoals(db: Database, actorId: string): Promise<GoalDto[
     ? await db.select({ id: users.id, displayName: users.displayName, username: users.username }).from(users).where(inArray(users.id, userIds))
     : [];
   const nameById = new Map(names.map((item) => [item.id, item.displayName || item.username || "未命名成员"]));
+  const redemptions = assignmentIds.length
+    ? await db.select().from(goalGiftRedemptions).where(inArray(goalGiftRedemptions.assignmentId, assignmentIds))
+    : [];
+  const redemptionByAssignment = new Map(redemptions.map((item) => [item.assignmentId, item]));
   return rows.map(({ assignment, definition }) => ({
     assignmentId: assignment.id,
     definitionId: definition.id,
@@ -224,32 +238,38 @@ export async function listGoals(db: Database, actorId: string): Promise<GoalDto[
     expectedPoints: definition.expectedPoints,
     expectedGift: definition.expectedGift,
     notes: definition.notes,
+    horizon: definition.horizon as GoalDto["horizon"],
     status: assignment.status as GoalDto["status"],
     actualPoints: assignment.actualPoints,
     actualGift: assignment.actualGift,
     evaluationReason: assignment.evaluationReason,
     evaluatedAt: assignment.evaluatedAt?.toISOString() ?? null,
+    giftRedeemedAt: redemptionByAssignment.get(assignment.id)?.redeemedAt.toISOString() ?? null,
     revision: definition.revision,
     postNotes: (notesByAssignment.get(assignment.id) ?? []).map((note) => ({ id: note.id, authorId: note.authorId, authorName: nameById.get(note.authorId) ?? "家庭成员", body: note.body, createdAt: note.createdAt.toISOString() })),
     canApprove: actor.role === "parent" && assignment.status === "pending_approval" && assignment.subjectId !== actor.id,
     canEvaluate: actor.role === "parent" && assignment.responsibleParentId === actor.id && assignment.status === "active",
     canEdit: !frozenDefinitions.has(definition.id) && ((actor.role === "parent" && assignment.responsibleParentId === actor.id) || (actor.role === "student" && definition.creatorId === actor.id && assignment.subjectId === actor.id && assignment.status === "pending_approval")),
     canAddNote: actor.role === "parent" && assignment.responsibleParentId === actor.id && (assignment.status === "succeeded" || assignment.status === "failed"),
+    canRecordGiftRedemption: actor.role === "parent" && assignment.responsibleParentId === actor.id && assignment.status === "succeeded" && Boolean(assignment.actualGift?.trim()) && !redemptionByAssignment.has(assignment.id),
     isPersonal: assignment.subjectId === definition.creatorId && actor.role === "parent",
   }));
 }
 
 export async function updateGoal(db: Database, input: {
   actorId: string; assignmentId: string; revision: number; content: string; dueDate: string;
-  expectedPoints?: number | null; expectedGift?: string | null; notes?: string | null; idempotencyKey: string;
+  expectedPoints?: number | null; expectedGift?: string | null; notes?: string | null; horizon: "short" | "medium" | "long"; idempotencyKey: string;
 }) {
   const actor = await requireGoalActor(db, input.actorId);
   const content = input.content.trim();
+  if (input.horizon !== "short" && input.horizon !== "medium" && input.horizon !== "long") {
+    throw new GoalError("VALIDATION_ERROR", "目标期限须为近期、中期或远期");
+  }
   if (content.length < 1 || content.length > 500) throw new GoalError("VALIDATION_ERROR", "目标内容须为 1 到 500 字");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new GoalError("VALIDATION_ERROR", "完成日期格式不正确");
   const expectedPoints = input.expectedPoints ?? null;
   if (expectedPoints !== null && (!Number.isInteger(expectedPoints) || expectedPoints < 0 || expectedPoints > 1_000_000)) throw new GoalError("VALIDATION_ERROR", "期望积分必须为非负整数");
-  const payload = { assignmentId: input.assignmentId, revision: input.revision, content, dueDate: input.dueDate, expectedPoints, expectedGift: normalizeText(input.expectedGift, 200), notes: normalizeText(input.notes, 1_000), action: "update" };
+  const payload = { assignmentId: input.assignmentId, revision: input.revision, content, dueDate: input.dueDate, expectedPoints, expectedGift: normalizeText(input.expectedGift, 200), notes: normalizeText(input.notes, 1_000), horizon: input.horizon, action: "update" };
   const hash = hashIdempotencyPayload(payload);
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM goal_assignments WHERE id = ${input.assignmentId}::uuid FOR UPDATE`);
@@ -263,7 +283,7 @@ export async function updateGoal(db: Database, input: {
     const [terminal] = await tx.select({ id: goalAssignments.id }).from(goalAssignments).where(and(eq(goalAssignments.definitionId, row.definition.id), inArray(goalAssignments.status, ["succeeded", "failed"]))).limit(1);
     if (terminal) throw new GoalError("STATE_CONFLICT", "已有目标完成评定，核心内容不可再修改");
     if (row.definition.revision !== input.revision) throw new GoalError("STATE_CONFLICT", "目标已被更新，请刷新后重试");
-    const [updated] = await tx.update(goalDefinitions).set({ content, dueDate: input.dueDate, expectedPoints, expectedGift: payload.expectedGift, notes: payload.notes, revision: sql`${goalDefinitions.revision} + 1`, updatedAt: new Date() }).where(and(eq(goalDefinitions.id, row.definition.id), eq(goalDefinitions.revision, input.revision))).returning({ revision: goalDefinitions.revision });
+    const [updated] = await tx.update(goalDefinitions).set({ content, dueDate: input.dueDate, expectedPoints, expectedGift: payload.expectedGift, notes: payload.notes, horizon: input.horizon, revision: sql`${goalDefinitions.revision} + 1`, updatedAt: new Date() }).where(and(eq(goalDefinitions.id, row.definition.id), eq(goalDefinitions.revision, input.revision))).returning({ revision: goalDefinitions.revision });
     if (!updated) throw new GoalError("STATE_CONFLICT", "目标已被更新，请刷新后重试");
     const result = { assignmentId: row.assignment.id, revision: updated.revision };
     await tx.insert(goalCommands).values({ actorId: actor.id, key: input.idempotencyKey, payloadHash: hash, result: JSON.stringify(result) });
@@ -379,6 +399,77 @@ export async function evaluateGoal(
     await tx.insert(goalCommands).values({ actorId: actor.id, key: input.idempotencyKey, payloadHash: hash, result: JSON.stringify(result) });
     await appendAuditEvent(tx, { actorId: actor.id, action: "goal.evaluated", resourceType: "goal_assignment", resourceId: row.assignment.id, idempotencyKey: `audit:goal-evaluate:${actor.id}:${input.idempotencyKey}`, metadata: { outcome: input.outcome, points: finalPoints, hasGift: Boolean(finalGift) } });
     await appendOutboxEvent(tx, { aggregateType: "goal_assignment", aggregateId: row.assignment.id, eventType: "goal.evaluated", dedupeKey: `goal.evaluated:${actor.id}:${input.idempotencyKey}`, payload: { assignmentId: row.assignment.id, outcome: input.outcome, points: finalPoints } });
+    return result;
+  });
+}
+
+export async function recordGoalGiftRedemption(
+  db: Database,
+  input: { actorId: string; assignmentId: string; redeemedAt: string; idempotencyKey: string },
+) {
+  const actor = await requireGoalActor(db, input.actorId);
+  if (actor.role !== "parent") throw new GoalError("FORBIDDEN", "只有责任家长可以记录礼物兑现");
+  const redeemedAt = new Date(input.redeemedAt);
+  if (!Number.isFinite(redeemedAt.getTime())) {
+    throw new GoalError("VALIDATION_ERROR", "兑现时间格式不正确");
+  }
+  if (redeemedAt.getTime() > Date.now()) {
+    throw new GoalError("VALIDATION_ERROR", "兑现时间不能是未来");
+  }
+  const payload = {
+    assignmentId: input.assignmentId,
+    redeemedAt: redeemedAt.toISOString(),
+    action: "gift-redemption",
+  };
+  const hash = hashIdempotencyPayload(payload);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM goal_assignments WHERE id = ${input.assignmentId}::uuid FOR UPDATE`);
+    const replay = await findCommand(tx, actor.id, input.idempotencyKey, hash);
+    if (replay) return JSON.parse(replay) as { assignmentId: string; giftRedeemedAt: string };
+    const [assignment] = await tx.select().from(goalAssignments).where(eq(goalAssignments.id, input.assignmentId)).limit(1);
+    if (!assignment) throw new GoalError("NOT_FOUND", "目标不存在");
+    if (assignment.responsibleParentId !== actor.id) {
+      throw new GoalError("FORBIDDEN", "只有该目标的责任家长可以记录礼物兑现");
+    }
+    if (assignment.status !== "succeeded") {
+      throw new GoalError("STATE_CONFLICT", "只有已达成的目标才能记录礼物兑现");
+    }
+    if (!assignment.actualGift?.trim()) {
+      throw new GoalError("STATE_CONFLICT", "没有实际礼物的目标不能记录兑现");
+    }
+    const [existing] = await tx
+      .select()
+      .from(goalGiftRedemptions)
+      .where(eq(goalGiftRedemptions.assignmentId, assignment.id))
+      .limit(1);
+    if (existing) throw new GoalError("STATE_CONFLICT", "该目标礼物已兑现");
+    await tx.insert(goalGiftRedemptions).values({
+      assignmentId: assignment.id,
+      recordedBy: actor.id,
+      redeemedAt,
+    });
+    const result = { assignmentId: assignment.id, giftRedeemedAt: redeemedAt.toISOString() };
+    await tx.insert(goalCommands).values({
+      actorId: actor.id,
+      key: input.idempotencyKey,
+      payloadHash: hash,
+      result: JSON.stringify(result),
+    });
+    await appendAuditEvent(tx, {
+      actorId: actor.id,
+      action: "goal.gift_redeemed",
+      resourceType: "goal_assignment",
+      resourceId: assignment.id,
+      idempotencyKey: `audit:goal-gift-redemption:${actor.id}:${input.idempotencyKey}`,
+      metadata: { redeemedAt: redeemedAt.toISOString() },
+    });
+    await appendOutboxEvent(tx, {
+      aggregateType: "goal_assignment",
+      aggregateId: assignment.id,
+      eventType: "goal.gift_redeemed",
+      dedupeKey: `goal.gift_redeemed:${actor.id}:${input.idempotencyKey}`,
+      payload: result,
+    });
     return result;
   });
 }

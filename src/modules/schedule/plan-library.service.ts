@@ -150,7 +150,34 @@ export type PlanLibrarySummary = Omit<typeof planLibrary.$inferSelect, "definiti
   ownerName?: string;
   canEdit?: boolean;
   boundToSelf?: boolean;
+  generatedDatesByStudent: Record<string, string[]>;
 };
+
+async function loadGeneratedDatesByLibrary(
+  db: Database,
+  libraryIds: string[],
+): Promise<Map<string, Record<string, string[]>>> {
+  const result = new Map<string, Record<string, string[]>>();
+  if (!libraryIds.length) return result;
+  const rows = await db
+    .select({
+      libraryId: planBindings.libraryId,
+      studentId: planActivations.studentId,
+      familyDate: scheduleItems.familyDate,
+    })
+    .from(planActivations)
+    .innerJoin(planBindings, eq(planBindings.id, planActivations.bindingId))
+    .innerJoin(scheduleItems, eq(scheduleItems.planId, planActivations.executionPlanId))
+    .where(inArray(planBindings.libraryId, libraryIds));
+  for (const row of rows) {
+    const byStudent = result.get(row.libraryId) ?? {};
+    const dates = new Set(byStudent[row.studentId] ?? []);
+    dates.add(row.familyDate);
+    byStudent[row.studentId] = [...dates].sort();
+    result.set(row.libraryId, byStudent);
+  }
+  return result;
+}
 
 export async function listPlanLibrary(
   db: Database,
@@ -189,11 +216,16 @@ export async function listPlanLibrary(
     });
     bindingsByLibrary.set(binding.libraryId, current);
   }
+  const generatedByLibrary = await loadGeneratedDatesByLibrary(
+    db,
+    libraries.map((library) => library.id),
+  );
   return libraries.map((library) => ({
     ...library,
     definition: planDefinitionSchema.parse(library.definition) as PlanDefinition,
     bindings: bindingsByLibrary.get(library.id) ?? [],
     canEdit: true,
+    generatedDatesByStudent: generatedByLibrary.get(library.id) ?? {},
   }));
 }
 
@@ -226,12 +258,17 @@ export async function listStudentPlanLibrary(
   const effectiveFromByLibrary = new Map(
     activeBindings.map((binding) => [binding.libraryId, binding.effectiveFrom]),
   );
+  const generatedByLibrary = await loadGeneratedDatesByLibrary(
+    db,
+    libraries.map((row) => ("library" in row ? row.library.id : row.id)),
+  );
   return libraries.map(({ library, ownerName }) => ({
     ...library,
     definition: planDefinitionSchema.parse(library.definition) as PlanDefinition,
     ownerName,
     canEdit: library.ownerId === studentId,
     boundToSelf: effectiveFromByLibrary.has(library.id),
+    generatedDatesByStudent: generatedByLibrary.get(library.id) ?? {},
     bindings: effectiveFromByLibrary.has(library.id)
       ? [
           {

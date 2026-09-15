@@ -74,6 +74,16 @@ describe("plan definition validation", () => {
   ])("rejects invalid definition %#", (value) => {
     expect(planDefinitionSchema.safeParse(value).success).toBe(false);
   });
+  it("accepts an optional entry description max 500 characters", () => {
+    const ok = plan({ entries: [entry({ description: "x".repeat(500) })] });
+    expect(planDefinitionSchema.safeParse(ok).success).toBe(true);
+    expect(planDefinitionSchema.parse(ok).entries[0]?.description).toHaveLength(500);
+  });
+  it("rejects entry descriptions longer than 500 characters and allows omitted descriptions", () => {
+    expect(planDefinitionSchema.safeParse(plan({ entries: [entry({ description: "x".repeat(501) })] })).success).toBe(false);
+    expect(planDefinitionSchema.safeParse(plan({ entries: [entry()] })).success).toBe(true);
+  });
+
   it("allows zero and signed storage-boundary points without a daily cap", () => {
     expect(
       planDefinitionSchema.safeParse(

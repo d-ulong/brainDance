@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       expectedPoints: z.number().int().min(0).max(1_000_000).nullable().optional(),
       expectedGift: z.string().max(200).nullable().optional(),
       notes: z.string().max(1_000).nullable().optional(),
+      horizon: z.enum(["short", "medium", "long"]),
     }).parse(await request.json());
     return NextResponse.json(await createGoals(db, { actorId: dbUser.id, ...input, idempotencyKey: key.key }));
   } catch (error) {

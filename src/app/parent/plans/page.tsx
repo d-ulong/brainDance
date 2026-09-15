@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/page-shell";
 import { StudentMultiSelect } from "@/components/ui/student-multi-select";
 import { StudentManagementTabs } from "@/components/ui/student-management-tabs";
+import { CompactGeneratedDates } from "@/components/schedule/compact-generated-dates";
 import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
@@ -35,6 +36,7 @@ const today = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
 type Draft = {
   title: string;
+  description: string;
   time: string;
   latest: string;
   duration: string;
@@ -57,6 +59,7 @@ function earliestGenerateDate(plan: PlanLibraryDto, studentIds: string[]) {
 }
 const blank = (): Draft => ({
   title: "",
+  description: "",
   time: "19:00",
   latest: "",
   duration: "",
@@ -73,6 +76,7 @@ function definition(title: string, description: string, startDate: string, items
     entries: items.map((item, index) => ({
       key: `item-${index + 1}`,
       title: item.title,
+      description: item.description.trim() || undefined,
       expectedTime: item.time,
       latestStartTime: item.latest || null,
       durationMinutes: item.duration ? Number(item.duration) : null,
@@ -110,6 +114,7 @@ function definition(title: string, description: string, startDate: string, items
 function drafts(plan: PlanDefinitionDto): Draft[] {
   return plan.entries.map((entry) => ({
     title: entry.title,
+    description: entry.description ?? "",
     time: entry.expectedTime,
     latest: entry.latestStartTime ?? "",
     duration: entry.durationMinutes ? String(entry.durationMinutes) : "",
@@ -344,10 +349,10 @@ export default function ParentPlansPage() {
     <PageShell
       title="计划"
       subtitle="计划可复用；绑定后会生成未来 15 天日程"
-      backHref="/parent/students"
+      backHref={selfOnly ? "/account" : "/parent/students"}
       showLogout
       hideHeading
-      secondaryNavigation={<StudentManagementTabs />}
+      secondaryNavigation={selfOnly ? undefined : <StudentManagementTabs />}
     >
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
@@ -394,6 +399,14 @@ export default function ParentPlansPage() {
               <p className="bd-library-summary">
                 {plan.definition.description || plan.definition.entries.map((entry) => entry.title).join("、")}
               </p>
+              <div className="mt-2 space-y-1 text-sm text-slate-600">
+                {(plan.bindings.length ? plan.bindings : [{ studentId: "__none__", displayName: "未绑定" }]).map((binding) => (
+                  <div key={binding.studentId}>
+                    <span className="font-medium">{binding.displayName}：</span>
+                    <CompactGeneratedDates dates={plan.generatedDatesByStudent?.[binding.studentId] ?? []} />
+                  </div>
+                ))}
+              </div>
               <div>
                 <p className="bd-library-binding-label">已绑定对象 · 点击姓名可移除</p>
                 {plan.bindings.length ? (
@@ -479,6 +492,14 @@ export default function ParentPlansPage() {
                     required
                     value={item.title}
                     onChange={(event) => change(index, "title", event.target.value)}
+                  />
+                </Field>
+                <Field label="内容说明（可选）">
+                  <textarea
+                    className="min-h-20 w-full rounded-2xl border p-3"
+                    maxLength={500}
+                    value={item.description}
+                    onChange={(event) => change(index, "description", event.target.value)}
                   />
                 </Field>
                 <div className="grid grid-cols-2 gap-2">

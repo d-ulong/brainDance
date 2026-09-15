@@ -77,6 +77,7 @@ export type ScheduleItemDto = {
   planTitle: string;
   priority: number;
   startedAt: Date | null;
+  description: string | null;
 };
 
 export type QueryScheduleItemsInput = {
@@ -113,6 +114,10 @@ export async function queryScheduleItems(
   return rows.map(({ item, planTitle, startedAt }) => {
     const entry = item.planSnapshot?.entry;
     const title = typeof entry === "object" && entry !== null && "title" in entry && typeof entry.title === "string" ? entry.title : planTitle;
+    const description =
+      typeof entry === "object" && entry !== null && "description" in entry && typeof (entry as { description?: unknown }).description === "string"
+        ? (entry as { description: string }).description
+        : null;
     return {
       id: item.id,
       planId: item.planId,
@@ -130,6 +135,7 @@ export async function queryScheduleItems(
       planTitle,
       priority: item.priority,
       startedAt,
+      description,
     };
   });
 }

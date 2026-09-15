@@ -30,12 +30,14 @@ export const goalDefinitions = pgTable("goal_definitions", {
   expectedPoints: integer("expected_points"),
   expectedGift: text("expected_gift"),
   notes: text("notes"),
+  horizon: text("horizon").notNull().default("medium"),
   revision: integer("revision").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("goal_definitions_source_check", sql`${table.source} IN ('parent', 'student')`),
   check("goal_definitions_expected_points_check", sql`${table.expectedPoints} IS NULL OR ${table.expectedPoints} >= 0`),
+  check("goal_definitions_horizon_check", sql`${table.horizon} IN ('short', 'medium', 'long')`),
 ]);
 
 export const goalAssignments = pgTable("goal_assignments", {
@@ -77,6 +79,20 @@ export const goalCommands = pgTable("goal_commands", {
   result: text("result").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique("goal_commands_actor_key_unique").on(table.actorId, table.key)]);
+
+export const goalGiftRedemptions = pgTable("goal_gift_redemptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  assignmentId: uuid("assignment_id")
+    .notNull()
+    .references(() => goalAssignments.id),
+  recordedBy: uuid("recorded_by")
+    .notNull()
+    .references(() => users.id),
+  redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("goal_gift_redemptions_assignment_id_unique").on(table.assignmentId),
+]);
 
 export const manualPointAdjustments = pgTable("manual_point_adjustments", {
   id: uuid("id").primaryKey().defaultRandom(),
