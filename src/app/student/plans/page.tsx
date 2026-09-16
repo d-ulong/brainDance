@@ -123,8 +123,7 @@ export default function StudentPlansPage() {
   const [goals, setGoals] = useState<GoalDto[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [todayItems, setTodayItems] = useState<ScheduleItemDto[]>([]);
-  const [openSections, setOpenSections] = useState<Record<"summary" | WorkspaceView, boolean>>({
-    summary: true,
+  const [openSections, setOpenSections] = useState<Record<WorkspaceView, boolean>>({
     schedule: false,
     plans: true,
     goals: false,
@@ -207,7 +206,6 @@ export default function StudentPlansPage() {
       if (requestedView === "schedule" || requestedView === "goals" || requestedView === "plans") {
         setWorkspaceView(requestedView);
         setOpenSections({
-          summary: true,
           schedule: requestedView === "schedule",
           plans: requestedView === "plans",
           goals: requestedView === "goals",
@@ -228,7 +226,7 @@ export default function StudentPlansPage() {
     [todayItems],
   );
 
-  function toggleSection(key: "summary" | WorkspaceView) {
+  function toggleSection(key: WorkspaceView) {
     setOpenSections((current) => ({ ...current, [key]: !current[key] }));
   }
 
@@ -400,28 +398,13 @@ export default function StudentPlansPage() {
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
 
-      <section className="bd-library-toolbar" data-testid="student-growth-workbench">
-        <div className="bd-library-toolbar-copy">
-          <h2>我的成长工作台</h2>
-          <p>积分与任务、日程、计划和目标都在同一页，可按需展开或收起。</p>
-        </div>
-      </section>
-
       <div className="space-y-4">
         <section className="bd-panel" id="workbench-summary" data-testid="workbench-summary">
-          <button
-            type="button"
-            className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
-            aria-expanded={openSections.summary}
-            onClick={() => toggleSection("summary")}
-          >
-            <h2 className="text-lg font-bold">积分余额与今日任务</h2>
-            <span className="text-sm font-semibold text-[var(--bd-primary)]">
-              {openSections.summary ? "收起" : "展开"}
-            </span>
-          </button>
-          {openSections.summary ? (
-            <div className="mt-4">
+          <div className="bd-library-toolbar-copy">
+            <h2>我的成长工作台</h2>
+            <p>在这里查看积分、今日任务，并切换计划、日程和目标。</p>
+          </div>
+          <div className="mt-4">
               <dl className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl bg-[var(--bd-surface-soft)] p-3">
                   <dt className="text-sm text-slate-600">积分余额</dt>
@@ -492,14 +475,12 @@ export default function StudentPlansPage() {
                   <li className="text-sm text-slate-500">今日暂无日程</li>
                 ) : null}
               </ul>
-            </div>
-          ) : null}
-        </section>
+          </div>
 
-        <nav
-          className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--bd-surface-soft)] p-1"
-          aria-label="我的成长工作台"
-        >
+          <nav
+            className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-[var(--bd-surface-soft)] p-1"
+            aria-label="我的成长工作台"
+          >
           {([
             ["plans", "计划"],
             ["schedule", "日程"],
@@ -515,7 +496,8 @@ export default function StudentPlansPage() {
               {label}
             </button>
           ))}
-        </nav>
+          </nav>
+        </section>
 
         <section className={workspaceView === "schedule" ? "bd-panel" : "hidden"} id="workbench-schedule">
           <button
