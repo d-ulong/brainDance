@@ -45,7 +45,7 @@ type DraftEntry = {
   repeatValue: string;
 };
 
-type SectionKey = "summary" | "schedule" | "plans" | "goals";
+type WorkspaceView = "plans" | "schedule" | "goals";
 
 const horizonLabel = { short: "近期", medium: "中期", long: "远期" } as const;
 
@@ -123,12 +123,13 @@ export default function StudentPlansPage() {
   const [goals, setGoals] = useState<GoalDto[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [todayItems, setTodayItems] = useState<ScheduleItemDto[]>([]);
-  const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
+  const [openSections, setOpenSections] = useState<Record<"summary" | WorkspaceView, boolean>>({
     summary: true,
-    schedule: true,
+    schedule: false,
     plans: true,
-    goals: true,
+    goals: false,
   });
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("plans");
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -204,16 +205,12 @@ export default function StudentPlansPage() {
       setStudentId(session.userId);
       const requestedView = new URLSearchParams(window.location.search).get("view");
       if (requestedView === "schedule" || requestedView === "goals" || requestedView === "plans") {
+        setWorkspaceView(requestedView);
         setOpenSections({
           summary: true,
           schedule: requestedView === "schedule",
           plans: requestedView === "plans",
           goals: requestedView === "goals",
-        });
-        requestAnimationFrame(() => {
-          document
-            .getElementById(`workbench-${requestedView}`)
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
         });
       }
       try {
@@ -231,8 +228,16 @@ export default function StudentPlansPage() {
     [todayItems],
   );
 
-  function toggleSection(key: SectionKey) {
+  function toggleSection(key: "summary" | WorkspaceView) {
     setOpenSections((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function switchWorkspaceView(next: WorkspaceView) {
+    setWorkspaceView(next);
+    setOpenSections((current) => ({ ...current, [next]: true }));
+    router.replace(next === "plans" ? "/student/plans" : `/student/plans?view=${next}`, {
+      scroll: false,
+    });
   }
 
   async function proposeGoal(event: React.FormEvent) {
@@ -491,7 +496,28 @@ export default function StudentPlansPage() {
           ) : null}
         </section>
 
-        <section className="bd-panel" id="workbench-schedule">
+        <nav
+          className="grid grid-cols-3 gap-1 rounded-xl bg-[var(--bd-surface-soft)] p-1"
+          aria-label="我的成长工作台"
+        >
+          {([
+            ["plans", "计划"],
+            ["schedule", "日程"],
+            ["goals", "目标"],
+          ] as const).map(([view, label]) => (
+            <button
+              key={view}
+              type="button"
+              className={`min-h-11 rounded-lg px-3 font-bold ${workspaceView === view ? "bg-white text-[var(--bd-primary)] shadow" : "text-slate-700"}`}
+              aria-pressed={workspaceView === view}
+              onClick={() => switchWorkspaceView(view)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <section className={workspaceView === "schedule" ? "bd-panel" : "hidden"} id="workbench-schedule">
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
@@ -510,7 +536,7 @@ export default function StudentPlansPage() {
           ) : null}
         </section>
 
-        <section className="bd-panel" id="workbench-plans">
+        <section className={workspaceView === "plans" ? "bd-panel" : "hidden"} id="workbench-plans">
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
@@ -601,7 +627,7 @@ export default function StudentPlansPage() {
           ) : null}
         </section>
 
-        <section className="bd-panel" id="workbench-goals">
+        <section className={workspaceView === "goals" ? "bd-panel" : "hidden"} id="workbench-goals">
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
