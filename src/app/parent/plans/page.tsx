@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
@@ -45,8 +45,30 @@ type Draft = {
   points: string[];
 };
 type Action = { plan: PlanLibraryDto; kind: "bind" | "generate" } | null;
+type ActivationSummary = {
+  itemsCreated: number;
+  matchedOccurrences: number;
+  generatedFrom: string;
+  generatedThrough: string;
+};
 function maxDate(...dates: string[]) {
   return dates.reduce((latest, date) => (date > latest ? date : latest));
+}
+function minDate(...dates: string[]) {
+  return dates.reduce((earliest, date) => (date < earliest ? date : earliest));
+}
+function formatActivationSummary(prefix: string, results: ActivationSummary[]) {
+  const itemsCreated = results.reduce((sum, result) => sum + result.itemsCreated, 0);
+  const matchedOccurrences = results.reduce((sum, result) => sum + result.matchedOccurrences, 0);
+  const generatedFrom = minDate(...results.map((result) => result.generatedFrom));
+  const generatedThrough = maxDate(...results.map((result) => result.generatedThrough));
+  if (itemsCreated > 0) {
+    return `${prefix}，生成 ${itemsCreated} 项日程（实际日期 ${generatedFrom} 至 ${generatedThrough}）`;
+  }
+  if (matchedOccurrences === 0) {
+    return `${prefix}，未新增日程：该重复规则在 ${generatedFrom} 至 ${generatedThrough} 范围内没有匹配日期`;
+  }
+  return `${prefix}，未新增日程：幂等回放（实际日期 ${generatedFrom} 至 ${generatedThrough}）`;
 }
 function earliestGenerateDate(plan: PlanLibraryDto, studentIds: string[]) {
   const selectedBindings = plan.bindings.filter((binding) => studentIds.includes(binding.studentId));
@@ -138,13 +160,22 @@ function drafts(plan: PlanDefinitionDto): Draft[] {
 }
 
 export default function ParentPlansPage() {
+  return (
+    <Suspense fallback={<PageShell title="计划"><LoadingState /></PageShell>}>
+      <ParentPlansPageContent />
+    </Suspense>
+  );
+}
+
+function ParentPlansPageContent() {
   const router = useRouter();
   const params = useParams<{ studentId?: string }>();
+  const searchParams = useSearchParams();
   const contextStudentId = params.studentId;
+  const selfOnly = searchParams.get("scope") === "self";
   const [plans, setPlans] = useState<PlanLibraryDto[]>([]);
   const [students, setStudents] = useState<LinkedStudentDto[]>([]);
   const [selfOption, setSelfOption] = useState<LinkedStudentDto | null>(null);
-  const [selfOnly, setSelfOnly] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(today());
@@ -179,7 +210,6 @@ export default function ParentPlansPage() {
       const session = await fetchSession();
       if (!session || session.role !== "parent") return router.replace("/login");
       setSelfOption({ studentId: session.userId, displayName: `${session.displayName || session.account || "我"}（我的个人计划）`, username: session.account ?? null });
-      setSelfOnly(new URLSearchParams(window.location.search).get("scope") === "self");
       try {
         await load();
       } catch (cause) {
@@ -229,10 +259,7 @@ export default function ParentPlansPage() {
       ),
     );
   async function activateStudents(planId: string, studentIds: string[]) {
-    const results = await Promise.all(
-      studentIds.map((studentId) => activatePlanLibrary(planId, studentId)),
-    );
-    return results.reduce((sum, result) => sum + result.itemsCreated, 0);
+    return Promise.all(studentIds.map((studentId) => activatePlanLibrary(planId, studentId)));
   }
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -243,17 +270,17 @@ export default function ParentPlansPage() {
       const result = editing
         ? await updatePlanLibrary(editing.id, editing.revision, planDefinition, Number(priority))
         : await savePlanLibrary(planDefinition, Number(priority));
-      const itemsCreated =
-        !editing && selectedStudents.length
-          ? await activateStudents(result.plan.id, selectedStudents)
-          : 0;
-      setMessage(
-        selectedStudents.length && !editing
-          ? `计划已保存并绑定 ${selectedStudents.length} 名学生，生成 ${itemsCreated} 项日程`
-          : editing
-            ? "计划已更新，历史执行记录保持不变"
-            : "计划已保存",
-      );
+      if (!editing && selectedStudents.length) {
+        const activationResults = await activateStudents(result.plan.id, selectedStudents);
+        setMessage(
+          formatActivationSummary(
+            `计划已保存并绑定 ${selectedStudents.length} 名学生`,
+            activationResults,
+          ),
+        );
+      } else {
+        setMessage(editing ? "计划已更新，历史执行记录保持不变" : "计划已保存");
+      }
       setFormOpen(false);
       resetForm();
       await load();
@@ -278,19 +305,32 @@ export default function ParentPlansPage() {
     setSaving(true);
     try {
       if (action.kind === "bind") {
-        const itemsCreated = await activateStudents(action.plan.id, actionStudents);
-        setMessage(`已绑定 ${actionStudents.length} 名学生，生成 ${itemsCreated} 项日程`);
+        const activationResults = await activateStudents(action.plan.id, actionStudents);
+        setMessage(
+          formatActivationSummary(`已绑定 ${actionStudents.length} 名学生`, activationResults),
+        );
       } else {
         const results = await Promise.all(
           actionStudents.map((studentId) =>
             generatePlanLibraryRange(action.plan.id, studentId, rangeFrom, rangeThrough),
           ),
         );
+        const itemsCreated = results.reduce((sum, result) => sum + result.itemsCreated, 0);
         const generatedFrom = results[0]?.generatedFrom;
         const generatedThrough = results[0]?.generatedThrough;
-        setMessage(
-          `已为 ${actionStudents.length} 名学生生成 ${results.reduce((sum, result) => sum + result.itemsCreated, 0)} 项日程${generatedFrom && generatedThrough ? `（实际日期 ${generatedFrom} 至 ${generatedThrough}）` : ""}`,
-        );
+        if (itemsCreated > 0) {
+          setMessage(
+            `已为 ${actionStudents.length} 名学生生成 ${itemsCreated} 项日程${generatedFrom && generatedThrough ? `（实际日期 ${generatedFrom} 至 ${generatedThrough}）` : ""}`,
+          );
+        } else if (results.every((result) => result.idempotentReplay)) {
+          setMessage(
+            `未新增日程：幂等回放${generatedFrom && generatedThrough ? `（实际日期 ${generatedFrom} 至 ${generatedThrough}）` : ""}`,
+          );
+        } else {
+          setMessage(
+            `未新增日程：该重复规则在${generatedFrom && generatedThrough ? ` ${generatedFrom} 至 ${generatedThrough}` : "所选"}范围内没有匹配日期`,
+          );
+        }
       }
       setAction(null);
       await load();

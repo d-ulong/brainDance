@@ -26,18 +26,21 @@ Delivered goal horizon + immutable gift redemption, plan entry description (max 
 - Plan library list projects generatedDatesByStudent from distinct schedule_items.family_date facts.
 - Pure helpers compactFamilyDates / formatCompactDateSegments / truncateSegments + CompactGeneratedDates expand UI.
 
+## Remediation (this commit)
+
+- Applied additive `0044` on confirmed local `localhost/braindance` after verifying missing `horizon` / `goal_gift_redemptions`.
+- Fixed `listStudentPlanLibrary` generated-id mapping to `row.library.id` (typecheck `never`).
+- Parent goals/plans: `selfOnly` derived from `useSearchParams()` (Suspense-wrapped), not lagged effect state.
+- `activatePlanLibrary` shifts the 15-day window to `definition.startDate` when later than the default/from date; returns `generatedFrom`/`generatedThrough`/`matchedOccurrences` and actual inserted `itemsCreated`; UI messages cover count, range, empty recurrence, and idempotent replay.
+- Shared Modal: sticky title/close bar; body scrolls independently.
+- Student workbench load uses `Promise.allSettled` so goals/plan-library failures do not blank the whole page.
+- Added route/integration/E2E coverage for the above.
+
 ## Verification
 
-Isolated `DATABASE_URL=postgresql://braindance:braindance@localhost:5432/braindance_test` (never default `braindance`). Gift suite also uses `openIsolatedM2Database()`.
+Isolated `DATABASE_URL=postgresql://braindance:braindance@localhost:5432/braindance_test` (never default `braindance`).
 
 ```text
-pnpm test -- tests/unit/schedule/compact-family-dates.test.ts tests/unit/schedule/plan-definition.test.ts
--> 2 files / 46 tests passed
-
-pnpm test -- tests/integration/goals/goal-horizon-and-gift-redemption.test.ts tests/integration/settlement/goals-and-manual-penalties.test.ts tests/integration/schedule/plan-library.test.ts
--> 3 files / 15 tests passed
+pnpm typecheck
+pnpm test -- tests/integration/schedule/plan-library.test.ts tests/integration/api/goals-and-plan-library-routes.test.ts tests/integration/goals/goal-horizon-and-gift-redemption.test.ts tests/unit/schedule/compact-family-dates.test.ts
 ```
-
-## Known limits
-- No new Playwright E2E for workbench tabs removal / parent self nav / answer media; covered by page wiring + existing MediaPreviewList capability path.
-- Gift redemption concurrency relies on unique assignment_id; focused tests cover idempotent replay and payload conflict.

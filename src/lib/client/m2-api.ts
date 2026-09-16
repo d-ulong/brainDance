@@ -353,7 +353,10 @@ export async function activatePlanLibrary(
     activationId: string;
     planId: string;
     itemsCreated: number;
+    matchedOccurrences: number;
     effectiveFrom: string;
+    generatedFrom: string;
+    generatedThrough: string;
   }>(`/api/plan-library/${libraryId}/activate`, {
     method: "POST",
     idempotencyKeyPrefix: "activate-plan-library",

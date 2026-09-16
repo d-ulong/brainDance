@@ -33,7 +33,7 @@ test.describe("plan and push library forms", () => {
     await page.getByRole("button", { name: "添加学生" }).click();
     await chooseStudents(page, ["E2E Student", "E2E Second Student"]);
     await page.getByRole("button", { name: "绑定所选学生" }).click();
-    await expect(page.getByText("已绑定 2 名学生")).toBeVisible();
+    await expect(page.getByText(/已绑定 2 名学生，生成 \d+ 项日程（实际日期 /)).toBeVisible();
     await expect(page.getByRole("button", { name: /E2E Student ×/ })).toBeVisible();
     await expect(page.getByRole("button", { name: /E2E Second Student ×/ })).toBeVisible();
 
@@ -42,6 +42,7 @@ test.describe("plan and push library forms", () => {
         response.url().includes("/bindings/") && response.request().method() === "DELETE",
     );
     await page.getByRole("button", { name: /E2E Student ×/ }).click();
+    await page.getByRole("button", { name: "确认移除" }).click();
     expect((await remove).ok()).toBeTruthy();
     await expect(page.getByRole("button", { name: /E2E Student ×/ })).toHaveCount(0);
 

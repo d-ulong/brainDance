@@ -260,7 +260,7 @@ export async function listStudentPlanLibrary(
   );
   const generatedByLibrary = await loadGeneratedDatesByLibrary(
     db,
-    libraries.map((row) => ("library" in row ? row.library.id : row.id)),
+    libraries.map((row) => row.library.id),
   );
   return libraries.map(({ library, ownerName }) => ({
     ...library,
@@ -517,8 +517,8 @@ export async function activatePlanLibrary(
     throw new ScheduleError("FORBIDDEN", "学生只能为自己启用计划");
   const now = input.now ?? new Date();
   const today = toFamilyDate(now);
-  const effectiveFrom = input.effectiveFrom ?? addFamilyDays(today, 1);
-  if (effectiveFrom < today) throw new ScheduleError("WINDOW_EXPIRED", "不能为过去日期切换计划");
+  const requestedFrom = input.effectiveFrom ?? addFamilyDays(today, 1);
+  if (requestedFrom < today) throw new ScheduleError("WINDOW_EXPIRED", "不能为过去日期切换计划");
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
     const [library] = await tx
@@ -531,6 +531,9 @@ export async function activatePlanLibrary(
     const definition = input.ownerId === input.studentId
       ? withoutStudentAwardPoints(storedDefinition)
       : storedDefinition;
+    // Default 15-day window must start where the plan can actually produce dates.
+    const effectiveFrom =
+      definition.startDate > requestedFrom ? definition.startDate : requestedFrom;
     const payloadHash = hashIdempotencyPayload({
       libraryId: input.libraryId,
       studentId: input.studentId,
@@ -645,10 +648,12 @@ export async function activatePlanLibrary(
         revision: library.revision,
       })
       .returning();
-    const through = addFamilyDays(effectiveFrom, 14);
-    const occurrences = generatePlanOccurrences(definition, effectiveFrom, through);
+    const generatedFrom = effectiveFrom;
+    const generatedThrough = addFamilyDays(effectiveFrom, 14);
+    const occurrences = generatePlanOccurrences(definition, generatedFrom, generatedThrough);
+    let insertedItems: { id: string; slotKey: string }[] = [];
     if (occurrences.length) {
-      const insertedItems = await tx
+      insertedItems = await tx
         .insert(scheduleItems)
         .values(
           occurrences.map(({ entry, familyDate, scheduledAt }) => ({
@@ -708,8 +713,11 @@ export async function activatePlanLibrary(
     return {
       activationId: activation!.id,
       planId: executionPlan.id,
-      itemsCreated: occurrences.length,
+      itemsCreated: insertedItems.length,
+      matchedOccurrences: occurrences.length,
       effectiveFrom,
+      generatedFrom,
+      generatedThrough,
     };
   });
 }

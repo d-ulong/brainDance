@@ -27,8 +27,10 @@ export function Modal({
       aria-modal="true"
       aria-labelledby={labelledBy}
     >
-      <section className={`max-h-[calc(100vh-2rem)] w-full ${size === "wide" ? "max-w-5xl" : "max-w-2xl"} overflow-y-auto rounded-3xl bg-white p-5 shadow-xl`}>
-        <div className="mb-4 flex items-center justify-between gap-3">
+      <section
+        className={`flex max-h-[calc(100vh-2rem)] w-full ${size === "wide" ? "max-w-5xl" : "max-w-2xl"} flex-col overflow-hidden rounded-3xl bg-white shadow-xl`}
+      >
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
           <h2 id={labelledBy} className="text-lg font-bold text-slate-900">
             {title}
           </h2>
@@ -41,7 +43,7 @@ export function Modal({
             ×
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </section>
     </div>
   );

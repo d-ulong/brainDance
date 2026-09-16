@@ -155,16 +155,45 @@ export default function StudentPlansPage() {
 
   const load = useCallback(async (id: string) => {
     const today = todayFamilyDate();
-    const [planResult, goalResult, balanceResult, scheduleResult] = await Promise.all([
+    const [planResult, goalResult, balanceResult, scheduleResult] = await Promise.allSettled([
       fetchPlanLibrary(),
       fetchGoals(),
       fetchPointsBalance(id),
       fetchScheduleItems(id, today, today),
     ]);
-    setPlans(planResult.plans);
-    setGoals(goalResult.goals);
-    setBalance(balanceResult.balance);
-    setTodayItems(scheduleResult.items.filter((item) => item.familyDate === today));
+    const failures: string[] = [];
+    if (planResult.status === "fulfilled") setPlans(planResult.value.plans);
+    else {
+      setPlans([]);
+      failures.push(
+        planResult.reason instanceof ApiError ? planResult.reason.message : "计划库加载失败",
+      );
+    }
+    if (goalResult.status === "fulfilled") setGoals(goalResult.value.goals);
+    else {
+      setGoals([]);
+      failures.push(
+        goalResult.reason instanceof ApiError ? goalResult.reason.message : "目标加载失败",
+      );
+    }
+    if (balanceResult.status === "fulfilled") setBalance(balanceResult.value.balance);
+    else {
+      setBalance(null);
+      failures.push(
+        balanceResult.reason instanceof ApiError ? balanceResult.reason.message : "积分余额加载失败",
+      );
+    }
+    if (scheduleResult.status === "fulfilled") {
+      setTodayItems(scheduleResult.value.items.filter((item) => item.familyDate === today));
+    } else {
+      setTodayItems([]);
+      failures.push(
+        scheduleResult.reason instanceof ApiError
+          ? scheduleResult.reason.message
+          : "今日任务加载失败",
+      );
+    }
+    if (failures.length) setError(failures.join("；"));
   }, []);
 
   useEffect(() => {
@@ -290,7 +319,19 @@ export default function StudentPlansPage() {
       } else {
         const result = await savePlanLibrary(planDefinition, Number(priority));
         const activation = await activatePlanLibrary(result.plan.id, studentId, startDate);
-        setMessage(`计划已启用，并生成 ${activation.itemsCreated} 项日程`);
+        if (activation.itemsCreated > 0) {
+          setMessage(
+            `计划已启用，并生成 ${activation.itemsCreated} 项日程（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
+          );
+        } else if (activation.matchedOccurrences === 0) {
+          setMessage(
+            `计划已启用，未新增日程：该重复规则在 ${activation.generatedFrom} 至 ${activation.generatedThrough} 范围内没有匹配日期`,
+          );
+        } else {
+          setMessage(
+            `计划已启用，未新增日程：幂等回放（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
+          );
+        }
       }
       setFormOpen(false);
       await load(studentId);
@@ -326,7 +367,11 @@ export default function StudentPlansPage() {
         rangeThrough,
       );
       setMessage(
-        `已生成 ${result.itemsCreated} 项日程（${result.generatedFrom} 至 ${result.generatedThrough}）`,
+        result.itemsCreated > 0
+          ? `已生成 ${result.itemsCreated} 项日程（${result.generatedFrom} 至 ${result.generatedThrough}）`
+          : result.idempotentReplay
+            ? `未新增日程：幂等回放（${result.generatedFrom} 至 ${result.generatedThrough}）`
+            : `未新增日程：该重复规则在 ${result.generatedFrom} 至 ${result.generatedThrough} 范围内没有匹配日期`,
       );
       setGenerating(null);
       await load(studentId);
@@ -350,7 +395,7 @@ export default function StudentPlansPage() {
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
 
-      <section className="bd-library-toolbar">
+      <section className="bd-library-toolbar" data-testid="student-growth-workbench">
         <div className="bd-library-toolbar-copy">
           <h2>我的成长工作台</h2>
           <p>积分与任务、日程、计划和目标都在同一页，可按需展开或收起。</p>
@@ -358,7 +403,7 @@ export default function StudentPlansPage() {
       </section>
 
       <div className="space-y-4">
-        <section className="bd-panel" id="workbench-summary">
+        <section className="bd-panel" id="workbench-summary" data-testid="workbench-summary">
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
@@ -396,6 +441,7 @@ export default function StudentPlansPage() {
                     <li key={item.id}>
                       <button
                         type="button"
+                        data-testid={`today-task-${item.id}`}
                         className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl px-3 text-left ${
                           completed
                             ? "border border-emerald-300 bg-emerald-50 text-emerald-900"
@@ -409,6 +455,7 @@ export default function StudentPlansPage() {
                       >
                         <span className="font-semibold">{item.title}</span>
                         <span
+                          data-testid={`today-task-status-${item.id}`}
                           className={`text-sm font-bold ${completed ? "text-emerald-700" : "text-slate-600"}`}
                         >
                           {scheduleStatusLabel(item.effectiveStatus)}

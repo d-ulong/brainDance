@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorDialog } from "@/components/ui/error-dialog";
@@ -37,10 +37,11 @@ const goalStatus: Record<GoalDto["status"], string> = {
   failed: "未达成",
 };
 
-export default function ParentGoalsPage() {
+function ParentGoalsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const selfOnly = searchParams.get("scope") === "self";
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [selfOnly, setSelfOnly] = useState(false);
   const [students, setStudents] = useState<LinkedStudentDto[]>([]);
   const [goals, setGoals] = useState<GoalDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +86,6 @@ export default function ParentGoalsPage() {
       const current = await fetchSession();
       if (!current || current.role !== "parent") return router.replace("/login");
       setSession(current);
-      setSelfOnly(new URLSearchParams(window.location.search).get("scope") === "self");
       try { await load(); } catch (cause) { setError(cause instanceof ApiError ? cause.message : "无法加载目标"); }
       finally { setLoading(false); }
     })();
@@ -234,4 +234,12 @@ export default function ParentGoalsPage() {
     {confirmPenalty ? <ConfirmDialog title="确认惩罚扣分" tone="danger" busy={busy} message={`将从当前余额 ${penaltyBalance} 分中扣除 ${penaltyPoints} 分。原因：${penaltyReason}`} confirmLabel="确认扣分" onClose={() => setConfirmPenalty(false)} onConfirm={() => void applyPenalty()} /> : null}
     {reversing ? <Modal title="全额撤销扣分" layer="critical" onClose={() => setReversing(null)}><Field label="撤销原因（2–200 字）"><textarea className="min-h-24 w-full rounded-2xl border p-3" value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} /></Field><div className="mt-4 flex justify-end gap-2"><SecondaryButton onClick={() => setReversing(null)}>取消</SecondaryButton><PrimaryButton disabled={busy || reverseReason.trim().length < 2} onClick={() => void applyReversal()}>确认全额撤销</PrimaryButton></div></Modal> : null}
   </PageShell>;
+}
+
+export default function ParentGoalsPage() {
+  return (
+    <Suspense fallback={<PageShell title="目标"><LoadingState /></PageShell>}>
+      <ParentGoalsPageContent />
+    </Suspense>
+  );
 }

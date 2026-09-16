@@ -22,8 +22,7 @@ test.describe("student plans and calendar workspace", () => {
     expect(viewport.scroll).toBeLessThanOrEqual(viewport.client + 1);
 
     await page.goto("/account");
-    await expect(page.getByRole("link", { name: /我的日程/ })).toBeVisible();
-    await expect(page.getByRole("link", { name: /我的计划/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /计划日程/ })).toBeVisible();
 
     await page.goto("/student/plans");
     await page.getByTestId("student-plan-create").click();

@@ -532,4 +532,47 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     expect(projected?.description).toBe("先完成今日阅读笔记");
   });
 
+  it("auto-generates the next 15 applicable days when plan startDate is beyond default activate window", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const farStart = "2026-03-01";
+    const saved = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition: {
+        title: "三月阅读",
+        startDate: farStart,
+        entries: [
+          {
+            key: "reading",
+            title: "阅读",
+            expectedTime: "19:00",
+            durationMinutes: null,
+            repeat: { kind: "daily" },
+            points: { onTimeWithin: 1, onTimeOver: 0, lateWithin: 0, lateOver: 0, incomplete: 0 },
+          },
+        ],
+      },
+      idempotencyKey: "far-start-library",
+    });
+    const activated = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      idempotencyKey: "far-start-activate",
+      now: FIXED_NOW,
+    });
+    expect(activated.effectiveFrom).toBe(farStart);
+    expect(activated.generatedFrom).toBe(farStart);
+    expect(activated.generatedThrough).toBe("2026-03-15");
+    expect(activated.itemsCreated).toBe(15);
+    expect(activated.matchedOccurrences).toBe(15);
+    const rows = await db
+      .select({ familyDate: scheduleItems.familyDate })
+      .from(scheduleItems)
+      .where(eq(scheduleItems.planId, activated.planId));
+    expect(rows).toHaveLength(15);
+    expect(rows.map((row) => row.familyDate).sort()).toEqual(
+      expect.arrayContaining(["2026-03-01", "2026-03-15"]),
+    );
+  });
+
 });
