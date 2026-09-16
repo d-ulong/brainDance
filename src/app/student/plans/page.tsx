@@ -225,6 +225,10 @@ export default function StudentPlansPage() {
     () => todayItems.filter((item) => item.effectiveStatus === "completed").length,
     [todayItems],
   );
+  const completedItems = useMemo(
+    () => todayItems.filter((item) => item.effectiveStatus === "completed"),
+    [todayItems],
+  );
 
   function toggleSection(key: WorkspaceView) {
     setOpenSections((current) => ({ ...current, [key]: !current[key] }));
@@ -400,9 +404,28 @@ export default function StudentPlansPage() {
 
       <div className="space-y-4">
         <section className="bd-panel" id="workbench-summary" data-testid="workbench-summary">
-          <div className="bd-library-toolbar-copy">
-            <h2>我的成长工作台</h2>
-            <p>在这里查看积分、今日任务，并切换计划、日程和目标。</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="bd-library-toolbar-copy">
+              <h2>我的成长工作台</h2>
+              <p>在这里查看积分和今日进度。</p>
+            </div>
+            <nav className="flex shrink-0 gap-1 rounded-lg bg-[var(--bd-surface-soft)] p-1" aria-label="我的成长工作台">
+              {([
+                ["plans", "计划"],
+                ["schedule", "日程"],
+                ["goals", "目标"],
+              ] as const).map(([view, label]) => (
+                <button
+                  key={view}
+                  type="button"
+                  className={`min-h-8 rounded-md px-2.5 text-sm font-semibold ${workspaceView === view ? "bg-white text-[var(--bd-primary)] shadow" : "text-slate-700"}`}
+                  aria-pressed={workspaceView === view}
+                  onClick={() => switchWorkspaceView(view)}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
           </div>
           <div className="mt-4">
               <dl className="grid gap-3 sm:grid-cols-3">
@@ -422,8 +445,8 @@ export default function StudentPlansPage() {
                 </div>
               </dl>
               <ul className="mt-4 space-y-2">
-                {todayItems.map((item) => {
-                  const completed = item.effectiveStatus === "completed";
+                {completedItems.map((item) => {
+                  const completed = true;
                   const open = detailItemId === item.id;
                   return (
                     <li key={item.id}>
@@ -471,32 +494,11 @@ export default function StudentPlansPage() {
                     </li>
                   );
                 })}
-                {!todayItems.length ? (
-                  <li className="text-sm text-slate-500">今日暂无日程</li>
+                {!completedItems.length ? (
+                  <li className="text-sm text-slate-500">今日还没有已完成任务</li>
                 ) : null}
               </ul>
           </div>
-
-          <nav
-            className="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-[var(--bd-surface-soft)] p-1"
-            aria-label="我的成长工作台"
-          >
-          {([
-            ["plans", "计划"],
-            ["schedule", "日程"],
-            ["goals", "目标"],
-          ] as const).map(([view, label]) => (
-            <button
-              key={view}
-              type="button"
-              className={`min-h-11 rounded-lg px-3 font-bold ${workspaceView === view ? "bg-white text-[var(--bd-primary)] shadow" : "text-slate-700"}`}
-              aria-pressed={workspaceView === view}
-              onClick={() => switchWorkspaceView(view)}
-            >
-              {label}
-            </button>
-          ))}
-          </nav>
         </section>
 
         <section className={workspaceView === "schedule" ? "bd-panel" : "hidden"} id="workbench-schedule">
