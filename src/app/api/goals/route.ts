@@ -8,13 +8,33 @@ import { createGoals, listGoals } from "@/modules/goals/goal.service";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
+function errorResponse(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "42P01" || error.code === "42703")
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "GOALS_UNAVAILABLE",
+          message: "目标模块尚未迁移到当前数据库，请先完成数据库迁移。",
+        },
+      },
+      { status: 503 },
+    );
+  }
+  const { status, body } = toRouteErrorResponse(error);
+  return NextResponse.json(body, { status });
+}
+
 export async function GET() {
   try {
     const { db, dbUser } = await requireTraineeSession();
     return NextResponse.json({ goals: await listGoals(db, dbUser.id) });
   } catch (error) {
-    const { status, body } = toRouteErrorResponse(error);
-    return NextResponse.json(body, { status });
+    return errorResponse(error);
   }
 }
 
@@ -34,7 +54,6 @@ export async function POST(request: Request) {
     }).parse(await request.json());
     return NextResponse.json(await createGoals(db, { actorId: dbUser.id, ...input, idempotencyKey: key.key }));
   } catch (error) {
-    const { status, body } = toRouteErrorResponse(error);
-    return NextResponse.json(body, { status });
+    return errorResponse(error);
   }
 }
