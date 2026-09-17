@@ -1,38 +1,53 @@
 @echo off
 setlocal EnableExtensions
+chcp 65001 >nul
 cd /d "%~dp0.."
 set "ROOT=%CD%"
 
 where pnpm >nul 2>&1
 if errorlevel 1 (
-  echo pnpm 未在 PATH 中。请先安装 Node.js 20+ 和 pnpm，再运行本脚本。
+  echo [ERROR] pnpm not found in PATH. Install Node.js 20+ and pnpm first.
   pause
   exit /b 1
 )
 
+REM Production launcher: web on port 80 + lifecycle worker.
+REM Optional: scripts\start-web-and-worker.bat dev  ^(local 3002^)
 set "MODE=%~1"
-if "%MODE%"=="" set "MODE=dev"
+if "%MODE%"=="" set "MODE=start"
 
-if /I "%MODE%"=="dev" (
+if /I "%MODE%"=="start" (
+  set "PORT=80"
+  set "HOST=0.0.0.0"
+  set "WEB_CMD=pnpm start -- -H 0.0.0.0 -p 80"
+  set "APP_URL=http://localhost/"
+) else if /I "%MODE%"=="dev" (
+  set "PORT=3002"
+  set "HOST=127.0.0.1"
   set "WEB_CMD=pnpm dev"
-) else if /I "%MODE%"=="start" (
-  set "WEB_CMD=pnpm start -- -p 3002"
+  set "APP_URL=http://localhost:3002/"
 ) else (
-  echo 用法:
-  echo   双击或: scripts\start-web-and-worker.bat
-  echo   生产已构建后: scripts\start-web-and-worker.bat start
+  echo Usage:
+  echo   scripts\start-web-and-worker.bat
+  echo   scripts\start-web-and-worker.bat start
+  echo   scripts\start-web-and-worker.bat dev
   pause
   exit /b 1
 )
 
-echo 仓库: %ROOT%
-echo 将打开两个窗口：网站 ^(%WEB_CMD%^) 和 Worker ^(pnpm worker:lifecycle^)
-echo 关掉对应窗口即停止该进程。网站地址: http://localhost:3002
+echo Repo: %ROOT%
+echo Mode: %MODE%
+echo Web:  %WEB_CMD%
+echo Worker: pnpm worker:lifecycle
+echo URL:  %APP_URL%
+echo.
+echo Note: port 80 on Windows usually needs "Run as administrator".
+echo Close each window to stop that process.
 echo.
 
-start "BrainDance Web" cmd /k "cd /d "%ROOT%" && %WEB_CMD%"
-start "BrainDance Worker" cmd /k "cd /d "%ROOT%" && pnpm worker:lifecycle"
+start "BrainDance Web" cmd /k "chcp 65001 >nul & cd /d "%ROOT%" & set PORT=%PORT% & %WEB_CMD%"
+start "BrainDance Worker" cmd /k "chcp 65001 >nul & cd /d "%ROOT%" & pnpm worker:lifecycle"
 
-echo 两个窗口已启动。本窗口可以关闭。
+echo Started. You can close this window.
 pause
 endlocal
