@@ -321,3 +321,24 @@ Completed the accumulated family planning, push, schedule, goal, account and UI 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: Student planning goals UX wrap-up
+
+**Date**: 2026-09-17
+**Task**: Student planning goals UX wrap-up
+**Branch**: `main`
+
+### Summary
+
+Archived 09-15-student-planning-goals; shipped schedule/training/push UX through docs v3.2.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b03a2f9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
