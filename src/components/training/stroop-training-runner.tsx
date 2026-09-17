@@ -14,6 +14,10 @@ import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { createPendingStimulusGate } from "@/components/training/pending-stimulus-gate";
 import {
+  TrainingTrialProgress,
+  type TrialOutcome,
+} from "@/components/training/training-trial-progress";
+import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
@@ -40,6 +44,7 @@ export function StroopTrainingRunner({
   const [awaitingResponse, setAwaitingResponse] = useState(false);
   const [currentTrial, setCurrentTrial] = useState<StroopTrialPlan | null>(null);
   const [trials, setTrials] = useState<StroopTrialPlan[]>([]);
+  const [outcomes, setOutcomes] = useState<TrialOutcome[]>([]);
   const stimulusShownAtRef = useRef(0);
   const isInteractionAllowed = lifecycle.isInteractionAllowed;
   const stimulusGateRef = useRef(createPendingStimulusGate(() => isInteractionAllowed()));
@@ -91,11 +96,21 @@ export function StroopTrainingRunner({
 
       setAwaitingResponse(false);
 
+      const expectedColor =
+        currentTrial.taskMode === "name_ink" ? currentTrial.inkColor : currentTrial.wordColor;
+      const correct = selectedColor === expectedColor;
+
       try {
         await lifecycle.appendEvent("trial.response", {
           trialIndex: currentTrial.trialIndex,
           selectedColor,
           inputMethod,
+        });
+
+        setOutcomes((prev) => {
+          const next = [...prev];
+          next[trialIndex] = correct ? "correct" : "incorrect";
+          return next;
         });
 
         const nextIndex = trialIndex + 1;
@@ -126,6 +141,7 @@ export function StroopTrainingRunner({
     if (!started) return;
     const plan = buildStroopTrialPlan(started.ageBand, difficulty);
     setTrials(plan);
+    setOutcomes(Array.from({ length: plan.length }, () => null));
     setTrialIndex(0);
     setPhase("running");
     await showStimulus(plan[0]!);
@@ -164,12 +180,8 @@ export function StroopTrainingRunner({
   return (
     <PageShell
       title="Stroop 抑制"
-      subtitle={
-        phase === "intro"
-          ? "说明与难度"
-          : `第 ${Math.min(trialIndex + 1, trials.length || 1)} / ${trials.length || "—"} 次`
-      }
-      subtitleKind="status"
+      subtitle={phase === "intro" ? "说明与难度" : undefined}
+      subtitleKind={phase === "intro" ? "status" : "help"}
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
@@ -233,6 +245,11 @@ export function StroopTrainingRunner({
         </section>
       ) : (
         <>
+          <TrainingTrialProgress
+            total={trials.length}
+            currentIndex={trialIndex}
+            outcomes={outcomes}
+          />
           {currentTrial ? (
             <div
               className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-neutral-300 bg-white p-4"

@@ -5,6 +5,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { createPendingStimulusGate } from "@/components/training/pending-stimulus-gate";
 import {
+  TrainingTrialProgress,
+  type TrialOutcome,
+} from "@/components/training/training-trial-progress";
+import {
   useTrainingSessionLifecycle,
   useKeyboardAction,
   type TrainingSessionLifecycleOptions,
@@ -58,6 +62,7 @@ export function ReactionTrainingRunner({
   });
   const [phase, setPhase] = useState<Phase>("intro");
   const [trialIndex, setTrialIndex] = useState(0);
+  const [outcomes, setOutcomes] = useState<TrialOutcome[]>([]);
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackTone, setFeedbackTone] = useState<"ok" | "bad">("ok");
   const stimulusShownAtRef = useRef(0);
@@ -70,11 +75,23 @@ export function ReactionTrainingRunner({
   const presentStimulusRef = useRef<(index: number) => void>(() => undefined);
   const scheduleWaitRef = useRef<(index: number) => void>(() => undefined);
   const afterTrialRef = useRef<(nextIndex: number) => Promise<void>>(async () => undefined);
+  const recordOutcomeRef = useRef<(index: number, outcome: Exclude<TrialOutcome, null>) => void>(
+    () => undefined,
+  );
   const isInteractionAllowed = lifecycle.isInteractionAllowed;
   const stimulusGateRef = useRef(createPendingStimulusGate(() => isInteractionAllowed()));
 
   phaseRef.current = phase;
   trialIndexRef.current = trialIndex;
+
+  const recordOutcome = useCallback((index: number, outcome: Exclude<TrialOutcome, null>) => {
+    setOutcomes((prev) => {
+      const next = [...prev];
+      next[index] = outcome;
+      return next;
+    });
+  }, []);
+  recordOutcomeRef.current = recordOutcome;
 
   useEffect(() => {
     stimulusGateRef.current = createPendingStimulusGate(() => isInteractionAllowed());
@@ -149,6 +166,7 @@ export function ReactionTrainingRunner({
               inputMethod: "pointer",
               timedOut: true,
             });
+            recordOutcomeRef.current(index, "incorrect");
             showFeedback("太慢（>1000ms）", "bad", 600, () => {
               void afterTrialRef.current(index + 1);
             });
@@ -221,6 +239,7 @@ export function ReactionTrainingRunner({
     const started = await lifecycle.beginSession();
     if (!started) return;
     expectedTrialsRef.current = started.expectedTrialCount || DEFAULT_REACTION_TRIAL_COUNT;
+    setOutcomes(Array.from({ length: expectedTrialsRef.current }, () => null));
     setTrialIndex(0);
     trialIndexRef.current = 0;
     scheduleWaitRef.current(0);
@@ -252,6 +271,7 @@ export function ReactionTrainingRunner({
             inputMethod,
             early: true,
           });
+          recordOutcomeRef.current(currentTrial, "incorrect");
           showFeedback("太早了！", "bad", 700, () => {
             void afterTrialRef.current(currentTrial + 1);
           });
@@ -268,6 +288,7 @@ export function ReactionTrainingRunner({
           correct: true,
           inputMethod,
         });
+        recordOutcomeRef.current(currentTrial, "correct");
         showFeedback(`${Math.round(elapsed)} ms`, "ok", 480, () => {
           void afterTrialRef.current(currentTrial + 1);
         });
@@ -327,12 +348,8 @@ export function ReactionTrainingRunner({
   return (
     <PageShell
       title="反应力训练"
-      subtitle={
-        phase === "intro"
-          ? "说明"
-          : `第 ${Math.min(trialIndex + 1, expectedTrials)} / ${expectedTrials} 次`
-      }
-      subtitleKind="status"
+      subtitle={phase === "intro" ? "说明" : undefined}
+      subtitleKind={phase === "intro" ? "status" : "help"}
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
@@ -371,28 +388,35 @@ export function ReactionTrainingRunner({
           </PrimaryButton>
         </section>
       ) : (
-        <button
-          type="button"
-          data-testid="training-target"
-          data-phase={phase}
-          disabled={interactionLocked || phase === "feedback" || lifecycle.submitting}
-          onClick={(event) => void respond(inputMethodFromClick(event))}
-          className="flex min-h-[220px] w-full flex-col items-center justify-center rounded-2xl border-4 text-lg font-bold disabled:cursor-not-allowed disabled:opacity-60"
-          style={targetStyle}
-        >
-          {phase === "waiting" ? (
-            <span className="text-2xl font-bold">准备…</span>
-          ) : phase === "go" ? (
-            <>
-              <span className="text-5xl font-black tracking-wide">点!</span>
-              <span className="mt-3 text-sm font-semibold">点击或按 Space / Enter</span>
-            </>
-          ) : phase === "feedback" ? (
-            <span className="text-2xl font-bold">{feedbackText}</span>
-          ) : (
-            <span className="text-sm">提交结果中…</span>
-          )}
-        </button>
+        <>
+          <TrainingTrialProgress
+            total={expectedTrials}
+            currentIndex={trialIndex}
+            outcomes={outcomes}
+          />
+          <button
+            type="button"
+            data-testid="training-target"
+            data-phase={phase}
+            disabled={interactionLocked || phase === "feedback" || lifecycle.submitting}
+            onClick={(event) => void respond(inputMethodFromClick(event))}
+            className="flex min-h-[220px] w-full flex-col items-center justify-center rounded-2xl border-4 text-lg font-bold disabled:cursor-not-allowed disabled:opacity-60"
+            style={targetStyle}
+          >
+            {phase === "waiting" ? (
+              <span className="text-2xl font-bold">准备…</span>
+            ) : phase === "go" ? (
+              <>
+                <span className="text-5xl font-black tracking-wide">点!</span>
+                <span className="mt-3 text-sm font-semibold">点击或按 Space / Enter</span>
+              </>
+            ) : phase === "feedback" ? (
+              <span className="text-2xl font-bold">{feedbackText}</span>
+            ) : (
+              <span className="text-sm">提交结果中…</span>
+            )}
+          </button>
+        </>
       )}
       {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
     </PageShell>

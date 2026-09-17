@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { trainingDefinitions } from "@/db/schema";
@@ -86,28 +86,77 @@ export async function getSessionTrainingDefinition(
 
 const CHILD_AGE_BANDS: AgeBand[] = ["5-8", "9-12", "13-18"];
 
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function metricSchemasEqual(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
 async function seedDefinitionRow(
   db: Database,
   trainingKey: string,
   ageBand: TrainingAgeBand,
   metricSchema: Record<string, unknown>,
 ): Promise<void> {
-  await db
-    .insert(trainingDefinitions)
-    .values({
+  await db.transaction(async (tx) => {
+    const [active] = await tx
+      .select()
+      .from(trainingDefinitions)
+      .where(
+        and(
+          eq(trainingDefinitions.trainingKey, trainingKey),
+          eq(trainingDefinitions.ageBand, ageBand),
+          eq(trainingDefinitions.active, 1),
+        ),
+      )
+      .limit(1);
+
+    if (active && metricSchemasEqual(active.metricSchema, metricSchema)) {
+      return;
+    }
+
+    const [latest] = await tx
+      .select({ version: trainingDefinitions.version })
+      .from(trainingDefinitions)
+      .where(
+        and(
+          eq(trainingDefinitions.trainingKey, trainingKey),
+          eq(trainingDefinitions.ageBand, ageBand),
+        ),
+      )
+      .orderBy(desc(trainingDefinitions.version))
+      .limit(1);
+
+    if (active) {
+      await tx
+        .update(trainingDefinitions)
+        .set({ active: 0 })
+        .where(eq(trainingDefinitions.id, active.id));
+    }
+
+    await tx.insert(trainingDefinitions).values({
       trainingKey,
-      version: 1,
+      version: (latest?.version ?? 0) + 1,
       ageBand,
       metricSchema,
       active: 1,
-    })
-    .onConflictDoNothing({
-      target: [
-        trainingDefinitions.trainingKey,
-        trainingDefinitions.version,
-        trainingDefinitions.ageBand,
-      ],
     });
+  });
 }
 
 async function seedDefinitionForKey(
@@ -124,14 +173,10 @@ async function seedDefinitionForKey(
 export async function seedReactionDefinitions(db: Database): Promise<void> {
   const schema = { trialCount: 16 };
   await seedDefinitionForKey(db, REACTION_TRAINING_KEY, () => schema);
-  await refreshActiveMetricSchemas(db, REACTION_TRAINING_KEY, () => schema);
 }
 
 export async function seedStroopDefinitions(db: Database): Promise<void> {
   await seedDefinitionForKey(db, STROOP_TRAINING_KEY, (ageBand) => ({
-    ...DEFAULT_STROOP_SCHEMAS[ageBand],
-  }));
-  await refreshActiveMetricSchemas(db, STROOP_TRAINING_KEY, (ageBand) => ({
     ...DEFAULT_STROOP_SCHEMAS[ageBand],
   }));
 }
@@ -140,29 +185,6 @@ export async function seedDigitSpanDefinitions(db: Database): Promise<void> {
   await seedDefinitionForKey(db, DIGIT_SPAN_TRAINING_KEY, (ageBand) => ({
     ...DEFAULT_DIGIT_SPAN_SCHEMAS[ageBand],
   }));
-  await refreshActiveMetricSchemas(db, DIGIT_SPAN_TRAINING_KEY, (ageBand) => ({
-    ...DEFAULT_DIGIT_SPAN_SCHEMAS[ageBand],
-  }));
-}
-
-/** Keep existing pilot/test active definitions aligned with current defaults. */
-async function refreshActiveMetricSchemas(
-  db: Database,
-  trainingKey: string,
-  metricSchemaForAgeBand: (ageBand: TrainingAgeBand) => Record<string, unknown>,
-): Promise<void> {
-  for (const ageBand of [...CHILD_AGE_BANDS, ADULT_AGE_BAND] as TrainingAgeBand[]) {
-    await db
-      .update(trainingDefinitions)
-      .set({ metricSchema: metricSchemaForAgeBand(ageBand) })
-      .where(
-        and(
-          eq(trainingDefinitions.trainingKey, trainingKey),
-          eq(trainingDefinitions.ageBand, ageBand),
-          eq(trainingDefinitions.active, 1),
-        ),
-      );
-  }
 }
 
 export async function seedM5TrainingDefinitions(db: Database): Promise<void> {

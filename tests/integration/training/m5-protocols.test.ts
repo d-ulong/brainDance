@@ -8,7 +8,8 @@ import {
   REACTION_TRAINING_KEY,
   STROOP_TRAINING_KEY,
 } from "@/modules/training/constants";
-import { getActiveTrainingDefinition } from "@/modules/training/definition.service";
+import { getActiveTrainingDefinition, seedReactionDefinitions } from "@/modules/training/definition.service";
+import { ADULT_AGE_BAND } from "@/modules/training/training-subject";
 import {
   appendTrainingEvent,
   startTrainingSession,
@@ -54,6 +55,42 @@ describe.skipIf(!hasDb)("M5 training protocols", () => {
       expect(stroop.metricSchema).toMatchObject({ trialCount: expect.any(Number) });
       expect(digitSpan.metricSchema).toMatchObject({ forwardMaxLength: expect.any(Number) });
     }
+  });
+
+  it("keeps identical training definitions on reseed and versions metric_schema changes", async () => {
+    await seedReactionDefinitions(db);
+    const first = await getActiveTrainingDefinition(db, REACTION_TRAINING_KEY, ADULT_AGE_BAND);
+    expect(first.version).toBe(1);
+    expect(first.metricSchema).toEqual({ trialCount: 16 });
+
+    await db
+      .update(trainingDefinitions)
+      .set({ active: 0 })
+      .where(eq(trainingDefinitions.id, first.id));
+    const [stale] = await db
+      .insert(trainingDefinitions)
+      .values({
+        trainingKey: REACTION_TRAINING_KEY,
+        version: 2,
+        ageBand: ADULT_AGE_BAND,
+        metricSchema: { trialCount: 5 },
+        active: 1,
+      })
+      .returning();
+
+    await seedReactionDefinitions(db);
+
+    const next = await getActiveTrainingDefinition(db, REACTION_TRAINING_KEY, ADULT_AGE_BAND);
+    expect(next.id).not.toBe(stale.id);
+    expect(next.version).toBe(3);
+    expect(next.metricSchema).toEqual({ trialCount: 16 });
+
+    const [retired] = await db
+      .select()
+      .from(trainingDefinitions)
+      .where(eq(trainingDefinitions.id, stale.id))
+      .limit(1);
+    expect(retired?.active).toBe(0);
   });
 
   it("completes Stroop sessions with typed metrics and interference delta", async () => {

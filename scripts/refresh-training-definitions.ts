@@ -13,7 +13,9 @@ async function main() {
   const client = postgres(url, { max: 1 });
   const db = drizzle(client);
   await seedM5TrainingDefinitions(db as never);
-  console.log("Refreshed active training definition schemas (reaction/stroop/digit-span → 16).");
+  console.log(
+    "Ensured active training definitions (reaction/stroop/digit-span); schema changes insert a new version.",
+  );
   await client.end({ timeout: 5 });
 }
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   buildDigitSpanAttemptPlan,
+  expectedDigitSpanResponse,
   SEQUENTIAL_DIGIT_MS,
   wholeSequenceDisplayMs,
   type DigitSpanAttemptPlan,
@@ -15,6 +16,10 @@ import {
 } from "@/components/training/pending-stimulus-gate";
 import { TrainingButton } from "@/components/training/training-button";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import {
+  TrainingTrialProgress,
+  type TrialOutcome,
+} from "@/components/training/training-trial-progress";
 import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
@@ -38,6 +43,7 @@ export function DigitSpanTrainingRunner({
   const [phase, setPhase] = useState<"stimulus" | "response">("stimulus");
   const [currentAttempt, setCurrentAttempt] = useState<DigitSpanAttemptPlan | null>(null);
   const [attempts, setAttempts] = useState<DigitSpanAttemptPlan[]>([]);
+  const [outcomes, setOutcomes] = useState<TrialOutcome[]>([]);
   const [responseDigits, setResponseDigits] = useState<number[]>([]);
   const [visibleDigit, setVisibleDigit] = useState<string>("");
   const [sequential, setSequential] = useState(false);
@@ -222,6 +228,10 @@ export function DigitSpanTrainingRunner({
     }
     if (digits.length !== attempt.length) return;
 
+    const expected = expectedDigitSpanResponse(attempt);
+    const correct =
+      digits.length === expected.length && digits.every((digit, index) => digit === expected[index]);
+
     try {
       await lifecycle.appendEvent("span.response", {
         mode: attempt.mode,
@@ -229,6 +239,12 @@ export function DigitSpanTrainingRunner({
         attemptIndex: attempt.attemptIndex,
         sequence: attempt.digits,
         response: digits,
+      });
+
+      setOutcomes((prev) => {
+        const next = [...prev];
+        next[attemptIndex] = correct ? "correct" : "incorrect";
+        return next;
       });
 
       const nextIndex = attemptIndex + 1;
@@ -264,6 +280,7 @@ export function DigitSpanTrainingRunner({
     const plan = buildDigitSpanAttemptPlan(started.ageBand, difficulty);
     const useSequential = difficulty === "hard";
     setAttempts(plan);
+    setOutcomes(Array.from({ length: plan.length }, () => null));
     setSequential(useSequential);
     setAttemptIndex(0);
     setUiPhase("stimulus");
@@ -311,16 +328,13 @@ export function DigitSpanTrainingRunner({
   }
 
   const modeLabel = currentAttempt?.mode === "backward" ? "倒背" : "顺背";
+  const isBackward = currentAttempt?.mode === "backward";
 
   return (
     <PageShell
       title="数字广度"
-      subtitle={
-        uiPhase === "intro"
-          ? "说明与难度"
-          : `第 ${Math.min(attemptIndex + 1, attempts.length || 1)} / ${attempts.length || "—"} 次 · ${modeLabel}`
-      }
-      subtitleKind="status"
+      subtitle={uiPhase === "intro" ? "说明与难度" : undefined}
+      subtitleKind={uiPhase === "intro" ? "status" : "help"}
       backHref={lifecycle.hubPath}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
@@ -387,6 +401,11 @@ export function DigitSpanTrainingRunner({
         </section>
       ) : (
         <>
+          <TrainingTrialProgress
+            total={attempts.length}
+            currentIndex={attemptIndex}
+            outcomes={outcomes}
+          />
           {currentAttempt ? (
             <section
               className="rounded-xl border border-neutral-300 bg-white p-4"
@@ -396,13 +415,40 @@ export function DigitSpanTrainingRunner({
               data-digits={currentAttempt.digits.join(",")}
               data-phase={phase}
             >
-              <p className="text-xs text-neutral-500">
-                {modeLabel} · 长度 {currentAttempt.length} · 第 {currentAttempt.attemptIndex + 1}{" "}
-                次尝试
-              </p>
+              <div
+                className="flex flex-wrap items-stretch gap-3"
+                data-testid="digit-span-cues"
+              >
+                <div
+                  className={[
+                    "min-w-[7.5rem] flex-1 rounded-2xl border-2 px-4 py-3 text-center",
+                    isBackward
+                      ? "border-amber-600 bg-amber-50 text-amber-950"
+                      : "border-sky-700 bg-sky-50 text-sky-950",
+                  ].join(" ")}
+                  data-testid="digit-span-mode"
+                >
+                  <p className="text-xs font-semibold tracking-wide opacity-80">背诵顺序</p>
+                  <p className="mt-1 text-3xl font-black tracking-tight">{modeLabel}</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {isBackward ? "从后往前输入" : "按出现顺序输入"}
+                  </p>
+                </div>
+                <div
+                  className="min-w-[7.5rem] flex-1 rounded-2xl border-2 border-neutral-800 bg-neutral-900 px-4 py-3 text-center text-white"
+                  data-testid="digit-span-length"
+                >
+                  <p className="text-xs font-semibold tracking-wide text-neutral-300">长度</p>
+                  <p className="mt-1 text-3xl font-black tabular-nums tracking-tight">
+                    {currentAttempt.length}
+                    <span className="ml-1 text-lg font-bold">位</span>
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-neutral-300">需要输入的位数</p>
+                </div>
+              </div>
               {phase === "stimulus" ? (
                 <>
-                  <p className="mt-2 text-xs text-neutral-500" data-testid="digit-stimulus-label">
+                  <p className="mt-4 text-sm font-medium text-neutral-600" data-testid="digit-stimulus-label">
                     {sequential ? "请记住依次出现的数字" : "请记住以下数字序列"}
                   </p>
                   <p
@@ -413,10 +459,18 @@ export function DigitSpanTrainingRunner({
                   </p>
                 </>
               ) : (
-                <p className="mt-3 text-sm text-neutral-700" data-testid="digit-recall-prompt">
-                  {currentAttempt.mode === "forward"
-                    ? "请按相同顺序输入数字"
-                    : "请按相反顺序输入数字"}
+                <p
+                  className={[
+                    "mt-4 rounded-xl px-3 py-2 text-base font-bold",
+                    isBackward
+                      ? "bg-amber-100 text-amber-950"
+                      : "bg-sky-100 text-sky-950",
+                  ].join(" ")}
+                  data-testid="digit-recall-prompt"
+                >
+                  {isBackward
+                    ? `倒背：请按相反顺序输入这 ${currentAttempt.length} 位数字`
+                    : `顺背：请按相同顺序输入这 ${currentAttempt.length} 位数字`}
                 </p>
               )}
             </section>
