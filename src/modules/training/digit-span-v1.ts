@@ -27,31 +27,31 @@ export type DigitSpanValidatedData = {
 
 const DEFAULT_DIGIT_SPAN_SCHEMAS: Record<string, DigitSpanMetricSchema> = {
   "5-8": {
-    forwardMinLength: 2,
-    forwardMaxLength: 4,
-    backwardMinLength: 2,
-    backwardMaxLength: 3,
+    forwardMinLength: 4,
+    forwardMaxLength: 7,
+    backwardMinLength: 4,
+    backwardMaxLength: 7,
     attemptsPerLength: 2,
   },
   "9-12": {
-    forwardMinLength: 2,
-    forwardMaxLength: 5,
-    backwardMinLength: 2,
-    backwardMaxLength: 4,
+    forwardMinLength: 4,
+    forwardMaxLength: 7,
+    backwardMinLength: 4,
+    backwardMaxLength: 7,
     attemptsPerLength: 2,
   },
   "13-18": {
-    forwardMinLength: 3,
-    forwardMaxLength: 6,
-    backwardMinLength: 2,
-    backwardMaxLength: 5,
+    forwardMinLength: 4,
+    forwardMaxLength: 7,
+    backwardMinLength: 4,
+    backwardMaxLength: 7,
     attemptsPerLength: 2,
   },
   adult: {
-    forwardMinLength: 3,
-    forwardMaxLength: 6,
-    backwardMinLength: 2,
-    backwardMaxLength: 5,
+    forwardMinLength: 4,
+    forwardMaxLength: 7,
+    backwardMinLength: 4,
+    backwardMaxLength: 7,
     attemptsPerLength: 2,
   },
 };
@@ -115,7 +115,6 @@ export function validateDigitSpanEvents(
 
   const stimuli = new Map<string, { sequence: number[]; occurredAt: Date }>();
   const attempts: DigitSpanAttemptRecord[] = [];
-  let seenBackward = false;
 
   for (const event of events) {
     if (event.eventType === "span.stimulus") {
@@ -124,16 +123,10 @@ export function validateDigitSpanEvents(
         return { valid: false, reason: "Invalid span stimulus payload" };
       }
 
-      if (parsed.mode === "backward") {
-        seenBackward = true;
-      } else if (seenBackward) {
-        return { valid: false, reason: "Forward attempts must precede backward attempts" };
-      }
-
       if (!isLengthInRange(parsed.mode, parsed.length, schema)) {
         return { valid: false, reason: "Span length out of definition range" };
       }
-      if (parsed.attemptIndex < 0 || parsed.attemptIndex >= schema.attemptsPerLength) {
+      if (parsed.attemptIndex < 0 || parsed.attemptIndex >= schema.attemptsPerLength * 2) {
         return { valid: false, reason: "Attempt index out of range" };
       }
       if (!isValidDigitSequence(parsed.sequence, parsed.length)) {
@@ -195,15 +188,30 @@ export function validateDigitSpanEvents(
     return { valid: false, reason: `Unknown event type: ${event.eventType}` };
   }
 
-  const expectedAttempts = countAttemptsForSchema(schema);
-  if (attempts.length !== expectedAttempts) {
+  const hasForward = attempts.some((attempt) => attempt.mode === "forward");
+  const hasBackward = attempts.some((attempt) => attempt.mode === "backward");
+  if (!hasForward && !hasBackward) {
+    return { valid: false, reason: "Expected at least one span attempt" };
+  }
+
+  const expectedKeys = buildExpectedAttemptKeys(schema, {
+    forward: hasForward,
+    backward: hasBackward,
+  });
+  // Reject attempt indices that exceed the effective attempts-per-length for this mode set.
+  const attemptsPer = effectiveAttemptsPerLength(schema, hasForward, hasBackward);
+  for (const attempt of attempts) {
+    if (attempt.attemptIndex >= attemptsPer) {
+      return { valid: false, reason: "Attempt index out of range" };
+    }
+  }
+  if (attempts.length !== expectedKeys.length) {
     return {
       valid: false,
-      reason: `Expected ${expectedAttempts} span attempts, got ${attempts.length}`,
+      reason: `Expected ${expectedKeys.length} span attempts, got ${attempts.length}`,
     };
   }
 
-  const expectedKeys = buildExpectedAttemptKeys(schema);
   const actualKeys = attempts.map((a) => attemptKey(a.mode, a.length, a.attemptIndex)).sort();
   if (!stringArraysEqual(actualKeys, [...expectedKeys].sort())) {
     return { valid: false, reason: "Missing or duplicate span attempts" };
@@ -336,16 +344,36 @@ function attemptKey(mode: DigitSpanMode, length: number, attemptIndex: number): 
   return `${mode}:${length}:${attemptIndex}`;
 }
 
-function buildExpectedAttemptKeys(schema: DigitSpanMetricSchema): string[] {
+/** Single-direction sessions use 2× attempts so easy forward/backward also total 16. */
+function effectiveAttemptsPerLength(
+  schema: DigitSpanMetricSchema,
+  hasForward: boolean,
+  hasBackward: boolean,
+): number {
+  if (hasForward && hasBackward) {
+    return schema.attemptsPerLength;
+  }
+  return schema.attemptsPerLength * 2;
+}
+
+function buildExpectedAttemptKeys(
+  schema: DigitSpanMetricSchema,
+  modes: { forward: boolean; backward: boolean } = { forward: true, backward: true },
+): string[] {
+  const attemptsPer = effectiveAttemptsPerLength(schema, modes.forward, modes.backward);
   const keys: string[] = [];
-  for (let length = schema.forwardMinLength; length <= schema.forwardMaxLength; length += 1) {
-    for (let attemptIndex = 0; attemptIndex < schema.attemptsPerLength; attemptIndex += 1) {
-      keys.push(attemptKey("forward", length, attemptIndex));
+  if (modes.forward) {
+    for (let length = schema.forwardMinLength; length <= schema.forwardMaxLength; length += 1) {
+      for (let attemptIndex = 0; attemptIndex < attemptsPer; attemptIndex += 1) {
+        keys.push(attemptKey("forward", length, attemptIndex));
+      }
     }
   }
-  for (let length = schema.backwardMinLength; length <= schema.backwardMaxLength; length += 1) {
-    for (let attemptIndex = 0; attemptIndex < schema.attemptsPerLength; attemptIndex += 1) {
-      keys.push(attemptKey("backward", length, attemptIndex));
+  if (modes.backward) {
+    for (let length = schema.backwardMinLength; length <= schema.backwardMaxLength; length += 1) {
+      for (let attemptIndex = 0; attemptIndex < attemptsPer; attemptIndex += 1) {
+        keys.push(attemptKey("backward", length, attemptIndex));
+      }
     }
   }
   return keys;

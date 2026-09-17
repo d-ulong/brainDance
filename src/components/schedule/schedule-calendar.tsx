@@ -1,8 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode } from "react";
 
-import { scheduleStatusLabel, todayFamilyDate, type ScheduleItemDto } from "@/lib/client/m2-api";
+import { todayFamilyDate, type ScheduleItemDto } from "@/lib/client/m2-api";
 
 export type CalendarView = "day" | "week" | "month";
 
@@ -60,10 +60,28 @@ function itemTime(item: ScheduleItemDto) {
 }
 
 function EventCard({ item, compact = false, actions }: { item: ScheduleItemDto; compact?: boolean; actions?: ReactNode }) {
+  const earned = item.pointsEarned;
+  const showPoints = typeof earned === "number" && earned !== 0;
+  const pointsInline = showPoints
+    ? ` · ${earned > 0 ? "+" : ""}${earned}${item.pointsRuleLabel ? ` · ${item.pointsRuleLabel}` : ""}`
+    : "";
   return (
     <article className={`bd-calendar-event bd-calendar-event-${item.effectiveStatus} ${compact ? "is-compact" : ""}`} data-testid={`student-schedule-item-${item.id}`}>
-      <div><time>{itemTime(item)}</time><strong>{item.title || item.planTitle || "计划任务"}</strong></div>
-      {!compact ? <p>{item.planTitle} · {scheduleStatusLabel(item.effectiveStatus)} · 优先级 {item.priority}</p> : null}
+      <div className="w-full text-left">
+        <div>
+          <time>{itemTime(item)}</time>
+          <strong>
+            {item.title || item.planTitle || "计划任务"}
+            {pointsInline ? <span className="font-semibold text-slate-600">{pointsInline}</span> : null}
+          </strong>
+        </div>
+        {!compact && item.planTitle && item.title ? (
+          <p className="text-xs text-slate-500">{item.planTitle}</p>
+        ) : null}
+        {!compact && item.description ? (
+          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{item.description}</p>
+        ) : null}
+      </div>
       {actions ? <div className="bd-calendar-event-actions">{actions}</div> : null}
     </article>
   );

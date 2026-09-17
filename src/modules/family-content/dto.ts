@@ -23,6 +23,10 @@ export type FamilyPushDto = {
   canEdit: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Present on list responses: whether the scoped student has answered. */
+  answered?: boolean;
+  answerCount?: number;
+  commentCount?: number;
 };
 
 export type PushAnswerDto = {
@@ -33,6 +37,8 @@ export type PushAnswerDto = {
   currentVersion: number;
   body: string;
   media: MediaAttachmentDto[];
+  edited?: boolean;
+  canEdit?: boolean;
   createdAt: string;
   updatedAt: string;
 };

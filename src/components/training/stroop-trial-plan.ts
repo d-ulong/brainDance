@@ -1,28 +1,62 @@
 import { STROOP_COLORS, type StroopColor } from "@/modules/training/constants";
 import { getStroopSchemaForAgeBand } from "@/modules/training/stroop-v1";
 
+export type StroopTaskMode = "name_ink" | "name_word";
+export type StroopDifficulty = "easy_ink" | "easy_word" | "hard";
+
 export type StroopTrialPlan = {
   trialIndex: number;
   inkColor: StroopColor;
   wordColor: StroopColor;
   congruent: boolean;
+  taskMode: StroopTaskMode;
 };
 
-export function buildStroopTrialPlan(ageBand: string): StroopTrialPlan[] {
-  const schema = getStroopSchemaForAgeBand(ageBand);
-  const trials: StroopTrialPlan[] = [];
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)]!;
+}
 
-  for (let trialIndex = 0; trialIndex < schema.trialCount; trialIndex += 1) {
-    const congruent = trialIndex < schema.congruentQuota;
-    const inkColor = STROOP_COLORS[trialIndex % STROOP_COLORS.length]!;
-    const wordColor = congruent
-      ? inkColor
-      : STROOP_COLORS[(trialIndex + 1) % STROOP_COLORS.length]!;
+function pickOtherColor(color: StroopColor): StroopColor {
+  const others = STROOP_COLORS.filter((item) => item !== color);
+  return pickRandom(others);
+}
 
-    trials.push({ trialIndex, inkColor, wordColor, congruent });
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = items[i]!;
+    items[i] = items[j]!;
+    items[j] = tmp;
   }
+  return items;
+}
 
-  return trials;
+/** Build a randomized Stroop plan. Ink/word meaning always conflict on name_ink trials. */
+export function buildStroopTrialPlan(
+  ageBand: string,
+  difficulty: StroopDifficulty = "hard",
+): StroopTrialPlan[] {
+  const schema = getStroopSchemaForAgeBand(ageBand);
+  const modes: StroopTaskMode[] = [];
+  for (let i = 0; i < schema.trialCount; i += 1) {
+    if (difficulty === "easy_ink") modes.push("name_ink");
+    else if (difficulty === "easy_word") modes.push("name_word");
+    else modes.push(Math.random() < 0.5 ? "name_ink" : "name_word");
+  }
+  shuffleInPlace(modes);
+
+  return modes.map((taskMode, trialIndex) => {
+    // Always conflict: ink color ≠ word meaning, and the visible ink is a random color.
+    const inkColor = pickRandom(STROOP_COLORS);
+    const wordColor = pickOtherColor(inkColor);
+    return {
+      trialIndex,
+      inkColor,
+      wordColor,
+      congruent: false,
+      taskMode,
+    };
+  });
 }
 
 export const STROOP_COLOR_LABELS: Record<StroopColor, string> = {

@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { familyPushes, familyPushVersions } from "@/db/schema";
+import { familyPushes, familyPushVersions, pushAnswers, pushComments } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   assertCanAccessPush,
@@ -405,7 +405,43 @@ export async function listFamilyPushes(
       ),
     );
   }
-  return results;
+
+  if (results.length === 0) {
+    return results;
+  }
+
+  const pushIds = results.map((item) => item.pushId);
+  const answerRows = await db
+    .select({
+      pushId: pushAnswers.pushId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(pushAnswers)
+    .where(
+      and(inArray(pushAnswers.pushId, pushIds), eq(pushAnswers.studentId, input.studentId)),
+    )
+    .groupBy(pushAnswers.pushId);
+  const commentRows = await db
+    .select({
+      pushId: pushComments.pushId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(pushComments)
+    .where(and(inArray(pushComments.pushId, pushIds), sql`${pushComments.deletedAt} is null`))
+    .groupBy(pushComments.pushId);
+
+  const answerCountByPush = new Map(answerRows.map((row) => [row.pushId, Number(row.count)]));
+  const commentCountByPush = new Map(commentRows.map((row) => [row.pushId, Number(row.count)]));
+
+  return results.map((item) => {
+    const answerCount = answerCountByPush.get(item.pushId) ?? 0;
+    return {
+      ...item,
+      answered: answerCount > 0,
+      answerCount,
+      commentCount: commentCountByPush.get(item.pushId) ?? 0,
+    };
+  });
 }
 
 /** Called inside relationship-end transaction. */

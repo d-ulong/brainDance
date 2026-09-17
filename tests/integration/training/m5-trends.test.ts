@@ -417,7 +417,7 @@ describe.skipIf(!hasDb)("M5 training trends", () => {
         .where(eq(trainingSessions.id, started.sessionId));
 
       let sequence = 0;
-      for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+      for (let trialIndex = 0; trialIndex < started.expectedTrialCount; trialIndex += 1) {
         await appendTrainingEvent(db, {
           studentId: student.studentId,
           sessionId: started.sessionId,

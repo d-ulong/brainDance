@@ -115,8 +115,26 @@ export function TopTabs({ onBeforeNavigate }: TopTabsProps) {
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
 
   useEffect(() => {
-    void fetchSession().then(setSession);
+    let cancelled = false;
+    void fetchSession().then((value) => {
+      if (!cancelled) setSession(value);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  // While session is loading, reserve nav space with a lightweight skeleton so the masthead
+  // does not pop in after the first paint (root cause: client-only fetchSession gate).
+  if (session === undefined) {
+    return (
+      <nav className="bd-top-tabs bd-top-tabs-loading" aria-label="主要功能" aria-busy="true" data-testid="top-tabs-loading">
+        <span className="bd-top-tab bd-top-tab-skeleton" />
+        <span className="bd-top-tab bd-top-tab-skeleton" />
+        <span className="bd-top-tab bd-top-tab-skeleton" />
+      </nav>
+    );
+  }
 
   if (!mayShowTabs(session)) return null;
 

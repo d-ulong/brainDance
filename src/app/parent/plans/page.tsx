@@ -90,6 +90,17 @@ const blank = (): Draft => ({
   points: ["10", "0", "0", "0", "0"],
 });
 
+function entryMaxPoints(entry: PlanDefinitionDto["entries"][number]) {
+  return Math.max(
+    0,
+    entry.points.onTimeWithin,
+    entry.points.onTimeOver,
+    entry.points.lateWithin,
+    entry.points.lateOver,
+    entry.points.incomplete,
+  );
+}
+
 function definition(title: string, description: string, startDate: string, items: Draft[]): PlanDefinitionDto {
   return {
     title,
@@ -197,6 +208,7 @@ function ParentPlansPageContent() {
   const [planQuery, setPlanQuery] = useState("");
   const [planStudentFilter, setPlanStudentFilter] = useState("");
   const [bindingFilter, setBindingFilter] = useState<"all" | "bound" | "unbound">("all");
+  const [previewPlan, setPreviewPlan] = useState<PlanLibraryDto | null>(null);
   const load = useCallback(async () => {
     const [planResponse, studentResponse] = await Promise.all([
       fetchPlanLibrary(),
@@ -240,7 +252,13 @@ function ParentPlansPageContent() {
     setDate(plan.definition.startDate);
     setPriority(String(plan.priority));
     setItems(drafts(plan.definition));
-    setSelectedStudents(contextStudentId ? [contextStudentId] : selfOnly && selfOption ? [selfOption.studentId] : []);
+    if (copy) {
+      setSelectedStudents(
+        contextStudentId ? [contextStudentId] : selfOnly && selfOption ? [selfOption.studentId] : [],
+      );
+    } else {
+      setSelectedStudents(plan.bindings.map((binding) => binding.studentId));
+    }
     setFormOpen(true);
   }
   const change = (index: number, key: keyof Draft, value: string) =>
@@ -270,7 +288,26 @@ function ParentPlansPageContent() {
       const result = editing
         ? await updatePlanLibrary(editing.id, editing.revision, planDefinition, Number(priority))
         : await savePlanLibrary(planDefinition, Number(priority));
-      if (!editing && selectedStudents.length) {
+      if (editing) {
+        const previousIds = new Set(
+          plans.find((plan) => plan.id === editing.id)?.bindings.map((binding) => binding.studentId) ??
+            [],
+        );
+        const nextIds = new Set(selectedStudents);
+        const toAdd = selectedStudents.filter((studentId) => !previousIds.has(studentId));
+        const toRemove = [...previousIds].filter((studentId) => !nextIds.has(studentId));
+        if (toAdd.length) {
+          await activateStudents(result.plan.id, toAdd);
+        }
+        for (const studentId of toRemove) {
+          await removePlanLibraryBinding(result.plan.id, studentId);
+        }
+        const bindNote =
+          toAdd.length || toRemove.length
+            ? `；绑定已更新（+${toAdd.length}/-${toRemove.length}）`
+            : "";
+        setMessage(`计划已更新，历史执行记录保持不变${bindNote}`);
+      } else if (selectedStudents.length) {
         const activationResults = await activateStudents(result.plan.id, selectedStudents);
         setMessage(
           formatActivationSummary(
@@ -279,7 +316,7 @@ function ParentPlansPageContent() {
           ),
         );
       } else {
-        setMessage(editing ? "计划已更新，历史执行记录保持不变" : "计划已保存");
+        setMessage("计划已保存");
       }
       setFormOpen(false);
       resetForm();
@@ -408,7 +445,7 @@ function ParentPlansPageContent() {
       <section className="bd-library-toolbar">
         <div className="bd-library-toolbar-copy">
           <h2>{selfOnly ? "我的个人计划" : "计划列表"}</h2>
-          <p>{selfOnly ? "个人计划只记录执行，不进入学生积分。" : "先查看与管理已有计划，再按需新增。"}</p>
+          <p>{selfOnly ? "个人计划可开始/完成并按规则记积分，仅用于个人记录，不进入学生兑换。" : "先查看与管理已有计划，再按需新增。"}</p>
         </div>
         <PrimaryButton
           type="button"
@@ -476,6 +513,7 @@ function ParentPlansPageContent() {
                 >
                   编辑计划
                 </PrimaryButton>
+                <SecondaryButton onClick={() => setPreviewPlan(plan)}>预览</SecondaryButton>
                 <SecondaryButton onClick={() => openEdit(plan, true)}>复制</SecondaryButton>
                 <SecondaryButton onClick={() => openAction(plan, "bind")}>添加学生</SecondaryButton>
                 <SecondaryButton onClick={() => openAction(plan, "generate")}>生成日程</SecondaryButton>
@@ -617,16 +655,14 @@ function ParentPlansPageContent() {
             <PrimaryButton type="button" onClick={() => setItems((old) => [...old, blank()])}>
               添加内容项
             </PrimaryButton>
-            {!editing ? (
-              <Field label="保存后绑定学生（可多选）">
-                <StudentMultiSelect
-                  students={assignmentOptions}
-                  selectedIds={selectedStudents}
-                  onChange={setSelectedStudents}
-                  emptyLabel="暂不绑定"
-                />
-              </Field>
-            ) : null}
+            <Field label={editing ? "绑定学生（可继续增删）" : "保存后绑定学生（可多选）"}>
+              <StudentMultiSelect
+                students={assignmentOptions}
+                selectedIds={selectedStudents}
+                onChange={setSelectedStudents}
+                emptyLabel="暂不绑定"
+              />
+            </Field>
             <PrimaryButton type="submit" disabled={saving} data-testid="plan-library-save">
               {saving ? "保存中…" : editing ? "保存修改" : "保存计划"}
             </PrimaryButton>
@@ -687,6 +723,49 @@ function ParentPlansPageContent() {
               {saving ? "处理中…" : action.kind === "bind" ? "绑定所选学生" : "生成所选日程"}
             </PrimaryButton>
           </form>
+        </Modal>
+      ) : null}
+      {previewPlan ? (
+        <Modal title={`预览：${previewPlan.definition.title}`} onClose={() => setPreviewPlan(null)}>
+          <p className="mb-3 text-sm text-slate-600">点击任务名称、时间或最高积分即可进入编辑。</p>
+          <ul className="space-y-2">
+            {previewPlan.definition.entries.map((entry) => (
+              <li key={entry.key} className="rounded-2xl border border-[var(--bd-border)] p-3">
+                <div className="flex flex-wrap gap-3 text-sm">
+                  <button
+                    type="button"
+                    className="font-semibold text-[var(--bd-primary)]"
+                    onClick={() => {
+                      setPreviewPlan(null);
+                      openEdit(previewPlan, false);
+                    }}
+                  >
+                    {entry.title}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-slate-700 underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setPreviewPlan(null);
+                      openEdit(previewPlan, false);
+                    }}
+                  >
+                    时间 {entry.expectedTime}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-slate-700 underline-offset-2 hover:underline"
+                    onClick={() => {
+                      setPreviewPlan(null);
+                      openEdit(previewPlan, false);
+                    }}
+                  >
+                    最高积分 {entryMaxPoints(entry)}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
         </Modal>
       ) : null}
     </PageShell>

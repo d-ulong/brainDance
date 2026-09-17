@@ -652,7 +652,11 @@ export async function activatePlanLibrary(
     const generatedThrough = addFamilyDays(effectiveFrom, 14);
     const occurrences = generatePlanOccurrences(definition, generatedFrom, generatedThrough);
     let insertedItems: { id: string; slotKey: string }[] = [];
+    let revivedItems: { id: string; slotKey: string }[] = [];
     if (occurrences.length) {
+      const occurrenceKeys = occurrences.map(
+        ({ entry, familyDate }) => `library:${activation!.id}:${entry.key}:${familyDate}`,
+      );
       insertedItems = await tx
         .insert(scheduleItems)
         .values(
@@ -683,6 +687,12 @@ export async function activatePlanLibrary(
               entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
             })),
           );
+      revivedItems = await reviveCancelledOccurrences(
+        tx,
+        occurrenceKeys,
+        ruleVersionByEntryKey,
+        definition,
+      );
     }
     await reconcileSchedulePriority(tx, { studentId: input.studentId, scheduledAts: occurrences.map((item) => item.scheduledAt) });
     await appendAuditEvent(tx, {
@@ -713,7 +723,7 @@ export async function activatePlanLibrary(
     return {
       activationId: activation!.id,
       planId: executionPlan.id,
-      itemsCreated: insertedItems.length,
+      itemsCreated: insertedItems.length + revivedItems.length,
       matchedOccurrences: occurrences.length,
       effectiveFrom,
       generatedFrom,
@@ -722,8 +732,45 @@ export async function activatePlanLibrary(
   });
 }
 
+async function reviveCancelledOccurrences(
+  tx: Database,
+  keys: string[],
+  ruleVersionByEntryKey: Map<string, string | undefined>,
+  definition: PlanDefinition,
+): Promise<{ id: string; slotKey: string }[]> {
+  if (!keys.length) return [];
+  const revived = await tx
+    .update(scheduleItems)
+    .set({ status: "pending", suppressedByScheduleItemId: null })
+    .where(and(inArray(scheduleItems.occurrenceKey, keys), eq(scheduleItems.status, "cancelled")))
+    .returning({ id: scheduleItems.id, slotKey: scheduleItems.slotKey });
+  for (const item of revived) {
+    const ruleVersionId = ruleVersionByEntryKey.get(item.slotKey);
+    const entry = definition.entries.find((candidate) => candidate.key === item.slotKey);
+    if (!ruleVersionId || !entry) continue;
+    const [existing] = await tx
+      .select({ scheduleItemId: planItemRules.scheduleItemId })
+      .from(planItemRules)
+      .where(eq(planItemRules.scheduleItemId, item.id))
+      .limit(1);
+    if (existing) {
+      await tx
+        .update(planItemRules)
+        .set({ startedAt: null, ruleVersionId, entry })
+        .where(eq(planItemRules.scheduleItemId, item.id));
+    } else {
+      await tx.insert(planItemRules).values({
+        scheduleItemId: item.id,
+        ruleVersionId,
+        entry,
+      });
+    }
+  }
+  return revived;
+}
+
 /** Generate a requested future range for the student's currently active library binding.
- * Existing occurrence keys make overlapping requests harmless. */
+ * Existing occurrence keys make overlapping requests harmless; cancelled rows are revived. */
 export async function generatePlanLibraryRange(
   db: Database,
   input: {
@@ -894,11 +941,22 @@ export async function generatePlanLibraryRange(
             entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
           })),
         );
+    const occurrenceKeys = occurrences.map(
+      ({ entry, familyDate }) =>
+        `library:${activation.plan_activations.id}:${entry.key}:${familyDate}`,
+    );
+    const revived = await reviveCancelledOccurrences(
+      tx,
+      occurrenceKeys,
+      ruleVersionByEntryKey,
+      definition,
+    );
+    const itemsCreated = inserted.length + revived.length;
     await reconcileSchedulePriority(tx, { studentId: input.studentId, scheduledAts: occurrences.map((item) => item.scheduledAt) });
     const result = {
       operation: "generate",
       activationId: activation.plan_activations.id,
-      itemsCreated: inserted.length,
+      itemsCreated,
       generatedFrom,
       generatedThrough,
     };
@@ -918,7 +976,7 @@ export async function generatePlanLibraryRange(
         through: input.through,
         generatedFrom,
         generatedThrough,
-        itemsCreated: inserted.length,
+        itemsCreated,
       },
     });
     await appendOutboxEvent(tx, {
@@ -933,12 +991,12 @@ export async function generatePlanLibraryRange(
         through: input.through,
         generatedFrom,
         generatedThrough,
-        itemsCreated: inserted.length,
+        itemsCreated,
       },
     });
     return {
       activationId: activation.plan_activations.id,
-      itemsCreated: inserted.length,
+      itemsCreated,
       generatedFrom,
       generatedThrough,
       idempotentReplay: false,

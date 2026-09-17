@@ -84,6 +84,29 @@ body {
   display: none;
 }
 
+.bd-top-tab-skeleton {
+  min-width: 4.5rem;
+  pointer-events: none;
+  opacity: 0.55;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bd-border) 55%, transparent),
+    color-mix(in srgb, var(--bd-surface) 80%, white),
+    color-mix(in srgb, var(--bd-border) 55%, transparent)
+  );
+  background-size: 200% 100%;
+  animation: bd-tab-skeleton 1.1s ease-in-out infinite;
+}
+
+@keyframes bd-tab-skeleton {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .bd-theme-toggle,
 .bd-top-tab {
   flex: 1 0 auto;
@@ -1054,7 +1077,9 @@ body {
 }
 .bd-push-library-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: 1rem; }
 .bd-push-library-card { position: relative; display: flex; min-height: 13rem; cursor: pointer; flex-direction: column; gap: .85rem; overflow: hidden; border: 1px solid var(--bd-border); border-radius: 1.4rem; background: linear-gradient(145deg, #fff, color-mix(in srgb, var(--bd-primary) 4%, white)); padding: 1.15rem; box-shadow: 0 9px 24px color-mix(in srgb, var(--bd-shadow) 36%, transparent); transition: transform .18s ease, box-shadow .18s ease; }
+.bd-push-library-card-answered { border-color: color-mix(in srgb, #059669 45%, var(--bd-border)); background: linear-gradient(145deg, #ecfdf5, color-mix(in srgb, #059669 6%, white)); }
 .bd-push-library-card::before { content: "💌"; display: grid; width: 2.65rem; height: 2.65rem; place-items: center; border-radius: .9rem; background: color-mix(in srgb, var(--bd-primary) 10%, white); font-size: 1.2rem; }
+.bd-push-library-card-answered::before { content: "✅"; background: color-mix(in srgb, #059669 14%, white); }
 .bd-push-library-card:hover, .bd-push-library-card:focus-visible { transform: translateY(-2px); box-shadow: 0 14px 30px color-mix(in srgb, var(--bd-shadow) 50%, transparent); outline: 2px solid color-mix(in srgb, var(--bd-primary) 35%, transparent); }
 .bd-push-library-card .bd-library-actions { margin-top: auto; }
 .bd-media-thumbnails { display: grid; grid-template-columns: repeat(auto-fill, minmax(6rem, 8rem)); gap: .65rem; margin-top: .8rem; }

@@ -1,16 +1,28 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 type ModalProps = {
   title: string;
   children: ReactNode;
   onClose: () => void;
   labelledBy?: string;
-  /** Critical dialogs must sit above any open feature dialog. */
-  layer?: "normal" | "critical";
+  /**
+   * Layering:
+   * - normal: feature forms (z-100)
+   * - critical: blocking confirms that sit above feature dialogs (z-500)
+   * - alert: errors that must sit above any open feature/critical dialog (z-600)
+   */
+  layer?: "normal" | "critical" | "alert";
   size?: "normal" | "wide";
 };
+
+const layerClass = {
+  normal: "z-[100]",
+  critical: "z-[500]",
+  alert: "z-[600]",
+} as const;
 
 export function Modal({
   title,
@@ -20,9 +32,16 @@ export function Modal({
   layer = "normal",
   size = "normal",
 }: ModalProps) {
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className={`fixed inset-0 ${layer === "critical" ? "z-[500]" : "z-[100]"} grid place-items-center bg-slate-950/45 p-4`}
+      className={`fixed inset-0 ${layerClass[layer]} grid place-items-center bg-slate-950/45 p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby={labelledBy}
@@ -45,6 +64,7 @@ export function Modal({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

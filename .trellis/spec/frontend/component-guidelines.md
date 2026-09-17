@@ -109,11 +109,14 @@ Architecture target viewports (`docs/architecture.md` §6): 360px, 768px, 1024px
 
 ### Dialog layering and destructive actions
 
-- Feature dialogs use the normal modal layer. Error dialogs and blocking confirmations use the critical layer and must remain above feature dialogs and media viewers.
-- A media lightbox may sit above ordinary content, but never above a critical error or confirmation dialog.
+- All `Modal` instances portal to `document.body` so nested page stacking contexts cannot trap overlays.
+- Feature dialogs use the normal modal layer (`z-100`). Blocking confirmations use the critical layer (`z-500`) and sit above feature dialogs and media viewers.
+- Error dialogs use the alert layer (`z-600`) and must remain above any open feature or critical dialog — including completion forms that previously shared the critical layer.
+- A media lightbox may sit above ordinary content, but never above a critical confirmation or alert error dialog.
 - Deletion, cancellation, redemption, disabling a shared item, and other hard-to-reverse actions require a confirmation dialog. A client precheck improves feedback but never replaces the server-side authority check.
-- When a page has an active feature dialog, route all mutation failures to the shared critical `ErrorDialog`; do not render a hidden inline label behind the dialog.
+- When a page has an active feature dialog, route all mutation failures to the shared alert `ErrorDialog`; do not render a hidden inline label behind the dialog.
 - Status cannot be expressed only with color: pair its visual treatment with the shared textual label and test the post-mutation fresh read.
+- Completion forms that accept duration must not require an end time; if start+duration exceeds now, the error copy must say so explicitly instead of blaming an unused end time field.
 
 ---
 

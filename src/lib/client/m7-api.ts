@@ -24,6 +24,9 @@ export type FamilyPushDto = {
   canEdit: boolean;
   createdAt: string;
   updatedAt: string;
+  answered?: boolean;
+  answerCount?: number;
+  commentCount?: number;
   idempotentReplay?: boolean;
 };
 
@@ -35,6 +38,8 @@ export type PushAnswerDto = {
   currentVersion: number;
   body: string;
   media: MediaAttachmentDto[];
+  edited?: boolean;
+  canEdit?: boolean;
   createdAt: string;
   updatedAt: string;
   idempotentReplay?: boolean;
@@ -178,6 +183,26 @@ export async function submitAnswer(
     headers: { "Idempotency-Key": newIdempotencyKey("submit-answer") },
     body: JSON.stringify(body),
   });
+}
+
+export async function editAnswer(
+  studentId: string,
+  pushId: string,
+  answerId: string,
+  body: {
+    body?: string;
+    mediaIds?: string[];
+    handwritingMediaIds?: string[];
+  },
+) {
+  return apiFetch<PushAnswerDto>(
+    `/api/family/students/${studentId}/pushes/${pushId}/answers/${answerId}`,
+    {
+      method: "PATCH",
+      headers: { "Idempotency-Key": newIdempotencyKey("edit-answer") },
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export async function uploadMedia(

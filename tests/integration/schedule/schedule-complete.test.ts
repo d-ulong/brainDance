@@ -268,4 +268,24 @@ describe.skipIf(!hasDb)("schedule complete", () => {
     expect(result.ledgerEntryId).toBe(ledger[0]?.id);
     expect(result.settlementId).toBe(ledger[0]?.settlementId);
   });
+
+  it("rejects duration that ends after now with duration-specific copy", async () => {
+    const { studentId, itemId } = await seedTodayItem();
+
+    await expect(
+      completeScheduleItem(db, {
+        actorId: studentId,
+        scheduleItemId: itemId,
+        idempotencyKey: "complete-duration-future",
+        body: {
+          startedAt: "2026-01-15T10:30:00.000Z",
+          durationMinutes: 120,
+        },
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR" satisfies ScheduleError["code"],
+      message: expect.stringContaining("开始时间加完成时长"),
+    });
+  });
 });

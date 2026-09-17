@@ -28,6 +28,8 @@ export type TrainingSessionLifecycleOptions = {
   role: "student" | "parent";
   hubPath: string;
   resultPathPrefix: string;
+  /** When true, auth runs but the training session is not created until `beginSession()` is called. */
+  deferSessionStart?: boolean;
 };
 
 export const STUDENT_TRAINING_LIFECYCLE: TrainingSessionLifecycleOptions = {
@@ -46,6 +48,7 @@ export type TrainingSessionLifecycle = {
   loading: boolean;
   error: string | null;
   session: StartTrainingSessionResult | null;
+  starting: boolean;
   paused: boolean;
   pendingRetry: boolean;
   submitting: boolean;
@@ -53,6 +56,7 @@ export type TrainingSessionLifecycle = {
   leaving: boolean;
   hubPath: string;
   isInteractionAllowed: () => boolean;
+  beginSession: () => Promise<StartTrainingSessionResult | null>;
   appendEvent: (
     eventType: string,
     payload: Record<string, unknown>,
@@ -70,6 +74,7 @@ export function useTrainingSessionLifecycle(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<StartTrainingSessionResult | null>(null);
+  const [starting, setStarting] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pendingRetry, setPendingRetry] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -77,7 +82,9 @@ export function useTrainingSessionLifecycle(
   const [leaving, setLeaving] = useState(false);
   const sequenceRef = useRef(0);
   const startedRef = useRef(false);
+  const authReadyRef = useRef(false);
   const submitKeyRef = useRef<string | null>(null);
+  const sessionRef = useRef<StartTrainingSessionResult | null>(null);
   const eventQueueRef = useRef(createTrainingEventQueue<AppendTrainingEventResult>());
   const terminatedRef = useRef(false);
   const pausedRef = useRef(false);
@@ -115,7 +122,8 @@ export function useTrainingSessionLifecycle(
       eventType: string,
       payload: Record<string, unknown>,
     ): Promise<AppendTrainingEventResult> => {
-      if (!session) {
+      const activeSession = sessionRef.current;
+      if (!activeSession) {
         throw new Error("训练会话未就绪");
       }
       if (terminatedRef.current) {
@@ -127,7 +135,7 @@ export function useTrainingSessionLifecycle(
         try {
           setPendingRetry(attempt > 0);
           const result = await appendTrainingEvent(
-            session.sessionId,
+            activeSession.sessionId,
             sequenceRef.current,
             eventType,
             payload,
@@ -149,7 +157,7 @@ export function useTrainingSessionLifecycle(
       setPendingRetry(false);
       throw lastError instanceof ApiError ? lastError : new Error("事件提交失败，请检查网络后重试");
     },
-    [handleAbandoned, session],
+    [handleAbandoned],
   );
 
   const appendEvent = useCallback(
@@ -175,6 +183,27 @@ export function useTrainingSessionLifecycle(
     onRecoveryFailed: handleRecoveryFailed,
   });
 
+  const beginSession = useCallback(async () => {
+    if (startedRef.current || sessionRef.current) return sessionRef.current;
+    startedRef.current = true;
+    setStarting(true);
+    setError(null);
+    try {
+      const started = await startTrainingSession(trainingKey);
+      sequenceRef.current = 0;
+      sessionRef.current = started;
+      setSession(started);
+      return started;
+    } catch (err) {
+      startedRef.current = false;
+      sessionRef.current = null;
+      setError(err instanceof ApiError ? err.message : "无法开始训练");
+      return null;
+    } finally {
+      setStarting(false);
+    }
+  }, [trainingKey]);
+
   useEffect(() => {
     void (async () => {
       const auth = await fetchSession();
@@ -191,26 +220,25 @@ export function useTrainingSessionLifecycle(
         return;
       }
 
-      if (startedRef.current) {
+      authReadyRef.current = true;
+      if (options.deferSessionStart) {
         setLoading(false);
         return;
       }
-      startedRef.current = true;
 
-      try {
-        const started = await startTrainingSession(trainingKey);
-        sequenceRef.current = 0;
-        setSession(started);
-      } catch (err) {
-        setError(err instanceof ApiError ? err.message : "无法开始训练");
-      } finally {
+      if (startedRef.current || sessionRef.current) {
         setLoading(false);
+        return;
       }
+
+      await beginSession();
+      setLoading(false);
     })();
-  }, [options.role, router, trainingKey]);
+  }, [beginSession, options.deferSessionStart, options.role, router]);
 
   const submitSession = useCallback(async () => {
-    if (!session || submitting || leaving || terminatedRef.current) return;
+    const activeSession = sessionRef.current;
+    if (!activeSession || submitting || leaving || terminatedRef.current) return;
     setSubmitting(true);
     setError(null);
 
@@ -221,9 +249,9 @@ export function useTrainingSessionLifecycle(
     for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
       try {
         setPendingRetry(attempt > 0);
-        await submitTrainingSession(session.sessionId, idempotencyKey);
+        await submitTrainingSession(activeSession.sessionId, idempotencyKey);
         setPendingRetry(false);
-        router.push(`${options.resultPathPrefix}/${session.sessionId}`);
+        router.push(`${options.resultPathPrefix}/${activeSession.sessionId}`);
         return;
       } catch (err) {
         lastError = err;
@@ -236,21 +264,23 @@ export function useTrainingSessionLifecycle(
     setPendingRetry(false);
     setSubmitting(false);
     setError(lastError instanceof ApiError ? lastError.message : "提交失败，请检查网络后重试");
-  }, [leaving, options.resultPathPrefix, router, session, submitting]);
+  }, [leaving, options.resultPathPrefix, router, submitting]);
 
   const navigateToResult = useCallback(() => {
-    if (session) {
-      router.push(`${options.resultPathPrefix}/${session.sessionId}`);
+    const activeSession = sessionRef.current;
+    if (activeSession) {
+      router.push(`${options.resultPathPrefix}/${activeSession.sessionId}`);
     }
-  }, [options.resultPathPrefix, router, session]);
+  }, [options.resultPathPrefix, router]);
 
   const confirmLeave = useCallback(async () => {
-    if (!session || terminatedRef.current || submitting) return true;
+    const activeSession = sessionRef.current;
+    if (!activeSession || terminatedRef.current || submitting) return true;
     if (!window.confirm("离开训练会取消本次练习，确定要离开吗？")) return false;
 
     setLeaving(true);
     try {
-      await cancelTrainingSession(session.sessionId);
+      await cancelTrainingSession(activeSession.sessionId);
       terminatedRef.current = true;
       setTerminated(true);
       return true;
@@ -260,7 +290,7 @@ export function useTrainingSessionLifecycle(
     } finally {
       setLeaving(false);
     }
-  }, [session, submitting]);
+  }, [submitting]);
 
   useEffect(() => {
     if (!session || terminatedRef.current || submitting) return;
@@ -278,6 +308,7 @@ export function useTrainingSessionLifecycle(
     loading,
     error,
     session,
+    starting,
     paused,
     pendingRetry,
     submitting,
@@ -285,6 +316,7 @@ export function useTrainingSessionLifecycle(
     leaving,
     hubPath: options.hubPath,
     isInteractionAllowed,
+    beginSession,
     appendEvent,
     submitSession,
     navigateToResult,

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { PasswordField } from "@/components/ui/password-field";
 
 import { Alert, Field, PageShell, PrimaryButton, TextInput } from "@/components/ui/page-shell";
-import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
+import { ApiError, apiFetch, clearSessionCache, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -42,6 +42,9 @@ export default function LoginPage() {
           idempotencyKey: newIdempotencyKey("login"),
         }),
       });
+
+      clearSessionCache();
+      await fetchSession({ force: true });
 
       if (!result.contactVerified) {
         router.push("/verify-contact");

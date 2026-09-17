@@ -575,4 +575,43 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     );
   });
 
+  it("revives cancelled occurrences on regenerate instead of leaving cancelled beside pending", async () => {
+    const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    const saved = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition,
+      idempotencyKey: "revive-library",
+    });
+    const activated = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      effectiveFrom: "2026-01-15",
+      idempotencyKey: "revive-activate",
+      now: FIXED_NOW,
+    });
+    await db
+      .update(scheduleItems)
+      .set({ status: "cancelled" })
+      .where(eq(scheduleItems.planId, activated.planId));
+    const regenerated = await generatePlanLibraryRange(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      from: "2026-01-15",
+      through: "2026-01-20",
+      idempotencyKey: "revive-generate",
+      now: FIXED_NOW,
+    });
+    expect(regenerated.itemsCreated).toBeGreaterThan(0);
+    const listed = await queryScheduleItems(db, {
+      studentId,
+      from: "2026-01-15",
+      to: "2026-01-20",
+      now: FIXED_NOW,
+    });
+    expect(listed.every((item) => item.status !== "cancelled")).toBe(true);
+    expect(listed.some((item) => item.status === "pending")).toBe(true);
+  });
+
 });

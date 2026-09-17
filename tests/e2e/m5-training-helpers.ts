@@ -2,7 +2,6 @@ import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 import {
   buildDigitSpanAttemptPlan,
-  responseDigitsForAttempt,
 } from "@/components/training/digit-span-plan";
 import { STROOP_COLORS } from "@/modules/training/constants";
 
@@ -27,7 +26,8 @@ async function loginApi(request: APIRequestContext, identifier: string, password
 
 export async function waitForReactionReady(page: Page) {
   const target = page.getByTestId("training-target");
-  await expect(target).toContainText("Space / Enter", { timeout: 15_000 });
+  await expect(target).toHaveAttribute("data-phase", "go", { timeout: 15_000 });
+  await expect(target).toContainText("点!", { timeout: 15_000 });
   await expect(target).toBeEnabled({ timeout: 15_000 });
   await page.waitForTimeout(120);
   return target;
@@ -39,10 +39,11 @@ export async function completeReactionTraining(
   hubBase: "/student/training" | "/parent/training" = "/student/training",
 ) {
   await page.goto(`${hubBase}/reaction`);
-  await expect(page.getByTestId("training-target")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("reaction-intro")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("training-disclaimer")).toBeVisible();
+  await page.getByTestId("reaction-start").click();
 
-  for (let trial = 0; trial < 5; trial += 1) {
+  for (let trial = 0; trial < 16; trial += 1) {
     const target = await waitForReactionReady(page);
     const eventResponse = page.waitForResponse(
       (resp) =>
@@ -58,8 +59,8 @@ export async function completeReactionTraining(
       await page.keyboard.press("Space");
     }
     await eventResponse;
-    if (trial < 4) {
-      await expect(page.getByText(new RegExp(`${trial + 2}\\s*/\\s*5`))).toBeVisible({
+    if (trial < 15) {
+      await expect(page.getByText(new RegExp(`${trial + 2}\\s*/\\s*16`))).toBeVisible({
         timeout: 20_000,
       });
     }
@@ -72,17 +73,21 @@ export async function completeReactionTraining(
 
 export async function respondToStroopTrial(
   page: Page,
-  selectInkColor: boolean,
+  selectCorrectColor: boolean,
   inputMethod: "pointer" | "keyboard" = "keyboard",
 ) {
   const stimulus = page.getByTestId("stroop-stimulus");
   await expect(stimulus).toBeVisible({ timeout: 15_000 });
+  const taskMode = (await stimulus.getAttribute("data-task-mode")) ?? "name_ink";
   const inkColor = await stimulus.getAttribute("data-ink-color");
+  const wordColor = await stimulus.getAttribute("data-word-color");
   expect(inkColor).toBeTruthy();
+  expect(wordColor).toBeTruthy();
 
-  const targetColor = selectInkColor
-    ? inkColor!
-    : STROOP_COLORS.find((color) => color !== inkColor)!;
+  const answerColor = taskMode === "name_word" ? wordColor! : inkColor!;
+  const targetColor = selectCorrectColor
+    ? answerColor
+    : STROOP_COLORS.find((color) => color !== answerColor)!;
 
   const option = page.getByTestId(`stroop-option-${targetColor}`);
   await expect(option).toBeEnabled({ timeout: 10_000 });
@@ -105,6 +110,8 @@ export async function respondToStroopTrial(
 
 export async function completeStroopTraining(page: Page) {
   await page.goto("/student/training/stroop");
+  await expect(page.getByTestId("stroop-intro")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("stroop-start").click();
   await expect(page.getByTestId("stroop-stimulus")).toBeVisible({ timeout: 30_000 });
 
   const totalText = await page.getByText(/\/ \d+ 次/).innerText();
@@ -125,16 +132,20 @@ export async function completeStroopTraining(page: Page) {
 }
 
 async function readDigitSpanAttemptMeta(page: Page) {
-  const section = page.locator("[data-mode][data-length][data-attempt-index]").first();
+  const section = page.locator("[data-mode][data-length][data-attempt-index][data-digits]").first();
   await expect(section).toBeVisible({ timeout: 15_000 });
   const mode = (await section.getAttribute("data-mode")) as "forward" | "backward";
   const length = Number(await section.getAttribute("data-length"));
   const attemptIndex = Number(await section.getAttribute("data-attempt-index"));
-  return { mode, length, attemptIndex };
+  const digitsAttr = await section.getAttribute("data-digits");
+  const digits = (digitsAttr ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map((value) => Number(value));
+  return { mode, length, attemptIndex, digits };
 }
 
 export async function waitForDigitSpanResponsePhase(page: Page) {
-  await expect(page.getByTestId("digit-stimulus")).toBeHidden({ timeout: 20_000 });
   await expect(page.getByTestId("digit-response")).toHaveAttribute("data-ready", "true", {
     timeout: 20_000,
   });
@@ -153,11 +164,14 @@ export async function enterDigitSpanAnswer(page: Page, digits: number[]) {
 
 export async function completeDigitSpanTraining(page: Page) {
   await page.goto("/student/training/digit-span");
+  await expect(page.getByTestId("digit-span-intro")).toBeVisible({ timeout: 30_000 });
+  await page.getByLabel(/简单 · 全部顺背/).check();
+  await page.getByTestId("digit-span-start").click();
   await expect(page.getByTestId("digit-stimulus")).toBeVisible({ timeout: 30_000 });
 
   const subtitle = await page.locator("header p").innerText();
   const match = subtitle.match(/\/ (\d+) 次/);
-  const total = match ? Number(match[1]) : 14;
+  const total = match ? Number(match[1]) : 8;
 
   for (let attempt = 0; attempt < total; attempt += 1) {
     if (attempt === 0) {
@@ -167,10 +181,10 @@ export async function completeDigitSpanTraining(page: Page) {
     }
 
     await waitForDigitSpanResponsePhase(page);
-    await expect(page.getByTestId("digit-stimulus")).toHaveCount(0);
 
     const meta = await readDigitSpanAttemptMeta(page);
-    const digits = responseDigitsForAttempt(meta.mode, meta.length, meta.attemptIndex);
+    const digits =
+      meta.mode === "forward" ? meta.digits : [...meta.digits].reverse();
     await enterDigitSpanAnswer(page, digits);
 
     if (attempt < total - 1) {

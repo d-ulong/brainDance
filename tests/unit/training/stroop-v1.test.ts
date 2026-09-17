@@ -62,7 +62,7 @@ describe("stroop-v1 validation", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("rejects congruency quota mismatch", () => {
+  it("rejects congruent ink-naming trials", () => {
     const trials = Array.from({ length: schema.trialCount }, (_, trialIndex) => ({
       trialIndex,
       inkColor: "red" as const,
@@ -74,13 +74,12 @@ describe("stroop-v1 validation", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("accepts balanced congruent and incongruent trials", () => {
+  it("accepts all-incongruent ink-naming trials", () => {
     const trials = Array.from({ length: schema.trialCount }, (_, trialIndex) => {
-      const congruent = trialIndex < schema.congruentQuota;
       return {
         trialIndex,
         inkColor: "red" as const,
-        wordColor: congruent ? ("red" as const) : ("blue" as const),
+        wordColor: "blue" as const,
         selectedColor: "red" as const,
         reactionMs: 400 + trialIndex * 10,
       };
@@ -230,12 +229,11 @@ describe("stroop-v1 validation", () => {
 
   it("AC-M5-02: accepts wrong answers as valid trials with reduced accuracy", () => {
     const trials = Array.from({ length: schema.trialCount }, (_, trialIndex) => {
-      const congruent = trialIndex < schema.congruentQuota;
       return {
         trialIndex,
         inkColor: "red" as const,
-        wordColor: congruent ? ("red" as const) : ("blue" as const),
-        selectedColor: congruent || trialIndex % 2 === 0 ? ("red" as const) : ("blue" as const),
+        wordColor: "blue" as const,
+        selectedColor: trialIndex % 2 === 0 ? ("red" as const) : ("blue" as const),
         reactionMs: 400 + trialIndex * 10,
       };
     });
@@ -247,10 +245,10 @@ describe("stroop-v1 validation", () => {
 
     const metrics = computeStroopMetrics(result.data, schema);
     expect(metrics.rejectReason).toBeUndefined();
-    expect(metrics.rows.find((row) => row.metricKey === "congruent_accuracy")?.value).toBe(1);
+    expect(metrics.rows.find((row) => row.metricKey === "congruent_accuracy")?.value).toBe(0);
     expect(
       metrics.rows.find((row) => row.metricKey === "incongruent_accuracy")?.value,
-    ).toBeLessThan(1);
+    ).toBe(0.5);
   });
 });
 
@@ -301,35 +299,36 @@ describe("stroop-v1 metrics", () => {
 
   it("computes typed accuracies, medians, and interference delta", () => {
     const trials = Array.from({ length: schema.trialCount }, (_, trialIndex) => {
-      const congruent = trialIndex < schema.congruentQuota;
       return {
         trialIndex,
         inkColor: "red" as const,
-        wordColor: congruent ? ("red" as const) : ("blue" as const),
-        congruency: congruent ? ("congruent" as const) : ("incongruent" as const),
+        wordColor: "blue" as const,
+        congruency: "incongruent" as const,
         selectedColor: "red" as const,
         correct: true,
-        reactionMs: congruent ? 300 : 500,
+        reactionMs: 500,
       };
     });
 
     const metrics = computeStroopMetrics({ trials, expectedTrialCount: schema.trialCount }, schema);
     expect(metrics.rejectReason).toBeUndefined();
-    expect(metrics.rows.find((row) => row.metricKey === "congruent_accuracy")?.value).toBe(1);
+    expect(metrics.rows.find((row) => row.metricKey === "congruent_accuracy")?.value).toBe(0);
     expect(metrics.rows.find((row) => row.metricKey === "incongruent_accuracy")?.value).toBe(1);
-    expect(metrics.rows.find((row) => row.metricKey === "interference_delta")?.value).toBe(200);
+    expect(metrics.rows.find((row) => row.metricKey === "incongruent_median_reaction_ms")?.value).toBe(
+      500,
+    );
+    expect(metrics.rows.find((row) => row.metricKey === "interference_delta")?.value).toBe(0);
   });
 
   it("rejects sessions without valid medians for both trial types", () => {
     const trials = Array.from({ length: schema.trialCount }, (_, trialIndex) => {
-      const congruent = trialIndex < schema.congruentQuota;
       return {
         trialIndex,
         inkColor: "red" as const,
-        wordColor: congruent ? ("red" as const) : ("blue" as const),
-        congruency: congruent ? ("congruent" as const) : ("incongruent" as const),
-        selectedColor: congruent ? ("red" as const) : ("blue" as const),
-        correct: congruent,
+        wordColor: "blue" as const,
+        congruency: "incongruent" as const,
+        selectedColor: "blue" as const,
+        correct: false,
         reactionMs: 50,
       };
     });

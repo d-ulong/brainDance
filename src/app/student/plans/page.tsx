@@ -24,6 +24,7 @@ import {
   fetchGoals,
   fetchPlanLibrary,
   fetchPointsBalance,
+  fetchPointsPeriodSummary,
   fetchScheduleItems,
   generatePlanLibraryRange,
   savePlanLibrary,
@@ -122,6 +123,7 @@ export default function StudentPlansPage() {
   const [plans, setPlans] = useState<PlanLibraryDto[]>([]);
   const [goals, setGoals] = useState<GoalDto[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
+  const [todayPoints, setTodayPoints] = useState<number | null>(null);
   const [todayItems, setTodayItems] = useState<ScheduleItemDto[]>([]);
   const [openSections, setOpenSections] = useState<Record<WorkspaceView, boolean>>({
     schedule: false,
@@ -129,7 +131,7 @@ export default function StudentPlansPage() {
     goals: false,
   });
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("plans");
-  const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +150,7 @@ export default function StudentPlansPage() {
   const [goalContent, setGoalContent] = useState("");
   const [goalDueDate, setGoalDueDate] = useState(todayFamilyDate());
   const [goalHorizon, setGoalHorizon] = useState<"short" | "medium" | "long">("medium");
+  const [goalHorizonFilter, setGoalHorizonFilter] = useState<"all" | "short" | "medium" | "long">("all");
   const [goalPoints, setGoalPoints] = useState("");
   const [goalGift, setGoalGift] = useState("");
   const [goalNotes, setGoalNotes] = useState("");
@@ -155,12 +158,14 @@ export default function StudentPlansPage() {
 
   const load = useCallback(async (id: string) => {
     const today = todayFamilyDate();
-    const [planResult, goalResult, balanceResult, scheduleResult] = await Promise.allSettled([
-      fetchPlanLibrary(),
-      fetchGoals(),
-      fetchPointsBalance(id),
-      fetchScheduleItems(id, today, today),
-    ]);
+    const [planResult, goalResult, balanceResult, scheduleResult, summaryResult] =
+      await Promise.allSettled([
+        fetchPlanLibrary(),
+        fetchGoals(),
+        fetchPointsBalance(id),
+        fetchScheduleItems(id, today, today),
+        fetchPointsPeriodSummary(id, today, today),
+      ]);
     const failures: string[] = [];
     if (planResult.status === "fulfilled") setPlans(planResult.value.plans);
     else {
@@ -193,6 +198,15 @@ export default function StudentPlansPage() {
           : "今日任务加载失败",
       );
     }
+    if (summaryResult.status === "fulfilled") setTodayPoints(summaryResult.value.schedulePoints);
+    else {
+      setTodayPoints(null);
+      failures.push(
+        summaryResult.reason instanceof ApiError
+          ? summaryResult.reason.message
+          : "今日积分加载失败",
+      );
+    }
     if (failures.length) setError(failures.join("；"));
   }, []);
 
@@ -223,10 +237,6 @@ export default function StudentPlansPage() {
 
   const completedCount = useMemo(
     () => todayItems.filter((item) => item.effectiveStatus === "completed").length,
-    [todayItems],
-  );
-  const completedItems = useMemo(
-    () => todayItems.filter((item) => item.effectiveStatus === "completed"),
     [todayItems],
   );
 
@@ -428,76 +438,77 @@ export default function StudentPlansPage() {
             </nav>
           </div>
           <div className="mt-4">
-              <dl className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-[var(--bd-surface-soft)] p-3">
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
+                  data-testid="points-balance-summary"
+                  aria-expanded={false}
+                  title="今日积分 / 积分余额"
+                >
                   <dt className="text-sm text-slate-600">积分余额</dt>
                   <dd className="text-xl font-bold" data-testid="points-balance">
-                    {balance ?? "—"}
+                    {todayPoints == null || balance == null
+                      ? "—"
+                      : `${todayPoints}/${balance}`}
                   </dd>
-                </div>
-                <div className="rounded-2xl bg-[var(--bd-surface-soft)] p-3">
-                  <dt className="text-sm text-slate-600">今日任务</dt>
-                  <dd className="text-xl font-bold">{todayItems.length}</dd>
-                </div>
-                <div className="rounded-2xl bg-emerald-50 p-3">
-                  <dt className="text-sm text-emerald-800">已完成</dt>
-                  <dd className="text-xl font-bold text-emerald-700">{completedCount}</dd>
+                  <p className="mt-1 text-xs text-slate-500">今日积分 / 积分余额</p>
+                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
+                    data-testid="today-tasks-summary"
+                    aria-expanded={taskDetailOpen}
+                    onClick={() => setTaskDetailOpen((open) => !open)}
+                    onMouseEnter={() => setTaskDetailOpen(true)}
+                    onMouseLeave={() => setTaskDetailOpen(false)}
+                  >
+                    <dt className="text-sm text-slate-600">今日任务</dt>
+                    <dd className="text-xl font-bold" data-testid="today-tasks-count">
+                      {`${completedCount}/${todayItems.length}`}
+                    </dd>
+                    <p className="mt-1 text-xs text-slate-500">已完成 / 今日任务</p>
+                  </button>
+                  {taskDetailOpen ? (
+                    <div
+                      className="absolute left-0 right-0 z-20 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[var(--bd-border)] bg-white p-3 shadow-lg"
+                      data-testid="today-tasks-detail"
+                    >
+                      {todayItems.length === 0 ? (
+                        <p className="text-sm text-slate-500">今日暂无任务</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {todayItems.map((item) => (
+                            <li key={item.id} className="text-sm text-slate-700">
+                              <p className="font-semibold">
+                                {item.title || item.planTitle || "计划任务"} ·{" "}
+                                {scheduleStatusLabel(item.effectiveStatus)}
+                              </p>
+                              <p className="text-slate-500">
+                                时间{" "}
+                                {item.scheduledAt
+                                  ? new Date(item.scheduledAt).toLocaleTimeString("zh-CN", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      hour12: false,
+                                      timeZone: "Asia/Shanghai",
+                                    })
+                                  : "待定"}
+                                {" · "}
+                                时长{" "}
+                                {typeof item.durationMinutes === "number"
+                                  ? `${item.durationMinutes} 分钟`
+                                  : "未设定"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </dl>
-              <ul className="mt-4 space-y-2">
-                {completedItems.map((item) => {
-                  const completed = true;
-                  const open = detailItemId === item.id;
-                  return (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        data-testid={`today-task-${item.id}`}
-                        className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl px-3 text-left ${
-                          completed
-                            ? "border border-emerald-300 bg-emerald-50 text-emerald-900"
-                            : "border border-[var(--bd-border)] bg-[var(--bd-surface-soft)]"
-                        }`}
-                        aria-expanded={open}
-                        onClick={() =>
-                          setDetailItemId((current) => (current === item.id ? null : item.id))
-                        }
-                        onMouseEnter={() => setDetailItemId(item.id)}
-                      >
-                        <span className="font-semibold">{item.title}</span>
-                        <span
-                          data-testid={`today-task-status-${item.id}`}
-                          className={`text-sm font-bold ${completed ? "text-emerald-700" : "text-slate-600"}`}
-                        >
-                          {scheduleStatusLabel(item.effectiveStatus)}
-                        </span>
-                      </button>
-                      {open ? (
-                        <div className="mt-1 rounded-2xl border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-600">
-                          <p>计划：{item.planTitle}</p>
-                          {item.description ? (
-                            <p className="mt-1 whitespace-pre-wrap">说明：{item.description}</p>
-                          ) : null}
-                          <p className="mt-1">
-                            时间：
-                            {item.scheduledAt
-                              ? new Date(item.scheduledAt).toLocaleTimeString("zh-CN", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                  hour12: false,
-                                  timeZone: "Asia/Shanghai",
-                                })
-                              : "时间待定"}
-                          </p>
-                        </div>
-                      ) : null}
-                    </li>
-                  );
-                })}
-                {!completedItems.length ? (
-                  <li className="text-sm text-slate-500">今日还没有已完成任务</li>
-                ) : null}
-              </ul>
           </div>
         </section>
 
@@ -625,21 +636,35 @@ export default function StudentPlansPage() {
           </button>
           {openSections.goals ? (
             <div className="mt-4">
-              <div className="mb-3 flex justify-end">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap gap-2" role="tablist" aria-label="目标期限">
+                  {([
+                    ["all", "全部"],
+                    ["short", "近期"],
+                    ["medium", "中期"],
+                    ["long", "远期"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={goalHorizonFilter === value}
+                      className={`min-h-11 rounded-full px-4 text-sm font-semibold ${goalHorizonFilter === value ? "bg-[var(--bd-primary)] text-white" : "border border-[var(--bd-border)] bg-white"}`}
+                      onClick={() => setGoalHorizonFilter(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <PrimaryButton fullWidth={false} onClick={() => openGoalForm()}>
                   提交期望目标
                 </PrimaryButton>
               </div>
-              {(["short", "medium", "long"] as const).map((horizon) => {
-                const group = goals.filter((goal) => goal.horizon === horizon);
-                if (!group.length) return null;
-                return (
-                  <div key={horizon} className="mt-4">
-                    <h3 className="mb-2 text-sm font-bold text-slate-600">
-                      {horizonLabel[horizon]}
-                    </h3>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      {group.map((goal) => (
+              <div className="grid gap-2 sm:grid-cols-3">
+                {(goalHorizonFilter === "all"
+                  ? goals
+                  : goals.filter((goal) => goal.horizon === goalHorizonFilter)
+                ).map((goal) => (
                         <article
                           key={goal.assignmentId}
                           className="rounded-2xl bg-[var(--bd-surface-soft)] p-3"
@@ -657,7 +682,7 @@ export default function StudentPlansPage() {
                             </span>
                           </div>
                           <p className="mt-2 text-xs text-slate-500">
-                            截止 {goal.dueDate}
+                            {horizonLabel[goal.horizon]} · 截止 {goal.dueDate}
                             {goal.expectedPoints ? ` · 期望 ${goal.expectedPoints} 分` : ""}
                           </p>
                           {goal.giftRedeemedAt ? (
@@ -677,13 +702,13 @@ export default function StudentPlansPage() {
                             </button>
                           ) : null}
                         </article>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+                ))}
+              </div>
               {!goals.length ? (
                 <p className="text-sm text-slate-500">还没有目标，可以向家长提交一个期望。</p>
+              ) : goalHorizonFilter !== "all" &&
+                !goals.some((goal) => goal.horizon === goalHorizonFilter) ? (
+                <p className="mt-3 text-sm text-slate-500">该期限下暂无目标。</p>
               ) : null}
             </div>
           ) : null}

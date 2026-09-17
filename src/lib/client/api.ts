@@ -52,13 +52,6 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return body;
 }
 
-export async function apiLogout(): Promise<void> {
-  await apiFetch("/api/auth/session", {
-    method: "POST",
-    body: JSON.stringify({ idempotencyKey: newIdempotencyKey("logout") }),
-  });
-}
-
 export type SessionInfo = {
   userId: string;
   displayName?: string;
@@ -69,13 +62,50 @@ export type SessionInfo = {
   mustChangePassword?: boolean;
 };
 
-export async function fetchSession(): Promise<SessionInfo | null> {
-  const response = await fetch("/api/auth/session", { credentials: "same-origin" });
-  if (response.status === 401) {
-    return null;
+type SessionCache = {
+  value: SessionInfo | null;
+  at: number;
+};
+
+const SESSION_CACHE_TTL_MS = 30_000;
+let sessionCache: SessionCache | null = null;
+let sessionInflight: Promise<SessionInfo | null> | null = null;
+
+export function clearSessionCache() {
+  sessionCache = null;
+  sessionInflight = null;
+}
+
+export async function fetchSession(options?: { force?: boolean }): Promise<SessionInfo | null> {
+  const force = options?.force === true;
+  if (!force && sessionCache && Date.now() - sessionCache.at < SESSION_CACHE_TTL_MS) {
+    return sessionCache.value;
   }
-  if (!response.ok) {
-    return null;
+  if (!force && sessionInflight) {
+    return sessionInflight;
   }
-  return (await response.json()) as SessionInfo;
+
+  sessionInflight = (async () => {
+    const response = await fetch("/api/auth/session", { credentials: "same-origin" });
+    let value: SessionInfo | null = null;
+    if (response.status !== 401 && response.ok) {
+      value = (await response.json()) as SessionInfo;
+    }
+    sessionCache = { value, at: Date.now() };
+    sessionInflight = null;
+    return value;
+  })();
+
+  return sessionInflight;
+}
+
+export async function apiLogout(): Promise<void> {
+  try {
+    await apiFetch("/api/auth/session", {
+      method: "POST",
+      body: JSON.stringify({ idempotencyKey: newIdempotencyKey("logout") }),
+    });
+  } finally {
+    clearSessionCache();
+  }
 }

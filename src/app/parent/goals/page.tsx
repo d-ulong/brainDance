@@ -58,6 +58,7 @@ function ParentGoalsPageContent() {
   const [expectedGift, setExpectedGift] = useState("");
   const [notes, setNotes] = useState("");
   const [horizon, setHorizon] = useState<"short" | "medium" | "long">("medium");
+  const [horizonFilter, setHorizonFilter] = useState<"all" | "short" | "medium" | "long">("all");
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
   const [redeemedAtInput, setRedeemedAtInput] = useState("");
   const [evaluating, setEvaluating] = useState<GoalDto | null>(null);
@@ -94,7 +95,9 @@ function ParentGoalsPageContent() {
   const selectOptions = session
     ? [{ studentId: session.userId, displayName: `${session.displayName || session.account || "我"}（我的个人目标）`, username: session.account ?? null }, ...students]
     : students;
-  const visibleGoals = selfOnly && session ? goals.filter((item) => item.subjectId === session.userId) : goals;
+  const scopedGoals = selfOnly && session ? goals.filter((item) => item.subjectId === session.userId) : goals;
+  const visibleGoals =
+    horizonFilter === "all" ? scopedGoals : scopedGoals.filter((item) => item.horizon === horizonFilter);
 
   async function saveGoal(event: React.FormEvent) {
     event.preventDefault();
@@ -171,12 +174,31 @@ function ParentGoalsPageContent() {
     <ErrorDialog message={error} onClose={() => setError(null)} />
     <Toast message={message} onClose={() => setMessage(null)} />
     <section className="bd-library-toolbar">
-      <div className="bd-library-toolbar-copy"><h2>{selfOnly ? "我的个人目标" : "目标中心"}</h2><p>{selfOnly ? "只记录个人执行，不产生学生积分或礼物。" : "学生提案需审批；正式目标由责任家长评定。"}</p></div>
+      <div className="bd-library-toolbar-copy"><h2>{selfOnly ? "我的个人目标" : "目标中心"}</h2><p>{selfOnly ? "这是你本人的目标与执行记录；评定积分仅用于个人记录，不进入学生兑换。" : "学生提案需审批；正式目标由责任家长评定。"}</p></div>
       <PrimaryButton fullWidth={false} onClick={() => { setEditingGoal(null); setContent(""); setDueDate(today()); setExpectedPoints(""); setExpectedGift(""); setNotes(""); setSubjectIds(selfOnly && session ? [session.userId] : []); setFormOpen(true); }}>新增目标</PrimaryButton>
     </section>
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.8fr)]">
       <section className="bd-panel">
         <h2 className="mb-3 text-lg font-bold">最近目标</h2>
+        <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="目标期限">
+          {([
+            ["all", "全部"],
+            ["short", "近期"],
+            ["medium", "中期"],
+            ["long", "远期"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={horizonFilter === value}
+              className={`min-h-11 rounded-full px-4 text-sm font-semibold ${horizonFilter === value ? "bg-[var(--bd-primary)] text-white" : "border border-[var(--bd-border)] bg-white"}`}
+              onClick={() => setHorizonFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {visibleGoals.map((item) => <article key={item.assignmentId} className="rounded-3xl border border-[var(--bd-border)] bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3"><strong className="break-words">{item.content}</strong><span className="bd-chip">{goalStatus[item.status]}</span></div>

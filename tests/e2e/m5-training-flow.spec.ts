@@ -79,6 +79,9 @@ test.describe("M5 training UI flow", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/digit-span");
+    await expect(page.getByTestId("digit-span-intro")).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel(/简单 · 全部顺背/).check();
+    await page.getByTestId("digit-span-start").click();
     await expect(page.getByTestId("digit-stimulus")).toBeVisible({ timeout: 30_000 });
 
     await waitForDigitSpanResponsePhase(page);
@@ -96,6 +99,7 @@ test.describe("M5 training UI flow", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     const target = await waitForReactionReady(page);
 
     await simulateVisibility(page, true);
@@ -115,6 +119,7 @@ test.describe("M5 training UI flow", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     const target = await waitForReactionReady(page);
 
     await simulateVisibility(page, true);
@@ -129,6 +134,7 @@ test.describe("M5 training UI flow", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     const target = await waitForReactionReady(page);
 
     await page.route("**/api/training/sessions/*/events", async (route) => {
@@ -153,6 +159,7 @@ test.describe("M5 training UI flow", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     const target = await waitForReactionReady(page);
 
     const postedSequences: number[] = [];
@@ -197,7 +204,7 @@ test.describe("M5 training UI flow", () => {
     await firstResponse;
     await expect.poll(() => failedEventPosts, { timeout: 20_000 }).toBeGreaterThanOrEqual(1);
 
-    for (let trial = 1; trial < 5; trial += 1) {
+    for (let trial = 1; trial < 16; trial += 1) {
       const nextTarget = await waitForReactionReady(page);
       const trialResponse = page.waitForResponse(
         (resp) =>

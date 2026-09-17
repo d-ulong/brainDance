@@ -32,33 +32,33 @@ export type StroopValidatedData = {
 
 const DEFAULT_STROOP_SCHEMAS: Record<string, StroopMetricSchema> = {
   "5-8": {
-    trialCount: 12,
-    congruentQuota: 6,
-    incongruentQuota: 6,
+    trialCount: 16,
+    congruentQuota: 0,
+    incongruentQuota: 16,
     colors: [...STROOP_COLORS],
     minValidMs: 300,
     maxValidMs: 5000,
   },
   "9-12": {
     trialCount: 16,
-    congruentQuota: 8,
-    incongruentQuota: 8,
+    congruentQuota: 0,
+    incongruentQuota: 16,
     colors: [...STROOP_COLORS],
     minValidMs: 200,
     maxValidMs: 4000,
   },
   "13-18": {
-    trialCount: 20,
-    congruentQuota: 10,
-    incongruentQuota: 10,
+    trialCount: 16,
+    congruentQuota: 0,
+    incongruentQuota: 16,
     colors: [...STROOP_COLORS],
     minValidMs: 150,
     maxValidMs: 3000,
   },
   adult: {
-    trialCount: 20,
-    congruentQuota: 10,
-    incongruentQuota: 10,
+    trialCount: 16,
+    congruentQuota: 0,
+    incongruentQuota: 16,
     colors: [...STROOP_COLORS],
     minValidMs: 150,
     maxValidMs: 3000,
@@ -128,7 +128,12 @@ export function validateStroopEvents(
 
   const stimuli = new Map<
     number,
-    { inkColor: StroopColor; wordColor: StroopColor; occurredAt: Date }
+    {
+      inkColor: StroopColor;
+      wordColor: StroopColor;
+      taskMode: "name_ink" | "name_word";
+      occurredAt: Date;
+    }
   >();
   const trials: StroopTrialRecord[] = [];
 
@@ -137,14 +142,18 @@ export function validateStroopEvents(
       const trialIndex = readTrialIndex(event.payload);
       const inkColor = readColor(event.payload.inkColor, schema.colors);
       const wordColor = readColor(event.payload.wordColor, schema.colors);
-      if (trialIndex === null || !inkColor || !wordColor || stimuli.has(trialIndex)) {
+      const taskMode = readTaskMode(event.payload.taskMode);
+      if (trialIndex === null || !inkColor || !wordColor || !taskMode || stimuli.has(trialIndex)) {
         return { valid: false, reason: "Duplicate or invalid stimulus event" };
       }
       if (!isFiniteEventTime(event.occurredAt)) {
         return { valid: false, reason: "Invalid Stroop stimulus timestamp" };
       }
+      if (taskMode === "name_ink" && inkColor === wordColor) {
+        return { valid: false, reason: "Ink-naming trials must be incongruent" };
+      }
 
-      stimuli.set(trialIndex, { inkColor, wordColor, occurredAt: event.occurredAt });
+      stimuli.set(trialIndex, { inkColor, wordColor, taskMode, occurredAt: event.occurredAt });
       continue;
     }
 
@@ -168,13 +177,17 @@ export function validateStroopEvents(
         return { valid: false, reason: "Response occurred before or at stimulus time" };
       }
       const congruency = stimulus.inkColor === stimulus.wordColor ? "congruent" : "incongruent";
+      const correct =
+        stimulus.taskMode === "name_word"
+          ? selectedColor === stimulus.wordColor
+          : selectedColor === stimulus.inkColor;
       trials.push({
         trialIndex,
         inkColor: stimulus.inkColor,
         wordColor: stimulus.wordColor,
         congruency,
         selectedColor,
-        correct: selectedColor === stimulus.inkColor,
+        correct,
         reactionMs,
       });
       continue;
@@ -199,8 +212,8 @@ export function validateStroopEvents(
 
   const congruentCount = trials.filter((t) => t.congruency === "congruent").length;
   const incongruentCount = trials.filter((t) => t.congruency === "incongruent").length;
-  if (congruentCount !== schema.congruentQuota || incongruentCount !== schema.incongruentQuota) {
-    return { valid: false, reason: "Congruency quota mismatch" };
+  if (congruentCount + incongruentCount !== schema.trialCount) {
+    return { valid: false, reason: "Congruency total mismatch" };
   }
 
   return {
@@ -232,14 +245,16 @@ export function computeStroopMetrics(
   const congruentMedian = medianCorrectReactionMs(congruentTrials, schema);
   const incongruentMedian = medianCorrectReactionMs(incongruentTrials, schema);
 
-  if (congruentMedian === null || incongruentMedian === null) {
+  if (incongruentMedian === null && congruentMedian === null) {
     return {
       calculationVersion: STROOP_CALCULATION_VERSION,
       rows: [],
-      rejectReason: "Missing required median reaction time for congruent or incongruent trials",
+      rejectReason: "Missing required median reaction time",
     };
   }
 
+  const baselineMedian = congruentMedian ?? incongruentMedian!;
+  const conflictMedian = incongruentMedian ?? congruentMedian!;
   const congruentAccuracy = accuracy(congruentTrials);
   const incongruentAccuracy = accuracy(incongruentTrials);
   const validTrialCount = data.trials.filter(
@@ -249,35 +264,35 @@ export function computeStroopMetrics(
   const rows: ProtocolMetricRow[] = [
     {
       metricKey: "congruent_accuracy",
-      value: congruentAccuracy,
+      value: congruentTrials.length ? congruentAccuracy : 0,
       unit: "ratio",
       isValid: true,
       calculationVersion: STROOP_CALCULATION_VERSION,
     },
     {
       metricKey: "incongruent_accuracy",
-      value: incongruentAccuracy,
+      value: incongruentTrials.length ? incongruentAccuracy : 0,
       unit: "ratio",
       isValid: true,
       calculationVersion: STROOP_CALCULATION_VERSION,
     },
     {
       metricKey: "congruent_median_reaction_ms",
-      value: congruentMedian,
+      value: baselineMedian,
       unit: "ms",
       isValid: true,
       calculationVersion: STROOP_CALCULATION_VERSION,
     },
     {
       metricKey: "incongruent_median_reaction_ms",
-      value: incongruentMedian,
+      value: conflictMedian,
       unit: "ms",
       isValid: true,
       calculationVersion: STROOP_CALCULATION_VERSION,
     },
     {
       metricKey: "interference_delta",
-      value: incongruentMedian - congruentMedian,
+      value: conflictMedian - baselineMedian,
       unit: "ms",
       isValid: true,
       calculationVersion: STROOP_CALCULATION_VERSION,
@@ -314,6 +329,12 @@ function readColor(value: unknown, allowed: StroopColor[]): StroopColor | null {
     return null;
   }
   return value as StroopColor;
+}
+
+function readTaskMode(value: unknown): "name_ink" | "name_word" | null {
+  if (value === undefined || value === null) return "name_ink";
+  if (value === "name_ink" || value === "name_word") return value;
+  return null;
 }
 
 function accuracy(trials: StroopTrialRecord[]): number {

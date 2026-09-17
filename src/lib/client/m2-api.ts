@@ -30,6 +30,10 @@ export type ScheduleItemDto = {
   priority: number;
   startedAt: string | null;
   description?: string | null;
+  pointsEarned?: number | null;
+  pointsRuleLabel?: string | null;
+  maximumPoints?: number;
+  durationMinutes?: number | null;
 };
 
 export type PointsBalanceDto = {

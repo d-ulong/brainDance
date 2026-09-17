@@ -97,7 +97,7 @@ export function PushDeliveryThread({ studentId, pushId, studentName, onError }: 
                 <div className="bd-social-avatar" aria-hidden="true">{answer.authorName.slice(0, 1) || "🙂"}</div><div className="bd-social-post-main"><p className="bd-social-meta"><strong>{answer.authorName}</strong><time>{new Date(answer.createdAt).toLocaleString("zh-CN")}</time></p>
                 <p className="whitespace-pre-wrap">{answer.body}</p>
                 {answer.media?.length ? <MediaPreviewList studentId={studentId} media={answer.media} testIdPrefix={`push-answer-${answer.answerId}`} /> : null}
-                <div className="bd-social-post-actions"><span>第 {index + 1} 次作答</span><button type="button" onClick={() => setQuote({ answerId: answer.answerId })}>引用作答</button></div></div>
+                <div className="bd-social-post-actions"><span>第 {index + 1} 次作答{answer.edited ? " · 已编辑" : ""}</span><button type="button" onClick={() => setQuote({ answerId: answer.answerId })}>引用作答</button></div></div>
               </li>)}
             </ul> : <p className="mt-1 text-neutral-600">暂未作答</p>}
           </div>

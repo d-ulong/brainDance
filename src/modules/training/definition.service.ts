@@ -122,11 +122,16 @@ async function seedDefinitionForKey(
 }
 
 export async function seedReactionDefinitions(db: Database): Promise<void> {
-  await seedDefinitionForKey(db, REACTION_TRAINING_KEY, () => ({ trialCount: 5 }));
+  const schema = { trialCount: 16 };
+  await seedDefinitionForKey(db, REACTION_TRAINING_KEY, () => schema);
+  await refreshActiveMetricSchemas(db, REACTION_TRAINING_KEY, () => schema);
 }
 
 export async function seedStroopDefinitions(db: Database): Promise<void> {
   await seedDefinitionForKey(db, STROOP_TRAINING_KEY, (ageBand) => ({
+    ...DEFAULT_STROOP_SCHEMAS[ageBand],
+  }));
+  await refreshActiveMetricSchemas(db, STROOP_TRAINING_KEY, (ageBand) => ({
     ...DEFAULT_STROOP_SCHEMAS[ageBand],
   }));
 }
@@ -135,6 +140,29 @@ export async function seedDigitSpanDefinitions(db: Database): Promise<void> {
   await seedDefinitionForKey(db, DIGIT_SPAN_TRAINING_KEY, (ageBand) => ({
     ...DEFAULT_DIGIT_SPAN_SCHEMAS[ageBand],
   }));
+  await refreshActiveMetricSchemas(db, DIGIT_SPAN_TRAINING_KEY, (ageBand) => ({
+    ...DEFAULT_DIGIT_SPAN_SCHEMAS[ageBand],
+  }));
+}
+
+/** Keep existing pilot/test active definitions aligned with current defaults. */
+async function refreshActiveMetricSchemas(
+  db: Database,
+  trainingKey: string,
+  metricSchemaForAgeBand: (ageBand: TrainingAgeBand) => Record<string, unknown>,
+): Promise<void> {
+  for (const ageBand of [...CHILD_AGE_BANDS, ADULT_AGE_BAND] as TrainingAgeBand[]) {
+    await db
+      .update(trainingDefinitions)
+      .set({ metricSchema: metricSchemaForAgeBand(ageBand) })
+      .where(
+        and(
+          eq(trainingDefinitions.trainingKey, trainingKey),
+          eq(trainingDefinitions.ageBand, ageBand),
+          eq(trainingDefinitions.active, 1),
+        ),
+      );
+  }
 }
 
 export async function seedM5TrainingDefinitions(db: Database): Promise<void> {

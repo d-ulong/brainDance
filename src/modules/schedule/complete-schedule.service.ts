@@ -162,7 +162,7 @@ export async function completeScheduleItem(
 
   if ((input.actorRole ?? "student") === "student") {
     if (preflightItem.studentId !== input.actorId) throw new ScheduleError("FORBIDDEN", "学生只能完成自己的日程");
-  } else {
+  } else if (preflightItem.studentId !== input.actorId) {
     await requireActiveRelationship(db, input.actorId, preflightItem.studentId);
   }
 
@@ -173,7 +173,9 @@ export async function completeScheduleItem(
   try {
     return await db.transaction(async (tx) => {
       const item = await lockScheduleItem(tx, input.scheduleItemId);
-      if ((input.actorRole ?? "student") === "parent") await requireActiveRelationship(tx, input.actorId, item.studentId);
+      if ((input.actorRole ?? "student") === "parent" && item.studentId !== input.actorId) {
+        await requireActiveRelationship(tx, input.actorId, item.studentId);
+      }
 
       const [existingEvent] = await tx
         .select()
@@ -218,7 +220,14 @@ export async function completeScheduleItem(
         if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(completedAt.getTime())) throw new ScheduleError("VALIDATION_ERROR", "执行时间格式不正确");
         if (toFamilyDate(startedAt) !== item.familyDate) throw new ScheduleError("VALIDATION_ERROR", "开始时间必须在任务日期当天");
         if (completedAt <= startedAt) throw new ScheduleError("VALIDATION_ERROR", "结束时间必须晚于开始时间");
-        if (completedAt > now) throw new ScheduleError("VALIDATION_ERROR", "结束时间不能晚于当前时间");
+        if (completedAt > now) {
+          throw new ScheduleError(
+            "VALIDATION_ERROR",
+            input.body?.durationMinutes !== undefined
+              ? "开始时间加完成时长不能晚于当前时间，请缩短时长或调整开始时间"
+              : "结束时间不能晚于当前时间",
+          );
+        }
         if (planRule && !planRule.startedAt) await tx.update(planItemRules).set({ startedAt }).where(eq(planItemRules.scheduleItemId, item.id));
       }
 

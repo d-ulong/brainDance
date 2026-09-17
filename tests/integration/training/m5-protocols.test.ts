@@ -247,7 +247,7 @@ describe.skipIf(!hasDb)("M5 training protocols", () => {
       idempotencyKey: "snapshot-start-v1",
     });
     expect(started.definitionVersion).toBe(1);
-    expect(started.expectedTrialCount).toBe(5);
+    expect(started.expectedTrialCount).toBe(16);
 
     await db
       .update(trainingDefinitions)
@@ -274,11 +274,11 @@ describe.skipIf(!hasDb)("M5 training protocols", () => {
       idempotencyKey: "snapshot-start-v1",
     });
     expect(replay.idempotentReplay).toBe(true);
-    expect(replay.expectedTrialCount).toBe(5);
+    expect(replay.expectedTrialCount).toBe(16);
     expect(replay.definitionVersion).toBe(1);
 
     let sequence = 0;
-    for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+    for (let trialIndex = 0; trialIndex < started.expectedTrialCount; trialIndex += 1) {
       await appendTrainingEvent(db, {
         studentId: student.studentId,
         sessionId: started.sessionId,
@@ -336,10 +336,10 @@ describe.skipIf(!hasDb)("M5 training protocols", () => {
       idempotencyKey: "snapshot-none-start",
     });
     expect(replay.idempotentReplay).toBe(true);
-    expect(replay.expectedTrialCount).toBe(5);
+    expect(replay.expectedTrialCount).toBe(16);
 
     let sequence = 0;
-    for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+    for (let trialIndex = 0; trialIndex < started.expectedTrialCount; trialIndex += 1) {
       await appendTrainingEvent(db, {
         studentId: student.studentId,
         sessionId: started.sessionId,

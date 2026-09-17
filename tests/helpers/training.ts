@@ -35,15 +35,16 @@ export async function completeReactionSession(
 ) {
   await ensureM5TrainingDefinitions(db);
 
-  const trialCount = input?.trialCount ?? 5;
   const reactionMs = input?.reactionMs ?? 350;
-  const correctTrials = input?.correctTrials ?? trialCount;
 
   const started = await startTrainingSession(db, {
     studentId,
     trainingKey: REACTION_TRAINING_KEY,
     idempotencyKey: input?.startIdempotencyKey ?? `start-${crypto.randomUUID()}`,
   });
+
+  const trialCount = input?.trialCount ?? started.expectedTrialCount;
+  const correctTrials = input?.correctTrials ?? trialCount;
 
   let sequence = 0;
   for (let trialIndex = 0; trialIndex < trialCount; trialIndex += 1) {
@@ -104,16 +105,15 @@ export async function completeStroopSession(
   let sequence = 0;
 
   for (let trialIndex = 0; trialIndex < schema.trialCount; trialIndex += 1) {
-    const congruent = trialIndex < schema.congruentQuota;
     const inkColor = STROOP_COLORS[0]!;
-    const wordColor = congruent ? inkColor : STROOP_COLORS[1]!;
+    const wordColor = STROOP_COLORS[1]!;
 
     await appendTrainingEvent(db, {
       studentId,
       sessionId: started.sessionId,
       sequence,
       eventType: "trial.stimulus",
-      payload: { trialIndex, inkColor, wordColor },
+      payload: { trialIndex, inkColor, wordColor, taskMode: "name_ink" },
     });
     sequence += 1;
 

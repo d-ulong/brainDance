@@ -15,7 +15,7 @@ export async function startPlanItem(db: Database, input: { actorId: string; acto
   if (!preflight) throw new ScheduleError("NOT_FOUND", "日程不存在");
   if ((input.actorRole ?? "student") === "student") {
     if (preflight.studentId !== input.actorId) throw new ScheduleError("FORBIDDEN", "学生只能开始自己的计划内容");
-  } else {
+  } else if (preflight.studentId !== input.actorId) {
     await requireActiveRelationship(db, input.actorId, preflight.studentId);
   }
   await assertStudentAccountNotFrozen(db, preflight.studentId, "write");
@@ -29,7 +29,7 @@ export async function startPlanItem(db: Database, input: { actorId: string; acto
     if (replay) { if (replay.payloadHash !== payloadHash) throw new ScheduleError("IDEMPOTENCY_CONFLICT", "开始请求内容不一致"); return { factVersionId: replay.id, startedAt: rule.startedAt ?? now, idempotentReplay: true }; }
     if (item.status !== "pending") throw new ScheduleError("STATE_CONFLICT", "日程已不处于待完成状态");
     if (rule.startedAt) throw new ScheduleError("STATE_CONFLICT", "该内容已经开始");
-    if ((input.actorRole ?? "student") === "parent") await requireActiveRelationship(tx, input.actorId, item.studentId);
+    if ((input.actorRole ?? "student") === "parent" && item.studentId !== input.actorId) await requireActiveRelationship(tx, input.actorId, item.studentId);
     // A start fact is system-shaped by the immutable fact constraint. The actual
     // operator is preserved by the surrounding audit record; parent completion
     // remains a manual fact with submittedBy and an execution interval.

@@ -19,6 +19,10 @@ Use this contract whenever a schedule execution fact, effective status, completi
 - Direct completion may supply an execution interval without a prior start click. The service stores `sourceKind=manual`, `submittedBy`, start/end/duration, and settles against the rule frozen for the item.
 - Effective `in_progress` is derived from a non-null start fact while the item remains pending; it is never inferred in the browser.
 - Clearing is a soft transition to `cancelled`. Parents may clear an actively related student's eligible items; students may clear only eligible items whose `owner_id` is themselves.
+- Regenerating a plan-library range revives matching `cancelled` rows back to `pending` (overwrite) instead of leaving cancelled rows visible beside new work. Calendar queries omit `cancelled` items by default.
+- Parents may start/complete their own personal schedule items (`actorId === studentId`) without a family relationship check; acting on a linked student still requires an active relationship.
+- Completed schedule DTOs expose `pointsEarned`, `pointsRuleLabel`, and `maximumPoints` so the calendar can show score and matched rule on click/hover.
+- Period summary (`今日积分净变动` / `日程得分 / 全部完成最高`) must mark loading immediately on start/complete and refetch from authoritative ledger/query as soon as the write succeeds; the completion dialog may close without waiting for the refetch to finish, but the summary area must show the updating state until fresh numbers arrive.
 - Clearing range starts today, ends no later than today + 89 days, and spans at most 90 calendar days. Started, completed, skipped, expired, suppressed, or already cancelled items are preserved.
 
 ## 4. Validation & Error Matrix
@@ -27,6 +31,7 @@ Use this contract whenever a schedule execution fact, effective status, completi
 | --- | --- |
 | End and duration both supplied | `VALIDATION_ERROR`, HTTP 400 |
 | Start/end invalid, reversed, or future | `VALIDATION_ERROR`, HTTP 400 |
+| Duration mode pushes end past now | `VALIDATION_ERROR` with copy about start+duration, not a blank end-time field |
 | Ordinary completion after the next-day 18:00 cutoff | completion-window error; no positive settlement |
 | Student clears a parent-owned item | item remains unchanged |
 | Parent lacks an active relationship | forbidden |

@@ -79,7 +79,7 @@ describe("digit-span-v1 validation", () => {
     expect(result.valid).toBe(false);
   });
 
-  it("rejects backward attempts before forward attempts complete", () => {
+  it("accepts mixed forward/backward order for hard mode", () => {
     const events = buildDigitSpanEvents(schema, {});
     const backwardIndex = events.findIndex((event) => event.payload.mode === "backward");
     const swapped = [
@@ -88,7 +88,7 @@ describe("digit-span-v1 validation", () => {
       ...events.slice(backwardIndex + 2),
     ];
     const result = validateDigitSpanEvents(swapped, schema);
-    expect(result.valid).toBe(false);
+    expect(result.valid).toBe(true);
   });
 
   it("accepts full forward and backward ladder", () => {
@@ -300,10 +300,18 @@ describe("digit-span-v1 metrics", () => {
 
   it("computes separate forward and backward max spans", () => {
     const responses: Record<string, number[]> = {
-      "forward:5:0": [1, 2, 3, 4, 5],
-      "forward:5:1": [9, 9, 9, 9, 9],
+      "forward:6:0": [9, 9, 9, 9, 9, 9],
+      "forward:6:1": [9, 9, 9, 9, 9, 9],
+      "forward:7:0": [9, 9, 9, 9, 9, 9, 9],
+      "forward:7:1": [9, 9, 9, 9, 9, 9, 9],
       "backward:4:0": [5, 4, 3, 2],
       "backward:4:1": [1, 1, 1, 1],
+      "backward:5:0": [1, 1, 1, 1, 1],
+      "backward:5:1": [1, 1, 1, 1, 1],
+      "backward:6:0": [1, 1, 1, 1, 1, 1],
+      "backward:6:1": [1, 1, 1, 1, 1, 1],
+      "backward:7:0": [1, 1, 1, 1, 1, 1, 1],
+      "backward:7:1": [1, 1, 1, 1, 1, 1, 1],
     };
     const validation = validateDigitSpanEvents(buildDigitSpanEvents(schema, responses), schema);
     expect(validation.valid).toBe(true);

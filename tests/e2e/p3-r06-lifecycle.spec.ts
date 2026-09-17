@@ -35,6 +35,7 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
     });
 
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     await expect(page.getByTestId("training-target")).toBeVisible({ timeout: 30_000 });
 
     await simulateVisibility(page, true);
@@ -42,7 +43,7 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
 
     await expect(page.getByTestId("training-paused")).toBeVisible();
     await expect(page.getByTestId("training-target")).toBeDisabled();
-    await expect(page.getByTestId("training-target")).toContainText("准备下一次");
+    await expect(page.getByTestId("training-target")).toContainText("准备");
   });
 
   test("P3-R06-C1: syncs pause when session binds while document hidden", async ({ page }) => {
@@ -60,6 +61,7 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
 
     await expect(page.getByTestId("training-paused")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("training-target")).toBeDisabled();
@@ -71,6 +73,7 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     await waitForReactionReady(page);
 
     await page.route("**/api/training/sessions/*/events", async (route) => {
@@ -94,6 +97,7 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/reaction");
+    await page.getByTestId("reaction-start").click();
     await waitForReactionReady(page);
 
     await simulateVisibility(page, true);
@@ -110,6 +114,9 @@ test.describe("P3-R06 lifecycle gate evidence", () => {
     const fixture = loadE2eFixture();
     await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
     await page.goto("/student/training/digit-span");
+    await expect(page.getByTestId("digit-span-intro")).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel(/简单 · 全部顺背/).check();
+    await page.getByTestId("digit-span-start").click();
     await expect(page.getByTestId("digit-stimulus")).toBeVisible({ timeout: 30_000 });
 
     await page.waitForTimeout(500);

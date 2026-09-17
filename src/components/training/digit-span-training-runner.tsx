@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   buildDigitSpanAttemptPlan,
+  SEQUENTIAL_DIGIT_MS,
+  wholeSequenceDisplayMs,
   type DigitSpanAttemptPlan,
+  type DigitSpanDifficulty,
 } from "@/components/training/digit-span-plan";
 import {
   displayActionAfterAppend,
@@ -16,28 +19,33 @@ import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
 
-type Phase = "stimulus" | "response";
-
-const STIMULUS_BASE_MS = 400;
-const STIMULUS_MS_PER_DIGIT = 700;
+type Phase = "intro" | "stimulus" | "response";
 
 export function DigitSpanTrainingRunner({
   lifecycleOptions,
 }: {
   lifecycleOptions: TrainingSessionLifecycleOptions;
 }) {
-  const lifecycle = useTrainingSessionLifecycle("digit-span", lifecycleOptions);
+  const lifecycle = useTrainingSessionLifecycle("digit-span", {
+    ...lifecycleOptions,
+    deferSessionStart: true,
+  });
+  const [uiPhase, setUiPhase] = useState<Phase>("intro");
+  const [difficulty, setDifficulty] = useState<DigitSpanDifficulty>("hard");
   const [attemptIndex, setAttemptIndex] = useState(0);
-  const [phase, setPhase] = useState<Phase>("stimulus");
+  const [phase, setPhase] = useState<"stimulus" | "response">("stimulus");
   const [currentAttempt, setCurrentAttempt] = useState<DigitSpanAttemptPlan | null>(null);
+  const [attempts, setAttempts] = useState<DigitSpanAttemptPlan[]>([]);
   const [responseDigits, setResponseDigits] = useState<number[]>([]);
-  const initializedRef = useRef(false);
-  const phaseRef = useRef<Phase>("stimulus");
+  const [visibleDigit, setVisibleDigit] = useState<string>("");
+  const [sequential, setSequential] = useState(false);
+  const phaseRef = useRef<"stimulus" | "response">("stimulus");
   const currentAttemptRef = useRef<DigitSpanAttemptPlan | null>(null);
   const responseDigitsRef = useRef<number[]>([]);
   const displayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const digitTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const displayRemainingRef = useRef(0);
   const displayStartedAtRef = useRef<number | null>(null);
   const resumeFromDisplayExpiryRef = useRef(false);
@@ -47,26 +55,27 @@ export function DigitSpanTrainingRunner({
   currentAttemptRef.current = currentAttempt;
   responseDigitsRef.current = responseDigits;
 
-  const attempts = useMemo(
-    () => (lifecycle.session ? buildDigitSpanAttemptPlan(lifecycle.session.ageBand) : []),
-    [lifecycle.session],
-  );
-
   const interactionLocked =
     lifecycle.submitting ||
     lifecycle.leaving ||
     lifecycle.paused ||
     lifecycle.terminated ||
-    Boolean(lifecycle.error);
+    lifecycle.starting ||
+    Boolean(lifecycle.error && uiPhase !== "intro");
 
   const clearDisplayTimer = useCallback(() => {
     if (displayTimerRef.current !== null) {
       clearTimeout(displayTimerRef.current);
       displayTimerRef.current = null;
     }
+    if (digitTimerRef.current !== null) {
+      clearInterval(digitTimerRef.current);
+      digitTimerRef.current = null;
+    }
   }, []);
 
   const openResponsePhase = useCallback(() => {
+    setVisibleDigit("");
     setPhase("response");
     displayRemainingRef.current = 0;
     displayStartedAtRef.current = null;
@@ -79,6 +88,7 @@ export function DigitSpanTrainingRunner({
     (remainingMs: number) => {
       clearDisplayTimer();
       if (remainingMs <= 0) {
+        openResponsePhase();
         return;
       }
       displayRemainingRef.current = remainingMs;
@@ -104,16 +114,36 @@ export function DigitSpanTrainingRunner({
     [clearDisplayTimer, isInteractionAllowed, openResponsePhase],
   );
 
+  const startSequentialDisplay = useCallback(
+    (digits: number[]) => {
+      clearDisplayTimer();
+      let index = 0;
+      setVisibleDigit(String(digits[0] ?? ""));
+      digitTimerRef.current = setInterval(() => {
+        index += 1;
+        if (index >= digits.length) {
+          clearDisplayTimer();
+          openResponsePhase();
+          return;
+        }
+        setVisibleDigit(String(digits[index]));
+      }, SEQUENTIAL_DIGIT_MS);
+    },
+    [clearDisplayTimer, openResponsePhase],
+  );
+
   useEffect(() => {
     const wasPaused = prevPausedRef.current;
     prevPausedRef.current = lifecycle.paused;
 
-    if (phase !== "stimulus" || lifecycle.paused) {
-      if (lifecycle.paused && displayStartedAtRef.current !== null) {
-        const elapsed = performance.now() - displayStartedAtRef.current;
-        displayRemainingRef.current = Math.max(0, displayRemainingRef.current - elapsed);
-        displayStartedAtRef.current = null;
+    if (phase !== "stimulus" || lifecycle.paused || sequential) {
+      if (lifecycle.paused) {
         clearDisplayTimer();
+        if (displayStartedAtRef.current !== null) {
+          const elapsed = performance.now() - displayStartedAtRef.current;
+          displayRemainingRef.current = Math.max(0, displayRemainingRef.current - elapsed);
+          displayStartedAtRef.current = null;
+        }
       }
       return;
     }
@@ -136,16 +166,18 @@ export function DigitSpanTrainingRunner({
     openResponsePhase,
     phase,
     scheduleDisplayEnd,
+    sequential,
   ]);
 
   useEffect(() => () => clearDisplayTimer(), [clearDisplayTimer]);
 
   const showStimulus = useCallback(
-    async (plan: DigitSpanAttemptPlan) => {
+    async (plan: DigitSpanAttemptPlan, useSequential: boolean) => {
       clearDisplayTimer();
       setCurrentAttempt(plan);
       setPhase("stimulus");
       setResponseDigits([]);
+      setVisibleDigit("");
       displayRemainingRef.current = 0;
       displayStartedAtRef.current = null;
       resumeFromDisplayExpiryRef.current = false;
@@ -157,7 +189,12 @@ export function DigitSpanTrainingRunner({
           attemptIndex: plan.attemptIndex,
           sequence: plan.digits,
         });
-        const displayMs = STIMULUS_BASE_MS + plan.length * STIMULUS_MS_PER_DIGIT;
+        if (useSequential) {
+          startSequentialDisplay(plan.digits);
+          return;
+        }
+        setVisibleDigit(plan.digits.join(" "));
+        const displayMs = wholeSequenceDisplayMs(plan.length);
         const displayAction = displayActionAfterAppend(isInteractionAllowed(), displayMs);
         if (displayAction.action === "schedule") {
           scheduleDisplayEnd(displayAction.ms);
@@ -168,7 +205,13 @@ export function DigitSpanTrainingRunner({
         setPhase("stimulus");
       }
     },
-    [clearDisplayTimer, isInteractionAllowed, lifecycle, scheduleDisplayEnd],
+    [
+      clearDisplayTimer,
+      isInteractionAllowed,
+      lifecycle,
+      scheduleDisplayEnd,
+      startSequentialDisplay,
+    ],
   );
 
   const submitResponse = useCallback(async () => {
@@ -195,11 +238,11 @@ export function DigitSpanTrainingRunner({
       }
 
       setAttemptIndex(nextIndex);
-      await showStimulus(attempts[nextIndex]!);
+      await showStimulus(attempts[nextIndex]!, sequential);
     } catch {
       // keep response phase for retry
     }
-  }, [attemptIndex, attempts, interactionLocked, lifecycle, showStimulus]);
+  }, [attemptIndex, attempts, interactionLocked, lifecycle, sequential, showStimulus]);
 
   const appendDigit = useCallback(
     (digit: number) => {
@@ -215,18 +258,17 @@ export function DigitSpanTrainingRunner({
     [interactionLocked],
   );
 
-  useEffect(() => {
-    if (
-      !lifecycle.session ||
-      initializedRef.current ||
-      attempts.length === 0 ||
-      lifecycle.terminated
-    ) {
-      return;
-    }
-    initializedRef.current = true;
-    void showStimulus(attempts[0]!);
-  }, [attempts, lifecycle.session, lifecycle.terminated, showStimulus]);
+  const beginTraining = useCallback(async () => {
+    const started = await lifecycle.beginSession();
+    if (!started) return;
+    const plan = buildDigitSpanAttemptPlan(started.ageBand, difficulty);
+    const useSequential = difficulty === "hard";
+    setAttempts(plan);
+    setSequential(useSequential);
+    setAttemptIndex(0);
+    setUiPhase("stimulus");
+    await showStimulus(plan[0]!, useSequential);
+  }, [difficulty, lifecycle, showStimulus]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -260,13 +302,9 @@ export function DigitSpanTrainingRunner({
     );
   }
 
-  if (lifecycle.error) {
+  if (lifecycle.error && uiPhase === "intro" && !lifecycle.session) {
     return (
-      <PageShell
-        title="数字广度"
-        backHref={lifecycle.hubPath}
-        onBeforeNavigate={lifecycle.confirmLeave}
-      >
+      <PageShell title="数字广度" backHref={lifecycle.hubPath}>
         <Alert tone="error">{lifecycle.error}</Alert>
       </PageShell>
     );
@@ -277,7 +315,11 @@ export function DigitSpanTrainingRunner({
   return (
     <PageShell
       title="数字广度"
-      subtitle={`第 ${Math.min(attemptIndex + 1, attempts.length)} / ${attempts.length} 次 · ${modeLabel}`}
+      subtitle={
+        uiPhase === "intro"
+          ? "说明与难度"
+          : `第 ${Math.min(attemptIndex + 1, attempts.length || 1)} / ${attempts.length || "—"} 次 · ${modeLabel}`
+      }
       subtitleKind="status"
       backHref={lifecycle.hubPath}
       showLogout
@@ -294,87 +336,143 @@ export function DigitSpanTrainingRunner({
           网络不稳定，正在重试提交…
         </Alert>
       ) : null}
+      {lifecycle.error && uiPhase !== "intro" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
 
-      {currentAttempt ? (
-        <section
-          className="rounded-xl border border-neutral-300 bg-white p-4"
-          data-mode={currentAttempt.mode}
-          data-length={currentAttempt.length}
-          data-attempt-index={currentAttempt.attemptIndex}
-          data-phase={phase}
-        >
-          <p className="text-xs text-neutral-500">
-            {modeLabel} · 长度 {currentAttempt.length} · 第 {currentAttempt.attemptIndex + 1} 次尝试
+      {uiPhase === "intro" ? (
+        <section className="space-y-4 rounded-3xl border border-[var(--bd-border)] bg-white p-5" data-testid="digit-span-intro">
+          <p className="text-sm text-slate-700">
+            记住屏幕上的数字序列后按规则输入。数字为真随机（相邻位不会相同）。
           </p>
-          {phase === "stimulus" ? (
-            <>
-              <p className="mt-2 text-xs text-neutral-500" data-testid="digit-stimulus-label">
-                请记住以下数字序列
-              </p>
-              <p
-                className="mt-3 text-3xl font-bold tracking-widest text-neutral-900"
-                data-testid="digit-stimulus"
-              >
-                {currentAttempt.digits.join(" ")}
-              </p>
-            </>
-          ) : (
-            <p className="mt-3 text-sm text-neutral-700" data-testid="digit-recall-prompt">
-              {currentAttempt.mode === "forward" ? "请按相同顺序输入数字" : "请按相反顺序输入数字"}
-            </p>
-          )}
-        </section>
-      ) : null}
-
-      <div
-        className="min-h-11 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-lg font-medium tracking-widest"
-        data-testid="digit-response"
-        data-ready={phase === "response" ? "true" : "false"}
-        aria-live="polite"
-      >
-        {responseDigits.length > 0 ? responseDigits.join(" ") : "—"}
-      </div>
-
-      <div className="grid grid-cols-5 gap-2">
-        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((digit) => (
-          <TrainingButton
-            key={digit}
-            variant="option"
-            data-testid={`digit-key-${digit}`}
-            disabled={phase !== "response" || interactionLocked}
-            onClick={() => appendDigit(digit)}
-            className="min-h-11 px-2"
+          <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
+            <li>
+              <strong>简单 · 顺背</strong>：全部按出现顺序回忆，数字一次全部显示。
+            </li>
+            <li>
+              <strong>简单 · 倒背</strong>：全部按相反顺序回忆，数字一次全部显示。
+            </li>
+            <li>
+              <strong>困难</strong>：顺背与倒背随机混合；数字逐个闪现，每位 0.8 秒。
+            </li>
+          </ul>
+          <p className="text-sm text-slate-600">
+            各难度均为 16 次；长度从 4 位起。整串显示：≤5 位 2 秒，6–8 位 4 秒，9–14 位 7 秒，15 位及以上 10 秒。
+          </p>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-semibold text-slate-800">难度</legend>
+            {(
+              [
+                ["hard", "困难 · 顺背/倒背随机 + 逐位显示（16 次）"],
+                ["easy_forward", "简单 · 全部顺背（16 次，4 位起）"],
+                ["easy_backward", "简单 · 全部倒背（16 次，4 位起）"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex min-h-11 items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="digit-difficulty"
+                  checked={difficulty === value}
+                  onChange={() => setDifficulty(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          <PrimaryButton
+            data-testid="digit-span-start"
+            disabled={lifecycle.starting}
+            onClick={() => void beginTraining()}
           >
-            {digit}
-          </TrainingButton>
-        ))}
-      </div>
+            {lifecycle.starting ? "正在开始…" : "开始"}
+          </PrimaryButton>
+        </section>
+      ) : (
+        <>
+          {currentAttempt ? (
+            <section
+              className="rounded-xl border border-neutral-300 bg-white p-4"
+              data-mode={currentAttempt.mode}
+              data-length={currentAttempt.length}
+              data-attempt-index={currentAttempt.attemptIndex}
+              data-digits={currentAttempt.digits.join(",")}
+              data-phase={phase}
+            >
+              <p className="text-xs text-neutral-500">
+                {modeLabel} · 长度 {currentAttempt.length} · 第 {currentAttempt.attemptIndex + 1}{" "}
+                次尝试
+              </p>
+              {phase === "stimulus" ? (
+                <>
+                  <p className="mt-2 text-xs text-neutral-500" data-testid="digit-stimulus-label">
+                    {sequential ? "请记住依次出现的数字" : "请记住以下数字序列"}
+                  </p>
+                  <p
+                    className="mt-3 text-3xl font-bold tracking-widest text-neutral-900"
+                    data-testid="digit-stimulus"
+                  >
+                    {visibleDigit || "…"}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-3 text-sm text-neutral-700" data-testid="digit-recall-prompt">
+                  {currentAttempt.mode === "forward"
+                    ? "请按相同顺序输入数字"
+                    : "请按相反顺序输入数字"}
+                </p>
+              )}
+            </section>
+          ) : null}
 
-      <div className="flex gap-2">
-        <TrainingButton
-          variant="option"
-          data-testid="digit-clear"
-          disabled={phase !== "response" || interactionLocked}
-          onClick={() => setResponseDigits([])}
-          className="flex-1"
-        >
-          清除
-        </TrainingButton>
-        <TrainingButton
-          data-testid="digit-submit"
-          disabled={
-            phase !== "response" ||
-            interactionLocked ||
-            responseDigits.length !== (currentAttempt?.length ?? 0)
-          }
-          onClick={() => void submitResponse()}
-          className="flex-1"
-        >
-          确认（Enter）
-        </TrainingButton>
-      </div>
+          <div
+            className="min-h-11 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-lg font-medium tracking-widest"
+            data-testid="digit-response"
+            data-ready={phase === "response" ? "true" : "false"}
+            aria-live="polite"
+          >
+            {responseDigits.length > 0 ? responseDigits.join(" ") : "—"}
+          </div>
 
-      {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
+          <div className="grid grid-cols-5 gap-2">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((digit) => (
+              <TrainingButton
+                key={digit}
+                variant="option"
+                data-testid={`digit-key-${digit}`}
+                disabled={phase !== "response" || interactionLocked}
+                onClick={() => appendDigit(digit)}
+                className="min-h-11 px-2"
+              >
+                {digit}
+              </TrainingButton>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <TrainingButton
+              variant="option"
+              data-testid="digit-clear"
+              disabled={phase !== "response" || interactionLocked}
+              onClick={() => setResponseDigits([])}
+              className="flex-1"
+            >
+              清除
+            </TrainingButton>
+            <TrainingButton
+              data-testid="digit-submit"
+              disabled={
+                phase !== "response" ||
+                interactionLocked ||
+                responseDigits.length !== (currentAttempt?.length ?? 0)
+              }
+              onClick={() => void submitResponse()}
+              className="flex-1"
+            >
+              确认（Enter）
+            </TrainingButton>
+          </div>
+
+          {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
+        </>
+      )}
     </PageShell>
   );
 }

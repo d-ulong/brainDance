@@ -81,9 +81,6 @@ export default function ParentStudentsPage() {
               className="bd-student-card"
             >
               <p className="font-medium">{student.displayName}</p>
-              <p className="text-sm text-neutral-500">
-                {student.username ? `@${student.username}` : student.displayName}
-              </p>
               <nav aria-label={`${student.displayName}的功能`}>
                 <Link
                   href={`/parent/students/${student.studentId}/plans`}
