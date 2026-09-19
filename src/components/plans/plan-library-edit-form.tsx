@@ -1,83 +1,54 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import {
+  blankPlanEntry,
+  planFromDefinition,
+  toPlanDefinition,
+  type PlanDraftEntry,
+} from "@/lib/plans/plan-draft-serialization";
 import { Field, PrimaryButton, SecondaryButton, TextInput } from "@/components/ui/page-shell";
 import { type PlanDefinitionDto, type PlanLibraryDto } from "@/lib/client/m2-api";
 
-export type PlanDraftEntry = {
-  title: string;
-  description: string;
-  expectedTime: string;
-  repeat: "once" | "daily" | "weekly" | "monthly";
-  repeatValue: string;
-};
+export { blankPlanEntry, planFromDefinition, toPlanDefinition, type PlanDraftEntry };
 
-export const blankPlanEntry = (): PlanDraftEntry => ({
-  title: "",
-  description: "",
-  expectedTime: "19:00",
-  repeat: "daily",
-  repeatValue: "",
-});
+const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
-export function planFromDefinition(plan: PlanDefinitionDto): PlanDraftEntry[] {
-  return plan.entries.map((entry) => ({
-    title: entry.title,
-    description: entry.description ?? "",
-    expectedTime: entry.expectedTime,
-    repeat: entry.repeat.kind as PlanDraftEntry["repeat"],
-    repeatValue:
-      entry.repeat.kind === "once"
-        ? (entry.repeat.date ?? "")
-        : entry.repeat.kind === "weekly"
-          ? (entry.repeat.weekdays?.join(",") ?? "")
-          : entry.repeat.kind === "monthly"
-            ? (entry.repeat.days?.join(",") ?? "")
-            : "",
-  }));
-}
-
-export function toPlanDefinition(
-  title: string,
-  description: string,
-  startDate: string,
-  entries: PlanDraftEntry[],
-): PlanDefinitionDto {
-  return {
-    title,
-    description: description.trim() || undefined,
-    startDate,
-    entries: entries.map((entry, index) => ({
-      key: `item-${index + 1}`,
-      title: entry.title,
-      description: entry.description.trim() || undefined,
-      expectedTime: entry.expectedTime,
-      latestStartTime: null,
-      durationMinutes: null,
-      repeat:
-        entry.repeat === "once"
-          ? { kind: "once", date: entry.repeatValue || startDate }
-          : entry.repeat === "weekly"
-            ? {
-                kind: "weekly",
-                weekdays: entry.repeatValue
-                  .split(",")
-                  .map(Number)
-                  .filter((value) => value >= 1 && value <= 7),
-              }
-            : entry.repeat === "monthly"
-              ? {
-                  kind: "monthly",
-                  days: entry.repeatValue
-                    .split(",")
-                    .map(Number)
-                    .filter((value) => value >= 1 && value <= 31),
-                }
-              : { kind: "daily" },
-      points: { onTimeWithin: 0, onTimeOver: 0, lateWithin: 0, lateOver: 0, incomplete: 0 },
-    })),
-  };
+function WeekdayPicker({
+  value,
+  onChange,
+}: {
+  value: number[];
+  onChange: (weekdays: number[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="选择星期">
+      {WEEKDAY_LABELS.map((label, index) => {
+        const day = index + 1;
+        const selected = value.includes(day);
+        return (
+          <button
+            key={day}
+            type="button"
+            aria-pressed={selected}
+            className={`min-h-11 min-w-11 rounded-full border px-3 text-sm font-bold ${
+              selected
+                ? "border-[var(--bd-primary)] bg-[var(--bd-primary)] text-white"
+                : "border-[var(--bd-border)] bg-[var(--bd-surface)]"
+            }`}
+            onClick={() =>
+              onChange(
+                selected ? value.filter((candidate) => candidate !== day) : [...value, day].sort(),
+              )
+            }
+          >
+            周{label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 type PlanLibraryEditFormProps = {
@@ -85,6 +56,8 @@ type PlanLibraryEditFormProps = {
   saving: boolean;
   onCancel: () => void;
   onSubmit: (definition: PlanDefinitionDto, priority: number) => void | Promise<void>;
+  onDirtyChange?: (dirty: boolean) => void;
+  bindingsSection?: ReactNode;
 };
 
 export function PlanLibraryEditForm({
@@ -92,6 +65,8 @@ export function PlanLibraryEditForm({
   saving,
   onCancel,
   onSubmit,
+  onDirtyChange,
+  bindingsSection,
 }: PlanLibraryEditFormProps) {
   const [title, setTitle] = useState(plan.definition.title);
   const [description, setDescription] = useState(plan.definition.description ?? "");
@@ -101,16 +76,42 @@ export function PlanLibraryEditForm({
     planFromDefinition(plan.definition),
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const dirtyNotified = useRef(false);
+
+  function markDirty() {
+    if (!dirtyNotified.current) {
+      dirtyNotified.current = true;
+      onDirtyChange?.(true);
+    }
+  }
+
+  useEffect(() => {
+    onDirtyChange?.(false);
+    dirtyNotified.current = false;
+  }, [plan.id, plan.revision, onDirtyChange]);
 
   function changeEntry<K extends keyof PlanDraftEntry>(
     index: number,
     key: K,
     value: PlanDraftEntry[K],
   ) {
+    markDirty();
     setEntries((current) =>
       current.map((entry, entryIndex) =>
         entryIndex === index ? { ...entry, [key]: value } : entry,
       ),
+    );
+  }
+
+  function changePoints(index: number, pointIndex: number, value: string) {
+    markDirty();
+    setEntries((current) =>
+      current.map((entry, entryIndex) => {
+        if (entryIndex !== index) return entry;
+        const points = [...entry.points] as PlanDraftEntry["points"];
+        points[pointIndex] = value;
+        return { ...entry, points };
+      }),
     );
   }
 
@@ -125,14 +126,24 @@ export function PlanLibraryEditForm({
       <section className="bd-panel space-y-3">
         <h2 className="text-lg font-black">基本信息</h2>
         <Field label="计划名称">
-          <TextInput required value={title} onChange={(event) => setTitle(event.target.value)} />
+          <TextInput
+            required
+            value={title}
+            onChange={(event) => {
+              markDirty();
+              setTitle(event.target.value);
+            }}
+          />
         </Field>
         <Field label="计划说明（可选）">
           <textarea
             maxLength={4000}
             className="min-h-24 w-full rounded-2xl border border-[var(--bd-border)] bg-[var(--bd-surface)] p-3"
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => {
+              markDirty();
+              setDescription(event.target.value);
+            }}
           />
         </Field>
       </section>
@@ -142,7 +153,7 @@ export function PlanLibraryEditForm({
         {entries.map((entry, index) => (
           <fieldset
             className="space-y-3 rounded-2xl border border-[var(--bd-border)] p-3"
-            key={index}
+            key={entry.key || index}
           >
             <legend className="font-bold">内容 {index + 1}</legend>
             <Field label="内容名称">
@@ -160,12 +171,29 @@ export function PlanLibraryEditForm({
                 onChange={(event) => changeEntry(index, "description", event.target.value)}
               />
             </Field>
-            <Field label="执行时间">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="执行时间">
+                <TextInput
+                  required
+                  type="time"
+                  value={entry.expectedTime}
+                  onChange={(event) => changeEntry(index, "expectedTime", event.target.value)}
+                />
+              </Field>
+              <Field label="最晚开始（可选）">
+                <TextInput
+                  type="time"
+                  value={entry.latestStartTime}
+                  onChange={(event) => changeEntry(index, "latestStartTime", event.target.value)}
+                />
+              </Field>
+            </div>
+            <Field label="时长上限（分钟，可选）">
               <TextInput
-                required
-                type="time"
-                value={entry.expectedTime}
-                onChange={(event) => changeEntry(index, "expectedTime", event.target.value)}
+                type="number"
+                min="1"
+                value={entry.durationMinutes}
+                onChange={(event) => changeEntry(index, "durationMinutes", event.target.value)}
               />
             </Field>
             <Field label="重复方式">
@@ -183,11 +211,10 @@ export function PlanLibraryEditForm({
               </select>
             </Field>
             {entry.repeat === "weekly" ? (
-              <Field label="星期（1=周一 … 7=周日，逗号分隔）">
-                <TextInput
-                  required
-                  value={entry.repeatValue}
-                  onChange={(event) => changeEntry(index, "repeatValue", event.target.value)}
+              <Field label="选择星期">
+                <WeekdayPicker
+                  value={entry.weeklyWeekdays}
+                  onChange={(weekdays) => changeEntry(index, "weeklyWeekdays", weekdays)}
                 />
               </Field>
             ) : null}
@@ -210,12 +237,30 @@ export function PlanLibraryEditForm({
                 />
               </Field>
             ) : null}
+            <details className="rounded-xl border border-dashed border-[var(--bd-border)] p-3">
+              <summary className="cursor-pointer font-bold">积分规则</summary>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {["按时且时长内", "按时超时", "迟开始且时长内", "迟开始超时", "未完成"].map(
+                  (label, pointIndex) => (
+                    <Field label={label} key={label}>
+                      <TextInput
+                        required
+                        type="number"
+                        value={entry.points[pointIndex]}
+                        onChange={(event) => changePoints(index, pointIndex, event.target.value)}
+                      />
+                    </Field>
+                  ),
+                )}
+              </div>
+            </details>
             {entries.length > 1 ? (
               <SecondaryButton
                 type="button"
-                onClick={() =>
-                  setEntries((current) => current.filter((_, entryIndex) => entryIndex !== index))
-                }
+                onClick={() => {
+                  markDirty();
+                  setEntries((current) => current.filter((_, entryIndex) => entryIndex !== index));
+                }}
               >
                 删除内容
               </SecondaryButton>
@@ -224,11 +269,21 @@ export function PlanLibraryEditForm({
         ))}
         <SecondaryButton
           type="button"
-          onClick={() => setEntries((current) => [...current, blankPlanEntry()])}
+          onClick={() => {
+            markDirty();
+            setEntries((current) => [...current, blankPlanEntry(current.length)]);
+          }}
         >
           添加内容
         </SecondaryButton>
       </section>
+
+      {bindingsSection ? (
+        <section className="bd-panel space-y-3">
+          <h2 className="text-lg font-black">适用对象</h2>
+          {bindingsSection}
+        </section>
+      ) : null}
 
       <details
         className="bd-panel"
@@ -242,7 +297,10 @@ export function PlanLibraryEditForm({
               required
               type="date"
               value={startDate}
-              onChange={(event) => setStartDate(event.target.value)}
+              onChange={(event) => {
+                markDirty();
+                setStartDate(event.target.value);
+              }}
             />
           </Field>
           <Field label="优先级">
@@ -252,7 +310,10 @@ export function PlanLibraryEditForm({
               min="0"
               max="100"
               value={priority}
-              onChange={(event) => setPriority(event.target.value)}
+              onChange={(event) => {
+                markDirty();
+                setPriority(event.target.value);
+              }}
             />
           </Field>
         </div>

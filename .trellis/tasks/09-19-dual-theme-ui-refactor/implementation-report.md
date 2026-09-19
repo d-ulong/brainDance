@@ -1,56 +1,60 @@
-# 双主题 UI 重构 · 实施回报
+# 双主题 UI 重构 · 集中整改回报
 
-- **基线 SHA**：`f87d495a2136b0729aebd14f67ed1317e78f6f1b`
-- **实现 SHA**：（见本次聚焦提交，提交后填写）
+- **整改基线 SHA**：`171aa54a7fd9482fadad42374aa6023c00b17621`
+- **整改实现 SHA**：（见本次聚焦提交 `git rev-parse HEAD`）
 - **分支**：`main`
 
-## 路由 / 入口映射
+## B01–B08 对照
 
-| 区域 | 路由 | 组件 |
+| ID | 处理 | 证据 |
 |---|---|---|
-| 学生首页 | `/` | `StudentHomeDashboard` |
-| 家长首页 | `/` | `ParentHomeDashboard` |
-| 计划独立编辑 | `/student/plans/[planId]/edit`、`/parent/plans/[planId]/edit` | `PlanLibraryEditForm` |
-| 主题偏好 | `/account`、`/login`（切换） | `ThemeToggle` + `ThemeBootstrapScript` |
-| 手机日程列表 | `/student/plans?view=schedule` 等 | `ScheduleCalendar` → `schedule-mobile-day-list` |
+| B01 | `src/lib/plans/plan-draft-serialization.ts` 完整保留 key/时限/时长/积分；`review-check.cjs` 退出 0；`tests/unit/plans/plan-draft-serialization.test.ts` | 命令见下 |
+| B02 | 手机底栏 `top: auto` + 移除 767 冲突 `top:0`；家长侧栏仅 `bd-app-parent` | `evidence-remediation/remediation-student-home-360.png`（mock） |
+| B03 | `PlanLibraryEditForm` `onDirtyChange` + `useUnsavedChangesGuard`（beforeunload） | 编辑页 `student/parent/plans/[id]/edit` |
+| B04 | `page-shell` 头像 Link 接入 `navigate`/`onBeforeNavigate` | `tests/e2e/training-shell-leave.spec.ts`（新增，见未执行项） |
+| B05 | 学生首页分区 fetch；失败显示「—」/分区 Alert，保留成功数据 + stale 提示 | `data-testid=home-schedule-error` / `home-points-error` |
+| B06 | 手机周/月选日网格 + 选中日后列表；桌面日视图 `bd-calendar-day-scroll` 初始定位相关小时 | `remediation-student-calendar-week-360.png` 等 |
+| B07 | 主题插画、学生桌面无侧栏、家长学生管理/计划筛选/编辑页对象分组/训练专注壳/Modal 焦点与空错状态 | 代码 + `evidence-remediation/*` |
+| B08 | 新目录 `evidence-remediation/`，每张 PNG 附带 JSON（sha256/路由/角色/视口/主题/mock） | 不复用 2026-09-18 哈希 |
 
-## R/AC 证据（摘要）
+## AC01–AC10 摘要
 
-| ID | 证据 |
+| AC | 整改后证据 |
 |---|---|
-| R01/AC01 | `globals.css` space/candy 独立 token；`ThemeBootstrapScript` + `braindance-theme`；截图 `evidence/sample-*-candy-360.png` 与 space 对照 |
-| R02/AC02 | `StudentHomeDashboard` + `pickNextScheduleItem`；`data-testid=student-next-task`；Vitest `home-schedule.test.ts` |
-| R03/AC03 | `ParentHomeDashboard` 学生概览优先；`top-tabs` 家长训练 Tab；桌面侧栏 CSS `@media (min-width:900px)` |
-| R04/AC04 | `schedule-mobile-day-list` 手机默认列表；桌面保留 `bd-calendar-*` 网格 |
-| R05/AC05 | 既有计划列表工具栏/卡片样式保留于 `parent/students/plans` 等（本次未改业务） |
-| R06/AC06 | 独立编辑页与分组表单；列表「编辑」跳转新路由，保存仍走 `updatePlanLibrary` |
-| R07/AC07 | 训练 intro 使用 `bd-training-intro`；刺激区 DOM/逻辑未改 |
-| R08/AC08 | 首页/日程加载失败 Alert + 重试；计划编辑离开确认 |
-| R09/AC09 | 登录 `bd-login-card` 标题表单同组；触控目标 ≥44px 类保留 |
-| R10/AC10 | 未改 API/服务；mock 截图与真实后端分开说明 |
+| AC01 | `HomeTaskIllustration` + space/candy SVG 切换；`globals.css` token |
+| AC02 | 任务优先首页未改 DTO 语义；mock 截图 `remediation-student-home-360.png` |
+| AC03 | `workspace="parent"` 侧栏；`StudentManagementTabs` 新样式；`remediation-parent-students-360.png` |
+| AC04 | 手机日/周/月 + 桌面滚动定位 |
+| AC05 | 计划列表搜索首屏 +「更多筛选」折叠；筛选无结果 vs 无计划分态 |
+| AC06 | 独立编辑：星期选择器、积分/时限、适用对象（家长）、脏数据保护 |
+| AC07 | 训练进行态 `hideTabs`/`hideHeading` + `bd-training-active-shell` + 结束训练 |
+| AC08 | 分区错误/空态；Modal 焦点 trap + Escape；家长首页就地重试 |
+| AC09 | 触控与主题继承延续；登录/账号未回退 |
+| AC10 | 无 API/schema 变更；保存仍 `updatePlanLibrary` |
 
 ## 命令与退出码
 
-| 命令 | 退出码 | 说明 |
-|---|---|---|
-| `pnpm typecheck` | 0 | |
-| `pnpm exec eslint`（变更文件） | 0 | |
-| `DATABASE_URL=.../braindance_test pnpm exec vitest run tests/unit/schedule/home-schedule.test.ts tests/unit/schedule/schedule-calendar.test.ts` | 0 | 6 tests |
-| `node docs/ui-audit/2026-09-18/capture.cjs --sample` | 1 | 部分路由截图成功；`reaction-start` / 计划工作台按钮与固定底栏重叠导致 Playwright 点击超时（已加 `padding-bottom`，脚本需滚动或 `--finish` 适配） |
+| 命令 | 退出码 |
+|---|---|
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-check.cjs` | 0 |
+| `pnpm typecheck` | 0 |
+| `pnpm exec eslint`（变更源文件） | 0 |
+| `DATABASE_URL=postgresql://…/braindance_test pnpm exec vitest run tests/unit/plans/plan-draft-serialization.test.ts tests/unit/schedule/home-schedule.test.ts` | 0（5 tests） |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/capture-remediation.cjs` | 0（21 张 mock 截图） |
 
-## 截图路径（mock API，非后端业务证明）
+## 截图（mock API）
 
-- 归档：`.trellis/tasks/09-19-dual-theme-ui-refactor/evidence/`
-- 临时源：`%TEMP%/braindance-ui-audit-20260918/`
+- 目录：`.trellis/tasks/09-19-dual-theme-ui-refactor/evidence-remediation/`
+- 每张 `*.json` 含 `sha256`、`route`、`role`、`viewport`、`theme`、`dataSource: playwright-mock`
+- 含：`remediation-student-plan-edit-360`、`remediation-student-reaction-active-360`、`remediation-parent-plan-edit-360`
 
-## 未执行项 / 风险
+## 未执行项
 
-- 全量 E2E、`pnpm build`（dev 同目录运行中，按 AGENTS 未执行 build）
-- 768×1024 专用截图矩阵未全量重跑；1440/360 样本已归档
-- 200% 文字缩放、软键盘、真实 DB 写流程未在本轮复验
-- 固定底栏与页面底部控件在极短视口仍可能重叠，需 Codex 浏览器复验
-- 家长计划编辑页「适用对象」绑定仍在列表页/模态，独立页仅覆盖定义编辑（与既有绑定/generate 事务边界一致）
+- `pnpm build`（dev 3002 同目录运行中）
+- 全量 E2E / `training-shell-leave.spec.ts`：global-setup 需隔离 `DATABASE_URL`，未在 dev 试点库上跑
+- 200% 缩放、软键盘、真实 DB 写流程
+- 390×844 专用视口（已覆盖 360×800 / 768×1024 / 1440×1000）
 
 ## 声明
 
-**已交审核**（不得自行 GO）
+**已交最终复验**（不得自行 GO）

@@ -1,0 +1,12 @@
+{
+  "role": "student",
+  "dataSource": "playwright-mock",
+  "route": "http://127.0.0.1:3002/student/plans?view=schedule",
+  "viewport": {
+    "width": 360,
+    "height": 800
+  },
+  "theme": "space",
+  "sha256": "c3c23c8606beb0991b29a841bc8dc3caa7e421054a5f91efa4bf93d236447f26",
+  "capturedAt": "2026-09-19T15:12:15.183Z"
+}

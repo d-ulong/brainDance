@@ -53,7 +53,14 @@ export default function ParentStudentsPage() {
   }
 
   return (
-    <PageShell title="学生" backHref="/" showLogout hideHeading secondaryNavigation={<StudentManagementTabs />}>
+    <PageShell
+      title="学生"
+      backHref="/"
+      showLogout
+      hideHeading
+      workspace="parent"
+      secondaryNavigation={<StudentManagementTabs />}
+    >
       <div className="bd-library-toolbar">
         <div className="bd-library-toolbar-copy">
           <h2>家庭学生</h2>

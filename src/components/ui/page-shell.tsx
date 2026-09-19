@@ -71,6 +71,7 @@ export function PageShell({
               className="bd-shell-avatar"
               aria-label="我的账号"
               data-testid="shell-account-link"
+              onClick={(event) => void navigate(event, "/account")}
             >
               <span aria-hidden="true">我</span>
             </Link>

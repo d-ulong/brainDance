@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { todayFamilyDate, type ScheduleItemDto } from "@/lib/client/m2-api";
 
@@ -133,8 +133,35 @@ export function ScheduleCalendar({
   const dayItems = [...(byDate.get(selectedDate) ?? [])].sort((a, b) =>
     a.scheduledAt.localeCompare(b.scheduledAt),
   );
+  const dayScrollRef = useRef<HTMLDivElement>(null);
+  const weekDates = datesBetween(range.from, 7);
+  const monthDates = datesBetween(range.from, 42);
+
+  useEffect(() => {
+    if (view !== "day") return;
+    const container = dayScrollRef.current;
+    if (!container) return;
+    const currentHour = Number(
+      new Date().toLocaleString("en-US", {
+        hour: "numeric",
+        hour12: false,
+        timeZone: "Asia/Shanghai",
+      }),
+    );
+    const earliestItemHour = dayItems.length
+      ? Math.min(...dayItems.map((item) => Number(itemTime(item).slice(0, 2))))
+      : currentHour;
+    const targetHour = Math.min(23, Math.max(0, earliestItemHour, currentHour));
+    const row = container.querySelector<HTMLElement>(`[data-hour="${targetHour}"]`);
+    row?.scrollIntoView({ block: "start" });
+  }, [dayItems, selectedDate, view]);
+
   return (
-    <section className="bd-calendar" data-testid={`schedule-calendar-${view}`}>
+    <section
+      className="bd-calendar"
+      data-testid={`schedule-calendar-${view}`}
+      data-mobile-layout={view}
+    >
       <header className="bd-calendar-toolbar">
         <button type="button" onClick={() => onDateChange(today)}>
           今天
@@ -192,8 +219,49 @@ export function ScheduleCalendar({
           <p className="text-sm text-[var(--bd-muted)]">这一天还没有日程。</p>
         )}
       </div>
+      <div className="bd-mobile-calendar-week" data-testid="schedule-mobile-week">
+        {weekDates.map((date) => {
+          const count = byDate.get(date)?.length ?? 0;
+          return (
+            <button
+              key={date}
+              type="button"
+              className={date === today ? "is-today" : ""}
+              aria-pressed={date === selectedDate}
+              onClick={() => onDateChange(date)}
+            >
+              <span>{["日", "一", "二", "三", "四", "五", "六"][parseFamilyDate(date).getUTCDay()]}</span>
+              <strong>{Number(date.slice(8))}</strong>
+              <small>{count} 项</small>
+            </button>
+          );
+        })}
+      </div>
+      <div className="bd-mobile-calendar-month" data-testid="schedule-mobile-month">
+        {["日", "一", "二", "三", "四", "五", "六"].map((label) => (
+          <strong key={label} className="text-center text-xs text-[var(--bd-muted)]">
+            {label}
+          </strong>
+        ))}
+        {monthDates.map((date) => {
+          const count = byDate.get(date)?.length ?? 0;
+          const outside = date.slice(0, 7) !== selectedDate.slice(0, 7);
+          return (
+            <button
+              key={date}
+              type="button"
+              className={`${outside ? "is-outside" : ""} ${date === today ? "is-today" : ""}`}
+              aria-pressed={date === selectedDate}
+              onClick={() => onDateChange(date)}
+            >
+              {Number(date.slice(8))}
+              {count ? <small className="block text-[0.6rem]">{count}</small> : null}
+            </button>
+          );
+        })}
+      </div>
       {view === "day" ? (
-        <div className="bd-calendar-day">
+        <div className="bd-calendar-day bd-calendar-day-scroll" ref={dayScrollRef}>
           <div className="bd-calendar-day-heading">
             <span>GMT+8</span>
             <strong>
@@ -207,7 +275,7 @@ export function ScheduleCalendar({
               (item) => Number(itemTime(item).slice(0, 2)) === hour,
             );
             return (
-              <div className="bd-calendar-hour" key={hour}>
+              <div className="bd-calendar-hour" key={hour} data-hour={hour}>
                 <time>{String(hour).padStart(2, "0")}:00</time>
                 <div>
                   {rowItems.map((item) => (

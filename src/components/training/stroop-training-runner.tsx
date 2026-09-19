@@ -21,7 +21,7 @@ import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
 import type { StroopColor } from "@/modules/training/constants";
 import { STROOP_COLORS } from "@/modules/training/constants";
 
@@ -177,16 +177,20 @@ export function StroopTrainingRunner({
     );
   }
 
+  const focused = phase !== "intro";
+
   return (
     <PageShell
       title="Stroop 抑制"
       subtitle={phase === "intro" ? "说明与难度" : undefined}
       subtitleKind={phase === "intro" ? "status" : "help"}
-      backHref={lifecycle.hubPath}
+      backHref={focused ? undefined : lifecycle.hubPath}
+      hideTabs={focused}
+      hideHeading={focused}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
     >
-      <TrainingDisclaimer />
+      {!focused ? <TrainingDisclaimer /> : null}
       {lifecycle.paused ? (
         <Alert tone="info" data-testid="training-paused">
           页面失焦，训练已暂停。回到本页后继续。
@@ -244,7 +248,21 @@ export function StroopTrainingRunner({
           </PrimaryButton>
         </section>
       ) : (
-        <>
+        <section className="bd-training-active-shell space-y-4" data-testid="stroop-active">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-bold text-[var(--bd-muted)]">Stroop · 进行中</p>
+            <SecondaryButton
+              type="button"
+              data-testid="training-end-session"
+              onClick={() =>
+                void lifecycle.confirmLeave().then((allowed) => {
+                  if (allowed) window.location.assign(lifecycle.hubPath);
+                })
+              }
+            >
+              结束训练
+            </SecondaryButton>
+          </div>
           <TrainingTrialProgress
             total={trials.length}
             currentIndex={trialIndex}
@@ -285,7 +303,7 @@ export function StroopTrainingRunner({
           </div>
           <p className="text-xs text-neutral-500">点击颜色按钮作答。</p>
           {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
-        </>
+        </section>
       )}
     </PageShell>
   );

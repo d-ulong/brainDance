@@ -13,7 +13,7 @@ import {
   useKeyboardAction,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
 import { DEFAULT_REACTION_TRIAL_COUNT, REACTION_MIN_VALID_MS } from "@/modules/training/constants";
 
 type Phase = "intro" | "waiting" | "go" | "feedback";
@@ -345,16 +345,20 @@ export function ReactionTrainingRunner({
           ? FEEDBACK_OK_STYLE
           : WAIT_STYLE;
 
+  const focused = phase !== "intro";
+
   return (
     <PageShell
       title="反应力训练"
       subtitle={phase === "intro" ? "说明" : undefined}
       subtitleKind={phase === "intro" ? "status" : "help"}
-      backHref={lifecycle.hubPath}
+      backHref={focused ? undefined : lifecycle.hubPath}
+      hideTabs={focused}
+      hideHeading={focused}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
     >
-      <TrainingDisclaimer />
+      {!focused ? <TrainingDisclaimer /> : null}
       {lifecycle.paused ? (
         <Alert tone="info" data-testid="training-paused">
           页面失焦，训练已暂停。回到本页后继续。
@@ -385,7 +389,21 @@ export function ReactionTrainingRunner({
           </PrimaryButton>
         </section>
       ) : (
-        <>
+        <section className="bd-training-active-shell space-y-4" data-testid="reaction-active">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-bold text-[var(--bd-muted)]">反应力 · 进行中</p>
+            <SecondaryButton
+              type="button"
+              data-testid="training-end-session"
+              onClick={() =>
+                void lifecycle.confirmLeave().then((allowed) => {
+                  if (allowed) window.location.assign(lifecycle.hubPath);
+                })
+              }
+            >
+              结束训练
+            </SecondaryButton>
+          </div>
           <TrainingTrialProgress
             total={expectedTrials}
             currentIndex={trialIndex}
@@ -413,7 +431,7 @@ export function ReactionTrainingRunner({
               <span className="text-sm">提交结果中…</span>
             )}
           </button>
-        </>
+        </section>
       )}
       {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
     </PageShell>

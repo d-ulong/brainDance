@@ -81,12 +81,22 @@ function TrainingOverview() {
 export function ParentHomeDashboard({ session }: { session: SessionInfo }) {
   const [students, setStudents] = useState<LinkedStudent[] | null>(null);
   const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    let alive = true;
+    setError(false);
     void apiFetch<{ students: LinkedStudent[] }>("/api/family/students")
-      .then((result) => setStudents(result.students))
-      .catch(() => setError(true));
-  }, []);
+      .then((result) => {
+        if (alive) setStudents(result.students);
+      })
+      .catch(() => {
+        if (alive) setError(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
 
   const name = session.displayName || session.account || "家长";
 
@@ -110,9 +120,13 @@ export function ParentHomeDashboard({ session }: { session: SessionInfo }) {
             {error ? (
               <Alert tone="error">
                 家庭动态加载失败。{" "}
-                <Link className="underline" href="/parent/students">
-                  进入学生页重试
-                </Link>
+                <button
+                  type="button"
+                  className="bd-inline-link"
+                  onClick={() => setReloadKey((value) => value + 1)}
+                >
+                  重试
+                </button>
               </Alert>
             ) : students === null ? (
               <LoadingState label="加载学生…" />

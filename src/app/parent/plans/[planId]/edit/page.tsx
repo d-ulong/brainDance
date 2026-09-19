@@ -5,9 +5,19 @@ import { use, useEffect, useState } from "react";
 
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
-import { LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
+import { StudentMultiSelect } from "@/components/ui/student-multi-select";
+import { Field, LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
+import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
-import { fetchPlanLibrary, updatePlanLibrary, type PlanLibraryDto } from "@/lib/client/m2-api";
+import {
+  activatePlanLibrary,
+  fetchLinkedStudents,
+  fetchPlanLibrary,
+  removePlanLibraryBinding,
+  updatePlanLibrary,
+  type LinkedStudentDto,
+  type PlanLibraryDto,
+} from "@/lib/client/m2-api";
 
 export default function ParentPlanEditPage({ params }: { params: Promise<{ planId: string }> }) {
   const { planId } = use(params);
@@ -20,6 +30,10 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [students, setStudents] = useState<LinkedStudentDto[]>([]);
+  const [selfOption, setSelfOption] = useState<LinkedStudentDto | null>(null);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
     void (async () => {
@@ -35,7 +49,15 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           setError("无法编辑该计划，可能无权限或计划不存在。");
         } else {
           setPlan(match);
+          setSelectedStudents(match.bindings.map((binding) => binding.studentId));
         }
+        setSelfOption({
+          studentId: session.userId,
+          displayName: `${session.displayName || session.account || "我"}（我的个人计划）`,
+          username: session.account ?? null,
+        });
+        const linked = await fetchLinkedStudents();
+        setStudents(linked.students);
       } catch (cause) {
         setError(cause instanceof ApiError ? cause.message : "加载计划失败");
       } finally {
@@ -49,8 +71,20 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
     setSaving(true);
     setError(null);
     try {
-      await updatePlanLibrary(plan.id, plan.revision, definition, priority);
-      setMessage("计划已更新");
+      const result = await updatePlanLibrary(plan.id, plan.revision, definition, priority);
+      const previousIds = new Set(plan.bindings.map((binding) => binding.studentId));
+      const nextIds = new Set(selectedStudents);
+      const toAdd = selectedStudents.filter((studentId) => !previousIds.has(studentId));
+      const toRemove = [...previousIds].filter((studentId) => !nextIds.has(studentId));
+      if (toAdd.length) {
+        await Promise.all(toAdd.map((studentId) => activatePlanLibrary(result.plan.id, studentId)));
+      }
+      for (const studentId of toRemove) {
+        await removePlanLibraryBinding(result.plan.id, studentId);
+      }
+      const bindNote =
+        toAdd.length || toRemove.length ? `；绑定已更新（+${toAdd.length}/-${toRemove.length}）` : "";
+      setMessage(`计划已更新${bindNote}`);
       setDirty(false);
       router.push(scopeSelf ? "/parent/plans?scope=self" : "/parent/plans");
     } catch (cause) {
@@ -85,10 +119,25 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           plan={plan}
           saving={saving}
           onCancel={cancel}
-          onSubmit={(definition, priority) => {
-            setDirty(true);
-            return save(definition, priority);
-          }}
+          onDirtyChange={setDirty}
+          bindingsSection={
+            scopeSelf ? (
+              <p className="text-sm text-[var(--bd-muted)]">个人计划仅用于家长本人记录。</p>
+            ) : (
+              <Field label="绑定学生（可继续增删）">
+                <StudentMultiSelect
+                  students={selfOption ? [selfOption, ...students] : students}
+                  selectedIds={selectedStudents}
+                  onChange={(studentIds) => {
+                    setDirty(true);
+                    setSelectedStudents(studentIds);
+                  }}
+                  emptyLabel="暂不绑定"
+                />
+              </Field>
+            )
+          }
+          onSubmit={(definition, priority) => save(definition, priority)}
         />
       ) : (
         <p className="text-sm text-[var(--bd-muted)]">未找到可编辑的计划。</p>

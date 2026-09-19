@@ -15,12 +15,11 @@ const tabs = [
 export function StudentManagementTabs() {
   const pathname = usePathname();
   return (
-    <nav className="flex gap-2 overflow-x-auto pb-1" aria-label="学生管理">
+    <nav className="bd-student-mgmt-tabs" aria-label="学生管理">
       {tabs.map((tab) => {
         const active = tab.current(pathname);
         return (
-          <Link key={tab.href} href={tab.href} aria-current={active ? "page" : undefined}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${active ? "bg-[var(--bd-primary)] text-white shadow-sm" : "border border-[var(--bd-primary-soft)] bg-white text-[var(--bd-ink)] hover:bg-[var(--bd-primary-soft)]"}`}>
+          <Link key={tab.href} href={tab.href} aria-current={active ? "page" : undefined}>
             {tab.label}
           </Link>
         );

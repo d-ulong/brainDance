@@ -6,6 +6,7 @@ import { use, useEffect, useState } from "react";
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
+import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { fetchPlanLibrary, updatePlanLibrary, type PlanLibraryDto } from "@/lib/client/m2-api";
 
@@ -18,6 +19,7 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
     void (async () => {
@@ -82,10 +84,8 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
           plan={plan}
           saving={saving}
           onCancel={cancel}
-          onSubmit={(definition, priority) => {
-            setDirty(true);
-            return save(definition, priority);
-          }}
+          onDirtyChange={setDirty}
+          onSubmit={(definition, priority) => save(definition, priority)}
         />
       ) : (
         <p className="text-sm text-[var(--bd-muted)]">未找到可编辑的计划。</p>

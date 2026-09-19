@@ -209,6 +209,7 @@ function ParentPlansPageContent() {
   const [planStudentFilter, setPlanStudentFilter] = useState("");
   const [bindingFilter, setBindingFilter] = useState<"all" | "bound" | "unbound">("all");
   const [previewPlan, setPreviewPlan] = useState<PlanLibraryDto | null>(null);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const load = useCallback(async () => {
     const [planResponse, studentResponse] = await Promise.all([
       fetchPlanLibrary(),
@@ -434,6 +435,7 @@ function ParentPlansPageContent() {
       backHref={selfOnly ? "/account" : "/parent/students"}
       showLogout
       hideHeading
+      workspace="parent"
       secondaryNavigation={selfOnly ? undefined : <StudentManagementTabs />}
     >
       <ErrorDialog message={error} onClose={() => setError(null)} />
@@ -462,14 +464,58 @@ function ParentPlansPageContent() {
         </PrimaryButton>
       </section>
       {contextStudentId ? <StudentContextBanner studentId={contextStudentId} label="正在管理计划的学生" /> : null}
-      {!selfOnly ? <section className="bd-filter-panel" aria-label="计划查询">
-        <div className="bd-filter-fields bd-plan-filter-fields">
-          <TextInput value={planQuery} onChange={(event) => setPlanQuery(event.target.value)} placeholder="搜索计划或内容名称" aria-label="搜索计划或内容名称" />
-          {!contextStudentId ? <select value={planStudentFilter} onChange={(event) => setPlanStudentFilter(event.target.value)} aria-label="按学生筛选"><option value="">全部对象</option>{assignmentOptions.map((student) => <option key={student.studentId} value={student.studentId}>{student.displayName || student.username || "未命名成员"}</option>)}</select> : null}
-          <select value={bindingFilter} onChange={(event) => setBindingFilter(event.target.value as "all" | "bound" | "unbound")} aria-label="按绑定状态筛选"><option value="all">全部状态</option><option value="bound">已绑定</option><option value="unbound">未绑定</option></select>
-        </div>
-        <div className="bd-filter-actions"><span className="text-sm text-slate-500">{visiblePlans.length} 个结果</span><SecondaryButton onClick={() => { setPlanQuery(""); setPlanStudentFilter(""); setBindingFilter("all"); }}>清空</SecondaryButton></div>
-      </section> : null}
+      {!selfOnly ? (
+        <section className="bd-filter-panel" aria-label="计划查询">
+          <TextInput
+            value={planQuery}
+            onChange={(event) => setPlanQuery(event.target.value)}
+            placeholder="搜索计划或内容名称"
+            aria-label="搜索计划或内容名称"
+          />
+          <div className="bd-filter-actions w-full flex-wrap">
+            <span className="text-sm text-slate-500">{visiblePlans.length} 个结果</span>
+            <SecondaryButton type="button" onClick={() => setFiltersExpanded((open) => !open)}>
+              {filtersExpanded ? "收起筛选" : "更多筛选"}
+            </SecondaryButton>
+            <SecondaryButton
+              onClick={() => {
+                setPlanQuery("");
+                setPlanStudentFilter("");
+                setBindingFilter("all");
+              }}
+            >
+              清空
+            </SecondaryButton>
+          </div>
+          {filtersExpanded ? (
+            <div className="bd-filter-fields bd-plan-filter-fields w-full">
+              {!contextStudentId ? (
+                <select
+                  value={planStudentFilter}
+                  onChange={(event) => setPlanStudentFilter(event.target.value)}
+                  aria-label="按学生筛选"
+                >
+                  <option value="">全部对象</option>
+                  {assignmentOptions.map((student) => (
+                    <option key={student.studentId} value={student.studentId}>
+                      {student.displayName || student.username || "未命名成员"}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <select
+                value={bindingFilter}
+                onChange={(event) => setBindingFilter(event.target.value as "all" | "bound" | "unbound")}
+                aria-label="按绑定状态筛选"
+              >
+                <option value="all">全部状态</option>
+                <option value="bound">已绑定</option>
+                <option value="unbound">未绑定</option>
+              </select>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       {visiblePlans.length ? (
         <div className="bd-library-grid">
           {visiblePlans.map((plan) => (
@@ -526,10 +572,27 @@ function ParentPlansPageContent() {
             </article>
           ))}
         </div>
+      ) : scopedPlans.length ? (
+        <div className="bd-empty" data-testid="plan-filter-empty">
+          <span aria-hidden="true">🔍</span>
+          <h3>没有匹配的计划</h3>
+          <p>试试调整搜索词或筛选条件。</p>
+          <SecondaryButton
+            onClick={() => {
+              setPlanQuery("");
+              setPlanStudentFilter("");
+              setBindingFilter("all");
+            }}
+          >
+            清空筛选
+          </SecondaryButton>
+        </div>
       ) : (
-        <p className="rounded-3xl border border-dashed p-6 text-center text-sm text-neutral-600">
-          还没有计划，点击“新增计划”开始创建。
-        </p>
+        <div className="bd-empty" data-testid="plan-library-empty">
+          <span aria-hidden="true">🗂️</span>
+          <h3>还没有计划</h3>
+          <p>点击“新增计划”开始创建。</p>
+        </div>
       )}
       {formOpen ? (
         <Modal

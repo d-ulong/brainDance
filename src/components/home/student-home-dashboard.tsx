@@ -18,6 +18,7 @@ import {
   type ScheduleItemDto,
 } from "@/lib/client/m2-api";
 import type { SessionInfo } from "@/lib/client/api";
+import { HomeTaskIllustration } from "@/components/home/home-task-illustration";
 import {
   formatScheduleTimeRange,
   pickNextScheduleItem,
@@ -75,41 +76,77 @@ function TaskRow({ item, highlight }: { item: ScheduleItemDto; highlight?: boole
 export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
   const studentId = session.userId;
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<ScheduleItemDto[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [todayNet, setTodayNet] = useState<number | null>(null);
   const [summaries, setSummaries] = useState<SubjectTrainingSummary[] | null>(null);
   const [trainingError, setTrainingError] = useState(false);
+  const [scheduleError, setScheduleError] = useState(false);
+  const [pointsError, setPointsError] = useState(false);
+  const [staleSchedule, setStaleSchedule] = useState(false);
+  const [stalePoints, setStalePoints] = useState(false);
   const requestId = useRef(0);
+  const itemsRef = useRef(items);
+  const balanceRef = useRef(balance);
+  const todayNetRef = useRef(todayNet);
+  itemsRef.current = items;
+  balanceRef.current = balance;
+  todayNetRef.current = todayNet;
 
   const today = todayFamilyDate();
   const displayName = session.displayName || session.account || "同学";
 
   const load = useCallback(async () => {
     const id = ++requestId.current;
-    setError(null);
-    try {
-      const [schedule, pointsBalance, period, ...trainingRows] = await Promise.all([
-        fetchScheduleItems(studentId, today, today),
-        fetchPointsBalance(studentId),
-        fetchPointsPeriodSummary(studentId, today, today),
-        fetchOwnTrainingSummary("reaction"),
-        fetchOwnTrainingSummary("stroop"),
-        fetchOwnTrainingSummary("digit-span"),
-      ]);
-      if (id !== requestId.current) return;
-      setItems(schedule.items.filter((item) => item.familyDate === today));
-      setBalance(pointsBalance.balance);
-      setTodayNet(period.netPoints);
-      setSummaries(trainingRows);
-      setTrainingError(false);
-    } catch {
-      if (id !== requestId.current) return;
-      setError("今日安排暂时加载失败，请稍后重试。");
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
+    setScheduleError(false);
+    setPointsError(false);
+    setTrainingError(false);
+
+    const schedulePromise = fetchScheduleItems(studentId, today, today)
+      .then((schedule) => {
+        if (id !== requestId.current) return;
+        setItems(schedule.items.filter((item) => item.familyDate === today));
+        setStaleSchedule(false);
+      })
+      .catch(() => {
+        if (id !== requestId.current) return;
+        setScheduleError(true);
+        setStaleSchedule(itemsRef.current.length > 0);
+      });
+
+    const pointsPromise = Promise.all([
+      fetchPointsBalance(studentId),
+      fetchPointsPeriodSummary(studentId, today, today),
+    ])
+      .then(([pointsBalance, period]) => {
+        if (id !== requestId.current) return;
+        setBalance(pointsBalance.balance);
+        setTodayNet(period.netPoints);
+        setStalePoints(false);
+      })
+      .catch(() => {
+        if (id !== requestId.current) return;
+        setPointsError(true);
+        setStalePoints(balanceRef.current !== null || todayNetRef.current !== null);
+      });
+
+    const trainingPromise = Promise.all([
+      fetchOwnTrainingSummary("reaction"),
+      fetchOwnTrainingSummary("stroop"),
+      fetchOwnTrainingSummary("digit-span"),
+    ])
+      .then((trainingRows) => {
+        if (id !== requestId.current) return;
+        setSummaries(trainingRows);
+      })
+      .catch(() => {
+        if (id !== requestId.current) return;
+        setTrainingError(true);
+        setSummaries(null);
+      });
+
+    await Promise.all([schedulePromise, pointsPromise, trainingPromise]);
+    if (id === requestId.current) setLoading(false);
   }, [studentId, today]);
 
   useEffect(() => {
@@ -166,9 +203,9 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
         </div>
       </header>
 
-      {error ? (
-        <Alert tone="error" className="mb-4">
-          {error}{" "}
+      {scheduleError ? (
+        <Alert tone="error" className="mb-4" data-testid="home-schedule-error">
+          今日安排暂时加载失败。{staleSchedule ? "以下为上次成功加载的数据。" : ""}{" "}
           <button type="button" className="bd-inline-link ml-2" onClick={() => void load()}>
             重试
           </button>
@@ -177,9 +214,10 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
 
       <div className="bd-home-columns">
         <div className="bd-home-primary">
-          <section className="bd-next-task bd-panel" data-testid="student-next-task">
+          <section className="bd-next-task bd-panel bd-next-task-with-art" data-testid="student-next-task">
             {nextItem ? (
               <>
+                <HomeTaskIllustration />
                 <span className="bd-next-tag">
                   <span className="bd-status-dot" aria-hidden="true" />
                   下一项任务
@@ -260,13 +298,28 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
             <div className="bd-section-heading">
               <h2>一点点积累</h2>
             </div>
+            {pointsError ? (
+              <Alert tone="error" data-testid="home-points-error">
+                积分数据暂时不可用。{stalePoints ? "以下为上次成功加载的数据。" : ""}{" "}
+                <button type="button" className="bd-inline-link" onClick={() => void load()}>
+                  重试
+                </button>
+              </Alert>
+            ) : null}
             <div className="bd-points-value" data-testid="home-points-balance">
-              {balance ?? 0}
+              {balance === null ? "—" : balance}
               <span>积分余额</span>
             </div>
             <div className="bd-points-bottom">
               <span>
-                今日 <b>{todayNet !== null && todayNet > 0 ? `+${todayNet}` : (todayNet ?? 0)}</b>
+                今日{" "}
+                <b>
+                  {todayNet === null
+                    ? "—"
+                    : todayNet > 0
+                      ? `+${todayNet}`
+                      : todayNet}
+                </b>
               </span>
               <Link className="bd-text-button" href="/student/redemption">
                 查看记录 ↗

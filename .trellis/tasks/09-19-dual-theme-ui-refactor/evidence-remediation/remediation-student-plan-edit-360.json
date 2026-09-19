@@ -1,0 +1,12 @@
+{
+  "role": "student",
+  "dataSource": "playwright-mock",
+  "route": "http://127.0.0.1:3002/student/plans/plan-0/edit",
+  "viewport": {
+    "width": 360,
+    "height": 800
+  },
+  "theme": "space",
+  "sha256": "995401d33f3011c0438179e7a023e163c001f1ede7b05f028097e7594a184ead",
+  "capturedAt": "2026-09-19T15:12:17.650Z"
+}

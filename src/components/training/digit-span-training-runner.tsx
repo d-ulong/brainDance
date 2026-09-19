@@ -24,7 +24,7 @@ import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
 
 type Phase = "intro" | "stimulus" | "response";
 
@@ -330,16 +330,20 @@ export function DigitSpanTrainingRunner({
   const modeLabel = currentAttempt?.mode === "backward" ? "倒背" : "顺背";
   const isBackward = currentAttempt?.mode === "backward";
 
+  const focused = uiPhase !== "intro";
+
   return (
     <PageShell
       title="数字广度"
       subtitle={uiPhase === "intro" ? "说明与难度" : undefined}
       subtitleKind={uiPhase === "intro" ? "status" : "help"}
-      backHref={lifecycle.hubPath}
+      backHref={focused ? undefined : lifecycle.hubPath}
+      hideTabs={focused}
+      hideHeading={focused}
       showLogout
       onBeforeNavigate={lifecycle.confirmLeave}
     >
-      <TrainingDisclaimer />
+      {!focused ? <TrainingDisclaimer /> : null}
       {lifecycle.paused ? (
         <Alert tone="info" data-testid="training-paused">
           页面失焦，训练已暂停。回到本页后继续。
@@ -400,7 +404,21 @@ export function DigitSpanTrainingRunner({
           </PrimaryButton>
         </section>
       ) : (
-        <>
+        <section className="bd-training-active-shell space-y-4" data-testid="digit-span-active">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-bold text-[var(--bd-muted)]">数字广度 · 进行中</p>
+            <SecondaryButton
+              type="button"
+              data-testid="training-end-session"
+              onClick={() =>
+                void lifecycle.confirmLeave().then((allowed) => {
+                  if (allowed) window.location.assign(lifecycle.hubPath);
+                })
+              }
+            >
+              结束训练
+            </SecondaryButton>
+          </div>
           <TrainingTrialProgress
             total={attempts.length}
             currentIndex={attemptIndex}
@@ -525,7 +543,7 @@ export function DigitSpanTrainingRunner({
           </div>
 
           {lifecycle.submitting ? <LoadingState label="正在提交训练结果…" /> : null}
-        </>
+        </section>
       )}
     </PageShell>
   );

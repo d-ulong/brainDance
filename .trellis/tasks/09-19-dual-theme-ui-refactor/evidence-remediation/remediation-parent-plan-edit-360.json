@@ -1,0 +1,12 @@
+{
+  "role": "parent",
+  "dataSource": "playwright-mock",
+  "route": "http://127.0.0.1:3002/parent/plans/plan-0/edit",
+  "viewport": {
+    "width": 360,
+    "height": 800
+  },
+  "theme": "space",
+  "sha256": "9344860a93fe8db2354728e2b58f730f0028d10a0ba5820c4ab52bd986db2206",
+  "capturedAt": "2026-09-19T15:12:41.424Z"
+}
