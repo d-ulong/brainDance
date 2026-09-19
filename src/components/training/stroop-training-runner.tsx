@@ -200,7 +200,7 @@ export function StroopTrainingRunner({
       {lifecycle.error && phase === "running" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
 
       {phase === "intro" ? (
-        <section className="space-y-4 rounded-3xl border border-[var(--bd-border)] bg-white p-5" data-testid="stroop-intro">
+        <section className="bd-training-intro space-y-4" data-testid="stroop-intro">
           <p className="text-sm text-slate-700">
             Stroop 抑制训练会在字义和墨色之间制造冲突。请先阅读规则，再选择难度后开始。
           </p>

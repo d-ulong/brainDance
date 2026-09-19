@@ -20,7 +20,7 @@ type Tab = {
 
 const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
   student: [
-    { id: "home", href: "/", label: "首页", icon: "🏠", matches: (path) => path === "/" },
+    { id: "home", href: "/", label: "今天", icon: "🏠", matches: (path) => path === "/" },
     {
       id: "training",
       href: "/student/training",
@@ -31,13 +31,13 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
     {
       id: "pushes",
       href: "/student/pushes",
-      label: "推送",
+      label: "家庭消息",
       icon: "💌",
       matches: (path) => path.startsWith("/student/pushes"),
     },
     {
-      id: "plans",
-      href: "/student/plans",
+      id: "schedule",
+      href: "/student/plans?view=schedule",
       label: "计划日程",
       icon: "🗓️",
       matches: (path) => path.startsWith("/student/plans") || path.startsWith("/student/schedule"),
@@ -46,7 +46,7 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
       id: "profile",
       href: "/account",
       label: "我的",
-      icon: "🌟",
+      icon: "👤",
       matches: (path) =>
         path === "/account" ||
         path.startsWith("/student/link") ||
@@ -58,7 +58,7 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
     },
   ],
   parent: [
-    { id: "home", href: "/", label: "首页", icon: "🏠", matches: (path) => path === "/" },
+    { id: "home", href: "/", label: "今天", icon: "🏠", matches: (path) => path === "/" },
     {
       id: "students",
       href: "/parent/students",
@@ -73,14 +73,18 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
         path.startsWith("/parent/link"),
     },
     {
+      id: "training",
+      href: "/parent/training",
+      label: "训练",
+      icon: "🧩",
+      matches: (path) => path.startsWith("/parent/training"),
+    },
+    {
       id: "profile",
       href: "/account",
       label: "我的",
-      icon: "🌟",
-      matches: (path) =>
-        path === "/account" ||
-        path.startsWith("/parent/change-password") ||
-        path.startsWith("/parent/training"),
+      icon: "👤",
+      matches: (path) => path === "/account" || path.startsWith("/parent/change-password"),
     },
   ],
   admin: [
@@ -128,7 +132,12 @@ export function TopTabs({ onBeforeNavigate }: TopTabsProps) {
   // does not pop in after the first paint (root cause: client-only fetchSession gate).
   if (session === undefined) {
     return (
-      <nav className="bd-top-tabs bd-top-tabs-loading" aria-label="主要功能" aria-busy="true" data-testid="top-tabs-loading">
+      <nav
+        className="bd-top-tabs bd-top-tabs-loading"
+        aria-label="主要功能"
+        aria-busy="true"
+        data-testid="top-tabs-loading"
+      >
         <span className="bd-top-tab bd-top-tab-skeleton" />
         <span className="bd-top-tab bd-top-tab-skeleton" />
         <span className="bd-top-tab bd-top-tab-skeleton" />

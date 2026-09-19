@@ -368,10 +368,7 @@ export function ReactionTrainingRunner({
       {lifecycle.error && phase !== "intro" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
 
       {phase === "intro" ? (
-        <section
-          className="space-y-4 rounded-3xl border border-[var(--bd-border)] bg-white p-5"
-          data-testid="reaction-intro"
-        >
+        <section className="bd-training-intro space-y-4" data-testid="reaction-intro">
           <p className="text-sm text-slate-700">
             蓝色「准备…」时不要点；变成<strong>绿色「点!」</strong>后，尽快点击屏幕或按 Space / Enter。抢点会提示太早并重来。
           </p>

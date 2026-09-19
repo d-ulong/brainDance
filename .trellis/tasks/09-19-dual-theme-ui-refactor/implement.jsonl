@@ -1,0 +1,13 @@
+{"file": "src/app/globals.css", "reason": "Dual-theme tokens, app shell, home and mobile schedule styles"}
+{"file": "src/app/layout.tsx", "reason": "Theme bootstrap before paint"}
+{"file": "src/app/page.tsx", "reason": "Student/parent home dashboards"}
+{"file": "src/components/home/student-home-dashboard.tsx", "reason": "Next-task-first student home from live schedule DTOs"}
+{"file": "src/components/home/parent-home-dashboard.tsx", "reason": "Parent home student overview layout"}
+{"file": "src/components/ui/page-shell.tsx", "reason": "App shell, sidebar/bottom nav layout"}
+{"file": "src/components/ui/top-tabs.tsx", "reason": "Role nav labels and parent training tab"}
+{"file": "src/components/ui/theme-bootstrap.tsx", "reason": "localStorage theme restore"}
+{"file": "src/components/schedule/schedule-calendar.tsx", "reason": "Mobile day list for week/month views"}
+{"file": "src/components/plans/plan-library-edit-form.tsx", "reason": "Independent plan edit sections"}
+{"file": "src/app/student/plans/[planId]/edit/page.tsx", "reason": "Student plan edit route"}
+{"file": "src/app/parent/plans/[planId]/edit/page.tsx", "reason": "Parent plan edit route"}
+{"file": "tests/unit/schedule/home-schedule.test.ts", "reason": "Next-task ordering regression"}

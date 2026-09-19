@@ -18,6 +18,9 @@ type PageShellProps = {
   backHref?: string;
   secondaryNavigation?: ReactNode;
   hideHeading?: boolean;
+  hideTabs?: boolean;
+  showThemeToggle?: boolean;
+  workspace?: "default" | "parent";
   onBeforeNavigate?: () => boolean | Promise<boolean>;
 };
 
@@ -30,6 +33,9 @@ export function PageShell({
   backHref,
   secondaryNavigation,
   hideHeading = false,
+  hideTabs = false,
+  showThemeToggle = false,
+  workspace = "default",
   onBeforeNavigate,
 }: PageShellProps) {
   const router = useRouter();
@@ -49,52 +55,77 @@ export function PageShell({
   }
 
   return (
-    <main className="bd-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-8">
-      <div className="bd-masthead flex items-center justify-between gap-3">
-        <BrandLogo />
-        <div className="flex items-center gap-2">
-          <ThemeToggle />
-          {showLogout ? (
-            <button
-              type="button"
-              className="shrink-0 rounded-full border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100"
-              onClick={() => void logout()}
-            >
-              退出
-            </button>
-          ) : null}
-        </div>
-      </div>
-      <TopTabs onBeforeNavigate={onBeforeNavigate} />
-      {secondaryNavigation || backHref ? (
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 flex-1">{secondaryNavigation}</div>
-          {backHref ? (
+    <div
+      className={`bd-app ${workspace === "parent" ? "bd-app-parent" : ""}`}
+      data-workspace={workspace}
+    >
+      <main className="bd-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-8">
+        <header className="bd-masthead flex items-center justify-between gap-3">
+          <Link href="/" className="min-w-0 shrink" onClick={(event) => void navigate(event, "/")}>
+            <BrandLogo />
+          </Link>
+          <div className="flex items-center gap-2">
+            {showThemeToggle ? <ThemeToggle /> : null}
             <Link
-              href={backHref}
-              className="shrink-0 rounded-full border border-[var(--bd-border)] bg-white px-3 py-2 text-sm font-semibold text-neutral-600 hover:bg-neutral-50"
-              onClick={(event) => void navigate(event, backHref)}
+              href="/account"
+              className="bd-shell-avatar"
+              aria-label="我的账号"
+              data-testid="shell-account-link"
             >
-              ← 返回
+              <span aria-hidden="true">我</span>
             </Link>
-          ) : null}
+            {showLogout ? (
+              <button
+                type="button"
+                className="bd-shell-logout shrink-0"
+                onClick={() => void logout()}
+              >
+                退出
+              </button>
+            ) : null}
+          </div>
+        </header>
+        <div className="bd-app-body">
+          {hideTabs ? null : <TopTabs onBeforeNavigate={onBeforeNavigate} />}
+          <div className="bd-main-column">
+            {secondaryNavigation || backHref ? (
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">{secondaryNavigation}</div>
+                {backHref ? (
+                  <Link
+                    href={backHref}
+                    className="bd-back-link shrink-0"
+                    onClick={(event) => void navigate(event, backHref)}
+                  >
+                    ← 返回
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
+            {hideHeading ? (
+              <h1 className="sr-only">{title}</h1>
+            ) : (
+              <header className="bd-page-heading flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <h1 className="inline text-xl font-bold tracking-tight break-words">{title}</h1>
+                  {subtitle && subtitleKind === "status" ? (
+                    <p className="mt-1 text-sm font-semibold text-[var(--bd-primary)]">
+                      {subtitle}
+                    </p>
+                  ) : subtitle ? (
+                    <details className="bd-page-help">
+                      <summary>使用说明</summary>
+                      <p className="mt-2 text-sm break-words text-[var(--bd-muted)]">{subtitle}</p>
+                    </details>
+                  ) : null}
+                </div>
+              </header>
+            )}
+            <div className="bd-content flex flex-1 flex-col gap-4">{children}</div>
+          </div>
         </div>
-      ) : null}
-      {hideHeading ? <h1 className="sr-only">{title}</h1> : <header className="bd-page-heading flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h1 className="inline text-xl font-bold tracking-tight break-words">{title}</h1>
-          {subtitle && subtitleKind === "status" ? (
-            <p className="mt-1 text-sm font-semibold text-[var(--bd-primary)]">{subtitle}</p>
-          ) : subtitle ? (
-            <details className="bd-page-help">
-              <summary>使用说明</summary>
-              <p className="mt-2 text-sm text-neutral-600 break-words">{subtitle}</p>
-            </details>
-          ) : null}
-        </div>
-      </header>}
-      <div className="bd-content flex flex-1 flex-col gap-4">{children}</div>
-    </main>
+      </main>
+    </div>
   );
 }
 
@@ -142,9 +173,20 @@ export function Toast({
         ? "border-blue-200 bg-blue-50 text-blue-900"
         : "border-emerald-200 bg-emerald-50 text-emerald-900";
   return (
-    <div className={`fixed inset-x-4 top-4 z-[210] mx-auto flex w-auto max-w-lg items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl sm:inset-x-auto sm:right-6 ${toneClass}`} role="status" aria-live="polite">
+    <div
+      className={`fixed inset-x-4 top-4 z-[210] mx-auto flex w-auto max-w-lg items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl sm:inset-x-auto sm:right-6 ${toneClass}`}
+      role="status"
+      aria-live="polite"
+    >
       <p className="min-w-0 flex-1 text-sm font-semibold">{message}</p>
-      <button type="button" className="min-h-8 min-w-8 rounded-full text-lg leading-none" aria-label="关闭提示" onClick={onClose}>×</button>
+      <button
+        type="button"
+        className="min-h-8 min-w-8 rounded-full text-lg leading-none"
+        aria-label="关闭提示"
+        onClick={onClose}
+      >
+        ×
+      </button>
     </div>
   );
 }

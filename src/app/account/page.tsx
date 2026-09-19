@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ThemeToggle } from "@/components/ui/app-theme";
 import { LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession, type SessionInfo } from "@/lib/client/api";
 
@@ -59,6 +60,13 @@ export default function AccountPage() {
                 账号：{session.account || "未设置登录账号"}
               </p>
             </div>
+          </section>
+          <section className="bd-panel">
+            <h2 className="mb-3 text-lg font-bold">外观主题</h2>
+            <p className="mb-3 text-sm text-[var(--bd-muted)]">
+              深空探索站与奶油糖果工坊可随时切换，偏好会保存在本浏览器。
+            </p>
+            <ThemeToggle />
           </section>
           <section className="bd-panel">
             <h2 className="mb-3 text-lg font-bold">账号与家庭</h2>

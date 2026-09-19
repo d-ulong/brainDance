@@ -42,7 +42,8 @@ export function moveCalendarDate(date: string, view: CalendarView, direction: -1
 
 function dateLabel(date: string, view: CalendarView) {
   const value = parseFamilyDate(date);
-  if (view === "day") return `${value.getUTCFullYear()}年${value.getUTCMonth() + 1}月${value.getUTCDate()}日`;
+  if (view === "day")
+    return `${value.getUTCFullYear()}年${value.getUTCMonth() + 1}月${value.getUTCDate()}日`;
   if (view === "week") {
     const { from, through } = rangeForCalendarDate(date, view);
     return `${Number(from.slice(5, 7))}月${Number(from.slice(8))}日 – ${Number(through.slice(5, 7))}月${Number(through.slice(8))}日`;
@@ -59,20 +60,33 @@ function itemTime(item: ScheduleItemDto) {
   });
 }
 
-function EventCard({ item, compact = false, actions }: { item: ScheduleItemDto; compact?: boolean; actions?: ReactNode }) {
+function EventCard({
+  item,
+  compact = false,
+  actions,
+}: {
+  item: ScheduleItemDto;
+  compact?: boolean;
+  actions?: ReactNode;
+}) {
   const earned = item.pointsEarned;
   const showPoints = typeof earned === "number" && earned !== 0;
   const pointsInline = showPoints
     ? ` · ${earned > 0 ? "+" : ""}${earned}${item.pointsRuleLabel ? ` · ${item.pointsRuleLabel}` : ""}`
     : "";
   return (
-    <article className={`bd-calendar-event bd-calendar-event-${item.effectiveStatus} ${compact ? "is-compact" : ""}`} data-testid={`student-schedule-item-${item.id}`}>
+    <article
+      className={`bd-calendar-event bd-calendar-event-${item.effectiveStatus} ${compact ? "is-compact" : ""}`}
+      data-testid={`student-schedule-item-${item.id}`}
+    >
       <div className="w-full text-left">
         <div>
           <time>{itemTime(item)}</time>
           <strong>
             {item.title || item.planTitle || "计划任务"}
-            {pointsInline ? <span className="font-semibold text-slate-600">{pointsInline}</span> : null}
+            {pointsInline ? (
+              <span className="font-semibold text-slate-600">{pointsInline}</span>
+            ) : null}
           </strong>
         </div>
         {!compact && item.planTitle && item.title ? (
@@ -113,41 +127,155 @@ export function ScheduleCalendar({
 }) {
   const range = rangeForCalendarDate(selectedDate, view);
   const byDate = new Map<string, ScheduleItemDto[]>();
-  for (const item of items) byDate.set(item.familyDate, [...(byDate.get(item.familyDate) ?? []), item]);
+  for (const item of items)
+    byDate.set(item.familyDate, [...(byDate.get(item.familyDate) ?? []), item]);
   const today = todayFamilyDate();
+  const dayItems = [...(byDate.get(selectedDate) ?? [])].sort((a, b) =>
+    a.scheduledAt.localeCompare(b.scheduledAt),
+  );
   return (
     <section className="bd-calendar" data-testid={`schedule-calendar-${view}`}>
       <header className="bd-calendar-toolbar">
-        <button type="button" onClick={() => onDateChange(today)}>今天</button>
-        <button type="button" aria-label="上一段日期" onClick={() => onDateChange(moveCalendarDate(selectedDate, view, -1))}>‹</button>
-        <button type="button" aria-label="下一段日期" onClick={() => onDateChange(moveCalendarDate(selectedDate, view, 1))}>›</button>
-        <label className="bd-calendar-date-title">{dateLabel(selectedDate, view)}<input aria-label="选择日期" type="date" value={selectedDate} onChange={(event) => onDateChange(event.target.value)} /></label>
+        <button type="button" onClick={() => onDateChange(today)}>
+          今天
+        </button>
+        <button
+          type="button"
+          aria-label="上一段日期"
+          onClick={() => onDateChange(moveCalendarDate(selectedDate, view, -1))}
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          aria-label="下一段日期"
+          onClick={() => onDateChange(moveCalendarDate(selectedDate, view, 1))}
+        >
+          ›
+        </button>
+        <label className="bd-calendar-date-title">
+          {dateLabel(selectedDate, view)}
+          <input
+            aria-label="选择日期"
+            type="date"
+            value={selectedDate}
+            onChange={(event) => onDateChange(event.target.value)}
+          />
+        </label>
         <div className="bd-calendar-view-tabs" aria-label="日程查看方式">
-          {(["day", "week", "month"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={view === candidate} onClick={() => onViewChange(candidate)}>{candidate === "day" ? "日" : candidate === "week" ? "周" : "月"}</button>)}
+          {(["day", "week", "month"] as const).map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              aria-pressed={view === candidate}
+              onClick={() => onViewChange(candidate)}
+            >
+              {candidate === "day" ? "日" : candidate === "week" ? "周" : "月"}
+            </button>
+          ))}
         </div>
       </header>
+      <div className="bd-mobile-schedule-list" data-testid="schedule-mobile-day-list">
+        <h3>
+          {selectedDate === today
+            ? "今天"
+            : `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8))}日`}
+          · {dayItems.length} 项
+        </h3>
+        {dayItems.length ? (
+          dayItems.map((item) => (
+            <div key={item.id} className="bd-mobile-schedule-row">
+              <EventCard item={item} actions={renderActions?.(item)} />
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-[var(--bd-muted)]">这一天还没有日程。</p>
+        )}
+      </div>
       {view === "day" ? (
         <div className="bd-calendar-day">
-          <div className="bd-calendar-day-heading"><span>GMT+8</span><strong>{selectedDate === today ? "今天" : `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8))}日`}</strong></div>
+          <div className="bd-calendar-day-heading">
+            <span>GMT+8</span>
+            <strong>
+              {selectedDate === today
+                ? "今天"
+                : `${Number(selectedDate.slice(5, 7))}月${Number(selectedDate.slice(8))}日`}
+            </strong>
+          </div>
           {Array.from({ length: 24 }, (_, index) => index).map((hour) => {
-            const rowItems = (byDate.get(selectedDate) ?? []).filter((item) => Number(itemTime(item).slice(0, 2)) === hour);
-            return <div className="bd-calendar-hour" key={hour}><time>{String(hour).padStart(2, "0")}:00</time><div>{rowItems.map((item) => <EventCard key={item.id} item={item} actions={renderActions?.(item)} />)}</div></div>;
+            const rowItems = (byDate.get(selectedDate) ?? []).filter(
+              (item) => Number(itemTime(item).slice(0, 2)) === hour,
+            );
+            return (
+              <div className="bd-calendar-hour" key={hour}>
+                <time>{String(hour).padStart(2, "0")}:00</time>
+                <div>
+                  {rowItems.map((item) => (
+                    <EventCard key={item.id} item={item} actions={renderActions?.(item)} />
+                  ))}
+                </div>
+              </div>
+            );
           })}
         </div>
       ) : view === "week" ? (
-        <div className="bd-calendar-scroll"><div className="bd-calendar-week">
-          <div className="bd-calendar-week-heading"><span>GMT+8</span>{datesBetween(range.from, 7).map((date, index) => <header className={date === today ? "is-today" : ""} key={date}><span>{["周日", "周一", "周二", "周三", "周四", "周五", "周六"][index]}</span><strong>{Number(date.slice(8))}</strong></header>)}</div>
-          <div className="bd-calendar-week-hours">
-            {Array.from({ length: 24 }, (_, index) => index).map((hour) => <div className="bd-calendar-week-row" key={hour}>
-              <time>{String(hour).padStart(2, "0")}:00</time>
-              {datesBetween(range.from, 7).map((date) => <div className={date === today ? "is-today" : ""} key={date}>{(byDate.get(date) ?? []).filter((item) => Number(itemTime(item).slice(0, 2)) === hour).map((item) => <EventCard key={item.id} item={item} compact actions={renderActions?.(item)} />)}</div>)}
-            </div>)}
+        <div className="bd-calendar-scroll">
+          <div className="bd-calendar-week">
+            <div className="bd-calendar-week-heading">
+              <span>GMT+8</span>
+              {datesBetween(range.from, 7).map((date, index) => (
+                <header className={date === today ? "is-today" : ""} key={date}>
+                  <span>{["周日", "周一", "周二", "周三", "周四", "周五", "周六"][index]}</span>
+                  <strong>{Number(date.slice(8))}</strong>
+                </header>
+              ))}
+            </div>
+            <div className="bd-calendar-week-hours">
+              {Array.from({ length: 24 }, (_, index) => index).map((hour) => (
+                <div className="bd-calendar-week-row" key={hour}>
+                  <time>{String(hour).padStart(2, "0")}:00</time>
+                  {datesBetween(range.from, 7).map((date) => (
+                    <div className={date === today ? "is-today" : ""} key={date}>
+                      {(byDate.get(date) ?? [])
+                        .filter((item) => Number(itemTime(item).slice(0, 2)) === hour)
+                        .map((item) => (
+                          <EventCard
+                            key={item.id}
+                            item={item}
+                            compact
+                            actions={renderActions?.(item)}
+                          />
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
-        </div></div>
+        </div>
       ) : (
         <div className="bd-calendar-month">
-          {["周日", "周一", "周二", "周三", "周四", "周五", "周六"].map((day) => <strong className="bd-calendar-weekday" key={day}>{day}</strong>)}
-          {datesBetween(range.from, 42).map((date) => <section className={`${date.slice(0, 7) !== selectedDate.slice(0, 7) ? "is-outside" : ""} ${date === today ? "is-today" : ""}`} key={date}><time>{Number(date.slice(8))}</time><div>{(byDate.get(date) ?? []).slice(0, 5).map((item) => <EventCard key={item.id} item={item} compact />)}{(byDate.get(date)?.length ?? 0) > 5 ? <small>另有 {(byDate.get(date)?.length ?? 0) - 5} 项</small> : null}</div></section>)}
+          {["周日", "周一", "周二", "周三", "周四", "周五", "周六"].map((day) => (
+            <strong className="bd-calendar-weekday" key={day}>
+              {day}
+            </strong>
+          ))}
+          {datesBetween(range.from, 42).map((date) => (
+            <section
+              className={`${date.slice(0, 7) !== selectedDate.slice(0, 7) ? "is-outside" : ""} ${date === today ? "is-today" : ""}`}
+              key={date}
+            >
+              <time>{Number(date.slice(8))}</time>
+              <div>
+                {(byDate.get(date) ?? []).slice(0, 5).map((item) => (
+                  <EventCard key={item.id} item={item} compact />
+                ))}
+                {(byDate.get(date)?.length ?? 0) > 5 ? (
+                  <small>另有 {(byDate.get(date)?.length ?? 0) - 5} 项</small>
+                ) : null}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </section>

@@ -246,6 +246,11 @@ function ParentPlansPageContent() {
     setFormOpen(true);
   }
   function openEdit(plan: PlanLibraryDto, copy: boolean) {
+    if (!copy) {
+      const scope = selfOnly ? "?scope=self" : "";
+      router.push(`/parent/plans/${plan.id}/edit${scope}`);
+      return;
+    }
     setEditing(copy ? null : { id: plan.id, revision: plan.revision });
     setTitle(copy ? `${plan.definition.title} 副本` : plan.definition.title);
     setDescription(plan.definition.description ?? "");

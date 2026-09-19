@@ -308,13 +308,7 @@ export default function StudentPlansPage() {
   }
 
   function openEdit(plan: PlanLibraryDto) {
-    setEditing(plan);
-    setTitle(plan.definition.title);
-    setDescription(plan.definition.description ?? "");
-    setStartDate(plan.definition.startDate);
-    setPriority(String(plan.priority));
-    setEntries(fromDefinition(plan.definition));
-    setFormOpen(true);
+    router.push(`/student/plans/${plan.id}/edit`);
   }
 
   function changeEntry<K extends keyof DraftEntry>(index: number, key: K, value: DraftEntry[K]) {

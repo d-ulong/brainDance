@@ -353,7 +353,7 @@ export function DigitSpanTrainingRunner({
       {lifecycle.error && uiPhase !== "intro" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
 
       {uiPhase === "intro" ? (
-        <section className="space-y-4 rounded-3xl border border-[var(--bd-border)] bg-white p-5" data-testid="digit-span-intro">
+        <section className="bd-training-intro space-y-4" data-testid="digit-span-intro">
           <p className="text-sm text-slate-700">
             记住屏幕上的数字序列后按规则输入。数字为真随机（相邻位不会相同）。
           </p>
