@@ -4,58 +4,79 @@ import { useEffect, useRef } from "react";
 
 const HISTORY_GUARD = { __bdUnsavedGuard: 1 } as const;
 
+function isGuardState(state: unknown): boolean {
+  return typeof state === "object" && state !== null && "__bdUnsavedGuard" in state;
+}
+
 export function useUnsavedChangesGuard(active: boolean) {
-  const guardPushed = useRef(false);
-  const confirmingLeave = useRef(false);
-  const suppressPop = useRef(false);
+  const trapArmed = useRef(false);
+  const leavingConfirmed = useRef(false);
+  const skipPop = useRef(false);
   const activeRef = useRef(active);
   activeRef.current = active;
 
   useEffect(() => {
-    if (!active) {
-      confirmingLeave.current = false;
-      if (guardPushed.current) {
-        guardPushed.current = false;
-        suppressPop.current = true;
-        window.history.back();
-      }
-      return;
-    }
-
-    suppressPop.current = false;
-
     function onBeforeUnload(event: BeforeUnloadEvent) {
+      if (!activeRef.current) return;
       event.preventDefault();
       event.returnValue = "";
     }
 
-    function onPopState() {
-      if (suppressPop.current && !activeRef.current) {
-        suppressPop.current = false;
+    function armTrap() {
+      if (isGuardState(window.history.state)) return;
+      if (trapArmed.current) {
+        window.history.replaceState(HISTORY_GUARD, "");
         return;
       }
-      suppressPop.current = false;
-      if (confirmingLeave.current) {
-        confirmingLeave.current = false;
+      window.history.pushState(HISTORY_GUARD, "");
+      trapArmed.current = true;
+    }
+
+    function disarmTrap() {
+      if (!trapArmed.current) return;
+      if (isGuardState(window.history.state)) {
+        window.history.replaceState(null, "");
+      }
+    }
+
+    function onPopState(event: PopStateEvent) {
+      if (leavingConfirmed.current) {
+        leavingConfirmed.current = false;
+        trapArmed.current = false;
         return;
       }
+
+      if (skipPop.current) {
+        skipPop.current = false;
+        return;
+      }
+
+      if (isGuardState(event.state) && !activeRef.current) {
+        window.history.replaceState(null, "");
+        return;
+      }
+
       if (!activeRef.current) {
         return;
       }
+
       const leave = window.confirm("有未保存的修改，确定离开吗？");
       if (leave) {
-        confirmingLeave.current = true;
-        guardPushed.current = false;
+        leavingConfirmed.current = true;
+        trapArmed.current = false;
+        activeRef.current = false;
         window.history.back();
         return;
       }
+
       window.history.pushState(HISTORY_GUARD, "");
-      guardPushed.current = true;
+      trapArmed.current = true;
     }
 
-    if (!guardPushed.current) {
-      window.history.pushState(HISTORY_GUARD, "");
-      guardPushed.current = true;
+    if (active) {
+      armTrap();
+    } else {
+      disarmTrap();
     }
 
     window.addEventListener("beforeunload", onBeforeUnload);

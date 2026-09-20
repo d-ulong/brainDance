@@ -109,16 +109,18 @@ async function setupStudentPlan(browser, options = {}) {
   };
 }
 
-async function setupParentBindings(browser) {
+async function setupParentBindings(browser, options = {}) {
   const context = await browser.newContext();
   const bindingCalls = [];
   let fetchFail = false;
   const plan = {
-    id: "parent-plan",
+    id: options.planId ?? "parent-plan",
     revision: 2,
     priority: 0,
     canEdit: true,
-    bindings: [{ studentId: "student-a", displayName: "A", username: null, effectiveFrom: "2026-09-01" }],
+    bindings:
+      options.initialBindings ??
+      [{ studentId: "student-a", displayName: "A", username: null, effectiveFrom: "2026-09-01" }],
     ownerId: "review-parent",
     definition: {
       title: "Parent plan",
@@ -239,10 +241,16 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
       await s.page.getByTestId("student-plan-activate").click();
       await s.page.waitForTimeout(300);
       const stayedOnNew = s.page.url().includes("/student/plans/new");
+      const activateWrites = s.writes.filter(
+        (w) => w.method === "POST" && w.path.includes("/activate"),
+      );
       assert("R01-activate-blocked-with-draft", stayedOnNew && confirms === 0, {
         url: s.page.url(),
         confirms,
         newWrites: s.writes.length - activateWritesBefore,
+      });
+      assert("R01-no-activate-with-unsaved-draft", activateWrites.length === 0, {
+        activateWrites: activateWrites.length,
       });
       result.checks.push({ name: "R01", posts: posts.length, patches: patches.length, stayedOnNew });
       await s.context.close();
@@ -271,7 +279,7 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
       await s.page.evaluate(() => history.back());
       await s.page.waitForTimeout(1200);
       const onList = s.page.url().includes("/student/plans") && !s.page.url().includes("/edit");
-      assert("R03-back-confirms-to-list", onList && confirms >= 1, { url: s.page.url(), confirms });
+      assert("R03-back-confirms-to-list", onList && confirms === 1, { url: s.page.url(), confirms });
       result.checks.push({ name: "R03", initial, final, onList, confirms });
 
       await s.context.close();
@@ -362,6 +370,182 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
         bCallsAfter,
       });
       result.checks.push({ name: "R04", bStillSelected, bCalls, bCallsAfter });
+      await s.context.close();
+    }
+
+    // R04: fresh bind A ok + B fail, retry sends only B
+    {
+      const s = await setupParentBindings(browser, { initialBindings: [] });
+      await s.page.goto(`${base}/parent/plans/parent-plan/edit`, { waitUntil: "networkidle" });
+      await s.page.locator("summary", { hasText: "暂不绑定" }).click();
+      await s.page.getByRole("checkbox", { name: "Student A", exact: true }).check();
+      await s.page.getByRole("checkbox", { name: "Student B", exact: true }).check();
+      await s.page.getByTestId("plan-edit-save-bindings").click();
+      await s.page.waitForTimeout(700);
+      if (await s.page.getByRole("button", { name: "知道了" }).count()) {
+        await s.page.getByRole("button", { name: "知道了" }).click();
+      }
+      const aCallsMid = s.bindingCalls.filter((c) => c.studentId === "student-a").length;
+      const bCallsMid = s.bindingCalls.filter((c) => c.studentId === "student-b").length;
+      assert("R04-fresh-A-once-B-once", aCallsMid === 1 && bCallsMid === 1, { aCallsMid, bCallsMid });
+      await s.page.getByTestId("plan-edit-save-bindings").click();
+      await s.page.waitForTimeout(500);
+      const aCallsFinal = s.bindingCalls.filter((c) => c.studentId === "student-a").length;
+      const bCallsFinal = s.bindingCalls.filter((c) => c.studentId === "student-b").length;
+      assert("R04-fresh-retry-B-only", aCallsFinal === 1 && bCallsFinal === 2, {
+        aCallsFinal,
+        bCallsFinal,
+      });
+      result.checks.push({ name: "R04-fresh", aCallsFinal, bCallsFinal });
+      await s.context.close();
+    }
+
+    // R04: bind write ok, refresh GET fails, retry read only
+    {
+      const s = await setupParentBindings(browser);
+      let getCalls = 0;
+      let failNextGet = false;
+      await s.context.unroute("**/api/**");
+      await s.context.route("**/api/**", async (route) => {
+        const req = route.request();
+        const p = new URL(req.url()).pathname;
+        const reply = (body, status = 200) =>
+          route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+        if (p === "/api/auth/session") {
+          return reply({
+            userId: "review-parent",
+            role: "parent",
+            displayName: "Parent",
+            account: "parent",
+            contactVerified: true,
+            mustChangePassword: false,
+          });
+        }
+        if (req.method() !== "GET") {
+          if (p.endsWith("/activate") && req.method() === "POST") {
+            const body = req.postDataJSON();
+            s.bindingCalls.push({ action: "bind", studentId: body.studentId });
+            if (body.studentId === "student-b") {
+              failNextGet = true;
+              s.plan.bindings.push({
+                studentId: "student-b",
+                displayName: "Student B",
+                username: "b",
+                effectiveFrom: "2026-09-21",
+              });
+              return reply({
+                itemsCreated: 0,
+                effectiveFrom: "2026-09-21",
+                generatedFrom: "2026-09-21",
+                generatedThrough: "2026-09-21",
+              });
+            }
+          }
+          return reply({ plan: s.plan });
+        }
+        if (p === "/api/plan-library") {
+          getCalls++;
+          if (failNextGet) {
+            failNextGet = false;
+            return reply({ message: "refresh failed" }, 500);
+          }
+          return reply({ plans: [s.plan] });
+        }
+        if (p === "/api/family/students") {
+          return reply({
+            students: [
+              { studentId: "student-a", displayName: "Student A", username: "a" },
+              { studentId: "student-b", displayName: "Student B", username: "b" },
+            ],
+          });
+        }
+        return reply({});
+      });
+      const page = s.page;
+      await page.goto(`${base}/parent/plans/parent-plan/edit`, { waitUntil: "networkidle" });
+      const titleBefore = await page.locator("form input").first().inputValue();
+      await page.locator("summary", { hasText: "已选择" }).click();
+      const studentB = page.getByRole("checkbox", { name: "Student B", exact: true });
+      await studentB.check();
+      const writesBefore = s.bindingCalls.length;
+      await page.getByTestId("plan-edit-save-bindings").click();
+      await page.waitForTimeout(900);
+      if (await page.getByRole("button", { name: "知道了" }).count()) {
+        await page.getByRole("button", { name: "知道了" }).click();
+      }
+      const refreshBtn = page.getByTestId("plan-edit-refresh-bindings");
+      assert("R04-refresh-entry-visible", (await refreshBtn.count()) === 1, {
+        count: await refreshBtn.count(),
+      });
+      const getBeforeRetry = getCalls;
+      await refreshBtn.click();
+      await page.waitForTimeout(500);
+      if (await page.getByRole("button", { name: "知道了" }).count()) {
+        await page.getByRole("button", { name: "知道了" }).click();
+      }
+      const bindAfterRefresh = s.bindingCalls.length - writesBefore;
+      assert("R04-refresh-retry-get-only", getCalls === getBeforeRetry + 1 && bindAfterRefresh === 1, {
+        getCalls,
+        getBeforeRetry,
+        bindAfterRefresh,
+      });
+      assert("R04-definition-draft-unchanged", (await page.locator("form input").first().inputValue()) === titleBefore, {
+        titleBefore,
+        titleAfter: await page.locator("form input").first().inputValue(),
+      });
+      result.checks.push({ name: "R04-refresh", getCalls, bindAfterRefresh });
+      await s.context.close();
+    }
+
+    // S01: activation locks fields; S04: forward then back confirm to list
+    {
+      const s = await setupStudentPlan(browser);
+      await s.page.goto(`${base}/student/plans/new`, { waitUntil: "networkidle" });
+      await titleInput(s.page).fill("Activation lock");
+      await entryTitleInput(s.page).fill("Read");
+      await s.page.getByRole("button", { name: "保存计划", exact: true }).click();
+      await s.page.getByTestId("student-plan-activate").waitFor();
+      s.setDelay(900);
+      const writesBeforeActivate = s.writes.length;
+      await s.page.getByTestId("student-plan-activate").click();
+      await s.page.waitForTimeout(80);
+      const locked = await titleInput(s.page).isDisabled();
+      await titleInput(s.page).fill("Edited during activation").catch(() => {});
+      await s.page.waitForTimeout(200);
+      const parallelPatches = s.writes
+        .slice(writesBeforeActivate)
+        .filter((w) => w.method === "PATCH").length;
+      await s.page.waitForTimeout(900);
+      assert("S01-locked-during-activation", locked, { locked });
+      assert("S01-no-parallel-patch-while-activating", parallelPatches === 0, { parallelPatches });
+      result.checks.push({ name: "S01", locked, parallelPatches });
+      await s.context.close();
+    }
+
+    {
+      const s = await setupStudentPlan(browser);
+      await s.page.goto(`${base}/student/plans`, { waitUntil: "networkidle" });
+      await s.page.goto(`${base}/student/plans/review-plan/edit`, { waitUntil: "networkidle" });
+      await titleInput(s.page).fill("Saved once");
+      await s.page.getByRole("button", { name: "保存修改", exact: true }).click();
+      await s.page.waitForTimeout(400);
+      await s.page.evaluate(() => history.forward());
+      await s.page.waitForTimeout(300);
+      await titleInput(s.page).fill("Unsaved after forward");
+      let confirms = 0;
+      s.page.on("dialog", async (d) => {
+        confirms++;
+        await d.accept();
+      });
+      await s.page.evaluate(() => history.back());
+      await s.page.waitForTimeout(900);
+      const onList =
+        s.page.url().includes("/student/plans") && !s.page.url().includes("/edit");
+      assert("S04-forward-back-confirm-list", onList && confirms === 1, {
+        url: s.page.url(),
+        confirms,
+      });
+      result.checks.push({ name: "S04", onList, confirms });
       await s.context.close();
     }
   } finally {

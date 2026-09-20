@@ -141,3 +141,105 @@
 ## 声明
 
 **已交审核**
+
+---
+
+# 原生命周期验收补齐（S01–S04）
+
+- **修复基线 SHA**：`f98a45a65c5d80c4b4a647c5612926eed34a3869`
+- **实现 SHA**：与本次聚焦提交 `git rev-parse HEAD` 一致
+- **分支**：`main`
+
+## 状态表（同页全生命周期）
+
+| 状态 | definitionDirty | bindingDirty | 表单/绑定 UI | 允许写操作 | 离开 |
+|---|---|---|---|---|---|
+| clean | false | false | 可编辑 | 定义保存、绑定保存、启用 | 直接离开 |
+| 定义草稿 | true | * | 可编辑 | 定义保存 | 守卫确认 |
+| 绑定草稿 | * | true | 可编辑 | 绑定保存 | 守卫确认 |
+| 定义保存中 | — | * | fieldset 锁定 | 无并行 PATCH | 同草稿 |
+| 绑定保存中 | 草稿保留 | 快照提交 | 多选锁定 | 无改选/无并行 bind | 草稿保留 |
+| 启用中 | 须已 clean | — | fieldset 锁定 | 无并行 PATCH/启用 | 成功才 push 列表 |
+| 绑定已写、读失败 | 不变 | 待对齐 | 可编辑定义；绑定可重读 | 「重新读取绑定」仅 GET | 草稿保留 |
+| 历史守卫 | dirty 时 arm | — | — | — | 确认一次；前进栈无遗留 guard |
+
+## S01–S04 断言（浏览器 mock，最终 SHA 绑定）
+
+| ID | 断言 | 结果 |
+|---|---|---|
+| S01 | 启用延迟 900ms 内标题 disabled、无并行 PATCH；草稿启用仍拦截 | `state-repair` + `review-f98a45a-browser`：`locked=true`，`parallelPatches=0` |
+| S02 | 绑定提交中 checkbox disabled，提交后选择不被回读覆盖 | `review-f98a45a-browser`：`locked=true`，`bSelected=true` |
+| S03 | 绑定成功 + GET 500 后 `plan-edit-refresh-bindings` 可见；重试仅 GET | `review-f98a45a`：`retryButtonCount=1`；`state-repair` R04-refresh |
+| S04 | 保存→前进→再改→后退确认一次回列表 | `confirms=1`，URL `/student/plans` 无 `/edit` |
+
+## 命令与退出码（实现 SHA 后执行）
+
+| 命令 | 退出码 |
+|---|---|
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-check.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-final-check.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/state-repair-browser.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-f98a45a-browser.cjs` | 0 |
+| `pnpm exec eslint`（变更源文件） | 0 |
+| `pnpm typecheck` | 0 |
+
+## 未执行项
+
+- `pnpm build`（dev 3002 同目录运行中）
+- 全量 E2E、真实 DB 写流程
+- 三轮保存/后退/前进全矩阵、站内头像离开、直接打开编辑页、刷新/关闭的逐项浏览器脚本（守卫逻辑已按 S04 核心路径实机断言）
+
+## 声明
+
+**已交审核**
+
+---
+
+# 原生命周期验收补齐（S01–S04）
+
+- **修复基线 SHA**：`f98a45a65c5d80c4b4a647c5612926eed34a3869`
+- **实现 SHA**：与本次聚焦提交 `git rev-parse HEAD` 一致
+- **分支**：`main`
+
+## 状态表（同页全生命周期）
+
+| 状态 | definitionDirty | bindingDirty | 表单/绑定 UI | 允许写操作 | 离开 |
+|---|---|---|---|---|---|
+| clean | false | false | 可编辑 | 定义保存、绑定保存、启用 | 直接离开 |
+| 定义草稿 | true | * | 可编辑 | 定义保存 | 守卫确认 |
+| 绑定草稿 | * | true | 可编辑 | 绑定保存 | 守卫确认 |
+| 定义保存中 | — | * | fieldset 锁定 | 无并行 PATCH | 同草稿 |
+| 绑定保存中 | 草稿保留 | 快照提交 | 多选锁定 | 无改选/无并行 bind | 草稿保留 |
+| 启用中 | 须已 clean | — | fieldset 锁定 | 无并行 PATCH/启用 | 成功才 push 列表 |
+| 绑定已写、读失败 | 不变 | 待对齐 | 可编辑定义；绑定可重读 | 「重新读取绑定」仅 GET | 草稿保留 |
+| 历史守卫 | dirty 时 arm | — | — | — | 确认一次；前进栈无遗留 guard |
+
+## S01–S04 断言（浏览器 mock，最终 SHA 绑定）
+
+| ID | 断言 | 结果 |
+|---|---|---|
+| S01 | 启用延迟 900ms 内标题 disabled、无并行 PATCH；草稿启用仍拦截 | `state-repair` + `review-f98a45a-browser`：`locked=true`，`parallelPatches=0` |
+| S02 | 绑定提交中 checkbox disabled，提交后选择不被回读覆盖 | `review-f98a45a-browser`：`locked=true`，`bSelected=true` |
+| S03 | 绑定成功 + GET 500 后 `plan-edit-refresh-bindings` 可见；重试仅 GET | `review-f98a45a`：`retryButtonCount=1`；`state-repair` R04-refresh |
+| S04 | 保存→前进→再改→后退确认一次回列表 | `confirms=1`，URL `/student/plans` 无 `/edit` |
+
+## 命令与退出码（实现 SHA 后执行）
+
+| 命令 | 退出码 |
+|---|---|
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-check.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-final-check.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/state-repair-browser.cjs` | 0 |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/review-f98a45a-browser.cjs` | 0 |
+| `pnpm exec eslint`（变更源文件） | 0 |
+| `pnpm typecheck` | 0 |
+
+## 未执行项
+
+- `pnpm build`（dev 3002 同目录运行中）
+- 全量 E2E、真实 DB 写流程
+- 三轮保存/后退/前进全矩阵、站内头像离开、直接打开编辑页、刷新/关闭的逐项浏览器脚本（守卫逻辑已按 S04 核心路径实机断言）
+
+## 声明
+
+**已交审核**

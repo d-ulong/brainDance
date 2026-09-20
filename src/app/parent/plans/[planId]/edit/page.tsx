@@ -34,7 +34,10 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
   const [students, setStudents] = useState<LinkedStudentDto[]>([]);
   const [selfOption, setSelfOption] = useState<LinkedStudentDto | null>(null);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  const [bindingsRefreshNeeded, setBindingsRefreshNeeded] = useState(false);
+  const [refreshingBindings, setRefreshingBindings] = useState(false);
   const saveDefinitionLock = useRef(false);
+  const bindingApplyLock = useRef(false);
 
   const bindingDirty = useMemo(() => {
     if (!plan) return false;
@@ -116,23 +119,49 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
     }
   }
 
+  async function reloadBindingsFromServer() {
+    if (!plan || refreshingBindings) return;
+    setRefreshingBindings(true);
+    setError(null);
+    try {
+      const library = await fetchPlanLibrary();
+      const refreshed = library.plans.find((row) => row.id === plan.id);
+      if (refreshed) {
+        setPlan(refreshed);
+        setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
+        setBindingsRefreshNeeded(false);
+        setMessage("绑定信息已重新读取");
+      }
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "重新读取绑定失败");
+    } finally {
+      setRefreshingBindings(false);
+    }
+  }
+
   async function applyBindings() {
-    if (!plan || !bindingDirty || savingBindings) return;
+    if (!plan || !bindingDirty || savingBindings || bindingApplyLock.current) return;
+    bindingApplyLock.current = true;
     setSavingBindings(true);
     setError(null);
+    const submissionSelection = [...selectedStudents];
     const previousIds = new Set(plan.bindings.map((binding) => binding.studentId));
-    const nextIds = new Set(selectedStudents);
-    const toAdd = selectedStudents.filter((studentId) => !previousIds.has(studentId));
+    const nextIds = new Set(submissionSelection);
+    const toAdd = submissionSelection.filter((studentId) => !previousIds.has(studentId));
     const toRemove = [...previousIds].filter((studentId) => !nextIds.has(studentId));
     const added: string[] = [];
     const removed: string[] = [];
     const failures: string[] = [];
+    const effectiveFromByStudent = new Map<string, string>();
 
     try {
       for (const studentId of toAdd) {
         try {
-          await activatePlanLibrary(plan.id, studentId);
+          const activation = await activatePlanLibrary(plan.id, studentId);
           added.push(studentId);
+          if (activation.effectiveFrom) {
+            effectiveFromByStudent.set(studentId, activation.effectiveFrom);
+          }
         } catch (cause) {
           failures.push(
             `新增绑定失败（${studentId.slice(0, 8)}…）：${
@@ -171,7 +200,8 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
                 studentId,
                 displayName: fromList?.displayName ?? studentId.slice(0, 8),
                 username: fromList?.username ?? null,
-                effectiveFrom: new Date().toISOString().slice(0, 10),
+                effectiveFrom:
+                  effectiveFromByStudent.get(studentId) ?? current.definition.startDate,
               };
             });
           return { ...current, bindings: [...remaining, ...stubs] };
@@ -185,11 +215,13 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           if (refreshed) {
             setPlan(refreshed);
             setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
+            setBindingsRefreshNeeded(false);
           }
         } catch (cause) {
+          setBindingsRefreshNeeded(true);
           setError(
             added.length || removed.length
-              ? `部分绑定已写入（+${added.length}/-${removed.length}），但刷新计划失败，请重试保存绑定。${
+              ? `部分绑定已写入（+${added.length}/-${removed.length}），但刷新计划失败，请使用下方「重新读取绑定」重试。${
                   cause instanceof ApiError ? cause.message : ""
                 }`
               : cause instanceof ApiError
@@ -197,6 +229,8 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
                 : "刷新计划失败",
           );
         }
+      } else {
+        setSelectedStudents(submissionSelection);
       }
 
       if (added.length || removed.length) {
@@ -216,6 +250,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       setError(cause instanceof ApiError ? cause.message : "绑定更新失败");
     } finally {
       setSavingBindings(false);
+      bindingApplyLock.current = false;
     }
   }
 
@@ -257,12 +292,23 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
                     selectedIds={selectedStudents}
                     onChange={setSelectedStudents}
                     emptyLabel="暂不绑定"
+                    disabled={savingBindings || savingDefinition || refreshingBindings}
                   />
                 </Field>
+                {bindingsRefreshNeeded ? (
+                  <PrimaryButton
+                    type="button"
+                    disabled={refreshingBindings || savingBindings}
+                    onClick={() => void reloadBindingsFromServer()}
+                    data-testid="plan-edit-refresh-bindings"
+                  >
+                    {refreshingBindings ? "重新读取中…" : "重新读取绑定"}
+                  </PrimaryButton>
+                ) : null}
                 {bindingDirty ? (
                   <PrimaryButton
                     type="button"
-                    disabled={savingBindings || savingDefinition}
+                    disabled={savingBindings || savingDefinition || refreshingBindings}
                     onClick={() => void applyBindings()}
                     data-testid="plan-edit-save-bindings"
                   >

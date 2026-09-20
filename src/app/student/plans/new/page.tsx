@@ -30,7 +30,16 @@ export default function StudentPlanNewPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const saveLock = useRef(false);
+  const activateLock = useRef(false);
+  const mountedRef = useRef(true);
   useUnsavedChangesGuard(dirty);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -47,7 +56,7 @@ export default function StudentPlanNewPage() {
     definition: Parameters<typeof savePlanLibrary>[0],
     priority: number,
   ) {
-    if (saveLock.current) return;
+    if (saveLock.current || activating) return;
     saveLock.current = true;
     setSaving(true);
     setError(null);
@@ -89,15 +98,18 @@ export default function StudentPlanNewPage() {
   }
 
   async function activateSavedPlan() {
-    if (!savedPlan || !studentId || activating || saving) return;
+    if (!savedPlan || !studentId || activating || saving || activateLock.current) return;
     if (dirty) {
       setError("有未保存的修改，请先保存计划后再启用。");
       return;
     }
+    activateLock.current = true;
     setActivating(true);
     setError(null);
+    const activationDate = savedPlan.definition.startDate;
     try {
-      const activation = await activatePlanLibrary(savedPlan.id, studentId, startDate);
+      const activation = await activatePlanLibrary(savedPlan.id, studentId, activationDate);
+      if (!mountedRef.current) return;
       if (activation.itemsCreated > 0) {
         setMessage(
           `计划已启用，并生成 ${activation.itemsCreated} 项日程（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
@@ -107,9 +119,14 @@ export default function StudentPlanNewPage() {
       }
       router.push("/student/plans");
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "启用计划失败");
+      if (mountedRef.current) {
+        setError(cause instanceof ApiError ? cause.message : "启用计划失败");
+      }
     } finally {
-      setActivating(false);
+      if (mountedRef.current) {
+        setActivating(false);
+      }
+      activateLock.current = false;
     }
   }
 
@@ -132,7 +149,7 @@ export default function StudentPlanNewPage() {
       <Toast message={message} onClose={() => setMessage(null)} />
       <PlanLibraryEditForm
         plan={formPlan}
-        saving={saving}
+        saving={saving || activating}
         submitLabel="保存计划"
         onCancel={cancel}
         onDirtyChange={setDirty}

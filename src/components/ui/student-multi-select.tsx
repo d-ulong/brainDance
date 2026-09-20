@@ -8,6 +8,7 @@ type StudentMultiSelectProps = {
   onChange: (studentIds: string[]) => void;
   emptyLabel?: string;
   label?: string;
+  disabled?: boolean;
 };
 
 export function StudentMultiSelect({
@@ -16,10 +17,12 @@ export function StudentMultiSelect({
   onChange,
   emptyLabel = "请选择学生",
   label = "选择学生",
+  disabled = false,
 }: StudentMultiSelectProps) {
   const selected = students.filter((student) => selectedIds.includes(student.studentId));
 
   function toggle(studentId: string, checked: boolean) {
+    if (disabled) return;
     onChange(
       checked
         ? [...new Set([...selectedIds, studentId])]
@@ -42,6 +45,7 @@ export function StudentMultiSelect({
               >
                 <input
                   type="checkbox"
+                  disabled={disabled}
                   checked={selectedIds.includes(student.studentId)}
                   onChange={(event) => toggle(student.studentId, event.target.checked)}
                 />
@@ -59,7 +63,8 @@ export function StudentMultiSelect({
             <button
               type="button"
               key={student.studentId}
-              className="min-h-9 rounded-full bg-violet-100 px-3 text-sm text-violet-800"
+              disabled={disabled}
+              className="min-h-9 rounded-full bg-violet-100 px-3 text-sm text-violet-800 disabled:opacity-50"
               onClick={() => toggle(student.studentId, false)}
             >
               {student.displayName || student.username || "未命名学生"} ×
