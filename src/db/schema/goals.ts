@@ -60,9 +60,15 @@ export const goalAssignments = pgTable("goal_assignments", {
   check("goal_assignments_status_check", sql`${table.status} IN ('pending_approval', 'active', 'completed', 'succeeded', 'failed')`),
   check("goal_assignments_actual_points_check", sql`${table.actualPoints} IS NULL OR ${table.actualPoints} >= 0`),
   check("goal_assignments_terminal_fields_check", sql`
-    (${table.status} IN ('pending_approval', 'active') AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL AND ${table.completedBy} IS NULL AND ${table.completedAt} IS NULL)
-    OR (${table.status} = 'completed' AND ${table.completedBy} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL)
-    OR (${table.status} IN ('succeeded', 'failed') AND ${table.evaluatedBy} IS NOT NULL AND ${table.evaluatedAt} IS NOT NULL)
+    (
+      (${table.completedBy} IS NULL AND ${table.completedAt} IS NULL)
+      OR (${table.completedBy} IS NOT NULL AND ${table.completedAt} IS NOT NULL)
+    )
+    AND (
+      (${table.status} IN ('pending_approval', 'active') AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL AND ${table.completedBy} IS NULL AND ${table.completedAt} IS NULL)
+      OR (${table.status} = 'completed' AND ${table.completedBy} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL)
+      OR (${table.status} IN ('succeeded', 'failed') AND ${table.evaluatedBy} IS NOT NULL AND ${table.evaluatedAt} IS NOT NULL)
+    )
   `),
 ]);
 

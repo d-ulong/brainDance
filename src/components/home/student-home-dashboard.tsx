@@ -33,14 +33,6 @@ function greetingForHour(hour: number): string {
   return "晚上好";
 }
 
-function formatTodayHeading(date: string): string {
-  const value = new Date(`${date}T12:00:00+08:00`);
-  const weekday = value.toLocaleDateString("zh-CN", { weekday: "long", timeZone: "Asia/Shanghai" });
-  const month = value.getUTCMonth() + 1;
-  const day = value.getUTCDate();
-  return `${month}月${day}日 · ${weekday}`;
-}
-
 function TaskRow({ item, highlight }: { item: ScheduleItemDto; highlight?: boolean }) {
   const done = item.effectiveStatus === "completed";
   return (
@@ -180,7 +172,6 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
     <div className="bd-home-dashboard" data-testid="student-home-dashboard">
       <header className="bd-home-greeting">
         <div>
-          <p className="bd-home-eyebrow">{formatTodayHeading(today)}</p>
           <h1 className="bd-home-title">
             {displayName}，{greetingForHour(hour)}
             <span className="bd-greeting-star" aria-hidden="true">

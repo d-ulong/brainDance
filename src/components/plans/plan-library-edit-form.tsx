@@ -327,11 +327,11 @@ export function PlanLibraryEditForm({
 
       </fieldset>
 
-      <div className="bd-plan-edit-footer flex flex-col gap-3 sm:flex-row sm:justify-end">
-        <SecondaryButton type="button" onClick={onCancel} className="w-full sm:w-auto">
+      <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <SecondaryButton type="button" onClick={onCancel} className="w-full min-h-11">
           取消
         </SecondaryButton>
-        <PrimaryButton type="submit" disabled={saving} data-testid="plan-edit-save" fullWidth={false}>
+        <PrimaryButton type="submit" disabled={saving} data-testid="plan-edit-save">
           {saving ? "保存中…" : submitLabel}
         </PrimaryButton>
       </div>

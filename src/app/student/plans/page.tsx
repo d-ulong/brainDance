@@ -142,7 +142,6 @@ export default function StudentPlansPage() {
   const [editing, setEditing] = useState<PlanLibraryDto | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [startDate, setStartDate] = useState(todayFamilyDate());
   const [priority, setPriority] = useState("0");
   const [entries, setEntries] = useState<DraftEntry[]>([blankEntry()]);
   const [generating, setGenerating] = useState<PlanLibraryDto | null>(null);
@@ -319,13 +318,14 @@ export default function StudentPlansPage() {
     setSaving(true);
     setError(null);
     try {
-      const planDefinition = toDefinition(title, description, startDate, entries);
+      const planStart = editing ? editing.definition.startDate : todayFamilyDate();
+      const planDefinition = toDefinition(title, description, planStart, entries);
       if (editing) {
         await updatePlanLibrary(editing.id, editing.revision, planDefinition, Number(priority));
         setMessage("计划已更新，已有日程保持不变");
       } else {
         const result = await savePlanLibrary(planDefinition, Number(priority));
-        const activation = await activatePlanLibrary(result.plan.id, studentId, startDate);
+        const activation = await activatePlanLibrary(result.plan.id, studentId, planStart);
         if (activation.itemsCreated > 0) {
           setMessage(
             `计划已启用，并生成 ${activation.itemsCreated} 项日程（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
@@ -350,20 +350,19 @@ export default function StudentPlansPage() {
   }
 
   function openGenerate(plan: PlanLibraryDto) {
-    const minimum = [
-      todayFamilyDate(),
-      plan.bindings[0]?.effectiveFrom ?? plan.definition.startDate,
-    ]
-      .sort()
-      .at(-1)!;
-    setRangeFrom(minimum);
-    setRangeThrough(minimum);
+    const day = todayFamilyDate();
+    setRangeFrom(day);
+    setRangeThrough(day);
     setGenerating(plan);
   }
 
   async function generate(event: React.FormEvent) {
     event.preventDefault();
     if (!studentId || !generating) return;
+    if (rangeThrough < rangeFrom) {
+      setError("结束日期不能早于开始日期");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -736,27 +735,16 @@ export default function StudentPlansPage() {
                 placeholder="写下计划想达成什么"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="开始日期">
-                <TextInput
-                  required
-                  type="date"
-                  min={editing ? undefined : todayFamilyDate()}
-                  value={startDate}
-                  onChange={(event) => setStartDate(event.target.value)}
-                />
-              </Field>
-              <Field label="优先级">
-                <TextInput
-                  required
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={priority}
-                  onChange={(event) => setPriority(event.target.value)}
-                />
-              </Field>
-            </div>
+            <Field label="优先级">
+              <TextInput
+                required
+                type="number"
+                min="0"
+                max="100"
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+              />
+            </Field>
             {entries.map((entry, index) => (
               <fieldset
                 className="space-y-3 rounded-2xl border border-[var(--bd-border)] p-3"
@@ -828,9 +816,14 @@ export default function StudentPlansPage() {
             <SecondaryButton onClick={() => setEntries((current) => [...current, blankEntry()])}>
               添加内容
             </SecondaryButton>
-            <PrimaryButton type="submit" disabled={saving} data-testid="student-plan-save">
-              {saving ? "保存中…" : editing ? "保存修改" : "保存并启用"}
-            </PrimaryButton>
+            <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SecondaryButton type="button" onClick={() => setFormOpen(false)} className="w-full min-h-11">
+                取消
+              </SecondaryButton>
+              <PrimaryButton type="submit" disabled={saving} data-testid="student-plan-save">
+                {saving ? "保存中…" : editing ? "保存修改" : "保存并启用"}
+              </PrimaryButton>
+            </div>
           </form>
         </Modal>
       ) : null}
@@ -849,9 +842,14 @@ export default function StudentPlansPage() {
                 <TextInput
                   required
                   type="date"
-                  min={rangeFrom}
+                  min={todayFamilyDate()}
                   value={rangeFrom}
-                  onChange={(event) => setRangeFrom(event.target.value)}
+                  data-testid="plan-generate-from"
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setRangeFrom(next);
+                    if (rangeThrough < next) setRangeThrough(next);
+                  }}
                 />
               </Field>
               <Field label="结束日期">
@@ -860,13 +858,22 @@ export default function StudentPlansPage() {
                   type="date"
                   min={rangeFrom}
                   value={rangeThrough}
+                  data-testid="plan-generate-through"
                   onChange={(event) => setRangeThrough(event.target.value)}
                 />
               </Field>
             </div>
-            <PrimaryButton type="submit" disabled={saving}>
-              {saving ? "生成中…" : "生成日程"}
-            </PrimaryButton>
+            <p className="text-xs text-[var(--bd-muted)]">
+              若早于计划生效日，服务器会返回明确错误。
+            </p>
+            <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SecondaryButton type="button" onClick={() => setGenerating(null)} className="w-full min-h-11">
+                取消
+              </SecondaryButton>
+              <PrimaryButton type="submit" disabled={saving}>
+                {saving ? "生成中…" : "生成日程"}
+              </PrimaryButton>
+            </div>
           </form>
         </Modal>
       ) : null}

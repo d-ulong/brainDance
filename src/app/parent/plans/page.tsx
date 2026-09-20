@@ -69,15 +69,6 @@ function formatActivationSummary(prefix: string, results: ActivationSummary[]) {
   }
   return `${prefix}，未新增日程：幂等回放（实际日期 ${generatedFrom} 至 ${generatedThrough}）`;
 }
-function earliestGenerateDate(plan: PlanLibraryDto, studentIds: string[]) {
-  const selectedBindings = plan.bindings.filter((binding) => studentIds.includes(binding.studentId));
-  return maxDate(
-    today(),
-    ...(selectedBindings.length ? selectedBindings : plan.bindings).map(
-      (binding) => binding.effectiveFrom,
-    ),
-  );
-}
 const blank = (): Draft => ({
   title: "",
   description: "",
@@ -188,7 +179,6 @@ function ParentPlansPageContent() {
   const [selfOption, setSelfOption] = useState<LinkedStudentDto | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [date, setDate] = useState(today());
   const [priority, setPriority] = useState("0");
   const [items, setItems] = useState<Draft[]>([blank()]);
   const [formOpen, setFormOpen] = useState(false);
@@ -233,7 +223,6 @@ function ParentPlansPageContent() {
   function resetForm() {
     setTitle("");
     setDescription("");
-    setDate(today());
     setPriority("0");
     setItems([blank()]);
   }
@@ -249,7 +238,6 @@ function ParentPlansPageContent() {
     }
     setTitle(`${plan.definition.title} 副本`);
     setDescription(plan.definition.description ?? "");
-    setDate(plan.definition.startDate);
     setPriority(String(plan.priority));
     setItems(drafts(plan.definition));
     setFormOpen(true);
@@ -277,7 +265,7 @@ function ParentPlansPageContent() {
     setSaving(true);
     setError(null);
     try {
-      const planDefinition = definition(title, description, date, items);
+      const planDefinition = definition(title, description, today(), items);
       const result = await savePlanLibrary(planDefinition, Number(priority));
       setFormOpen(false);
       resetForm();
@@ -293,14 +281,17 @@ function ParentPlansPageContent() {
     setAction({ plan, kind });
     const fixedStudentId = kind === "generate" ? contextStudentId ?? (selfOnly ? selfOption?.studentId : undefined) : undefined;
     setActionStudents(fixedStudentId ? [fixedStudentId] : []);
-    const minimum = kind === "generate" ? earliestGenerateDate(plan, fixedStudentId ? [fixedStudentId] : []) : today();
-    setRangeFrom(minimum);
-    setRangeThrough(minimum);
+    const day = today();
+    setRangeFrom(day);
+    setRangeThrough(day);
   }
   async function executeAction(event: React.FormEvent) {
     event.preventDefault();
     if (!actionStudents.length) return setError("请至少选择一名学生");
     if (!action) return;
+    if (action.kind === "generate" && rangeThrough < rangeFrom) {
+      return setError("结束日期不能早于开始日期");
+    }
     setSaving(true);
     try {
       if (action.kind === "bind") {
@@ -370,8 +361,7 @@ function ParentPlansPageContent() {
       : assignmentOptions.filter((student) =>
           action?.plan.bindings.some((binding) => binding.studentId === student.studentId),
         );
-  const minimumGenerateDate =
-    action?.kind === "generate" ? earliestGenerateDate(action.plan, actionStudents) : today();
+  const generateDateMin = today();
   const scopedPlans = contextStudentId
     ? plans.filter((plan) => plan.bindings.some((binding) => binding.studentId === contextStudentId))
     : selfOnly && selfOption
@@ -579,14 +569,6 @@ function ParentPlansPageContent() {
             <Field label="计划优先级（0–100，数字越大越优先）">
               <TextInput type="number" min="0" max="100" value={priority} onChange={(event) => setPriority(event.target.value)} />
             </Field>
-            <Field label="开始日期">
-              <TextInput
-                required
-                type="date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-              />
-            </Field>
             {items.map((item, index) => (
               <fieldset className="space-y-2 rounded-2xl border p-3" key={index}>
                 <legend>内容项 {index + 1}</legend>
@@ -683,9 +665,14 @@ function ParentPlansPageContent() {
             <p className="text-sm text-[var(--bd-muted)]">
               保存后会进入编辑页，可在「适用对象」中单独保存绑定变更。
             </p>
-            <PrimaryButton type="submit" disabled={saving} data-testid="plan-library-save">
-              {saving ? "保存中…" : "保存副本并继续编辑"}
-            </PrimaryButton>
+            <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SecondaryButton type="button" onClick={() => setFormOpen(false)} className="w-full min-h-11">
+                取消
+              </SecondaryButton>
+              <PrimaryButton type="submit" disabled={saving} data-testid="plan-library-save">
+                {saving ? "保存中…" : "保存副本并继续编辑"}
+              </PrimaryButton>
+            </div>
           </form>
         </Modal>
       ) : null}
@@ -702,28 +689,26 @@ function ParentPlansPageContent() {
             {action.kind === "generate" && (contextStudentId || selfOnly) ? <p className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-sm text-slate-700">生成对象：{assignmentOptions.find((student) => student.studentId === actionStudents[0])?.displayName || "当前对象"}。此处只会生成该对象的日程。</p> : <StudentMultiSelect
               students={actionCandidates}
               selectedIds={actionStudents}
-              onChange={(studentIds) => {
-                setActionStudents(studentIds);
-                if (action.kind === "generate") {
-                  const minimum = earliestGenerateDate(action.plan, studentIds);
-                  setRangeFrom((current) => maxDate(current, minimum));
-                  setRangeThrough((current) => maxDate(current, minimum));
-                }
-              }}
+              onChange={(studentIds) => setActionStudents(studentIds)}
               emptyLabel={action.kind === "bind" ? "没有可添加学生" : "没有已绑定学生"}
             />}
             {action.kind === "generate" ? (
               <div className="grid grid-cols-2 gap-2">
-                <p className="col-span-2 text-xs text-neutral-600">
-                  该计划从 {minimumGenerateDate} 起对所选学生生效；更早日期不可选择。
+                <p className="col-span-2 text-xs text-[var(--bd-muted)]">
+                  可选择今天至未来的日期范围；若早于计划对该学生的生效日，服务器会返回明确错误。
                 </p>
                 <Field label="开始日期">
                   <TextInput
                     required
                     type="date"
                     value={rangeFrom}
-                    min={minimumGenerateDate}
-                    onChange={(event) => setRangeFrom(maxDate(event.target.value, minimumGenerateDate))}
+                    min={generateDateMin}
+                    data-testid="plan-generate-from"
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setRangeFrom(next);
+                      if (rangeThrough < next) setRangeThrough(next);
+                    }}
                   />
                 </Field>
                 <Field label="结束日期">
@@ -731,10 +716,9 @@ function ParentPlansPageContent() {
                     required
                     type="date"
                     value={rangeThrough}
-                    min={maxDate(minimumGenerateDate, rangeFrom)}
-                    onChange={(event) =>
-                      setRangeThrough(maxDate(event.target.value, minimumGenerateDate, rangeFrom))
-                    }
+                    min={rangeFrom}
+                    data-testid="plan-generate-through"
+                    onChange={(event) => setRangeThrough(event.target.value)}
                   />
                 </Field>
               </div>

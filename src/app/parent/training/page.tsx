@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession } from "@/lib/client/api";
 import { PARENT_TRAINING_OPTIONS } from "@/lib/client/training-api";
@@ -39,14 +38,17 @@ export default function ParentTrainingHubPage() {
   return (
     <PageShell
       title="家长训练中心"
-      subtitle="家长训练使用成人参数，记录只属于本人，不混入学生数据或产生家庭协作副作用，不展示成员比较。"
       backHref="/"
       showLogout
+      headingAside={
+        <div className="space-y-1 text-left text-xs leading-snug text-[var(--bd-muted)] sm:text-right">
+          <p data-testid="parent-training-adult-notice">
+            成人参数 · 仅记录自己的练习 · 不混入学生数据或产生家庭协作副作用
+          </p>
+          <p>本训练仅供日常认知练习，不构成医学或智力诊断。</p>
+        </div>
+      }
     >
-      <TrainingDisclaimer />
-      <p className="text-xs text-[var(--bd-muted)]" data-testid="parent-training-adult-notice">
-        成人参数 · 仅记录自己的练习
-      </p>
       <nav
         className="grid gap-4 sm:grid-cols-3"
         aria-label="家长训练项目"

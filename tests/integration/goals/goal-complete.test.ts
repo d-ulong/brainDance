@@ -136,4 +136,90 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
     expect(row?.completedAt).toBeTruthy();
     expect(row?.evaluatedBy).toBe(parent.id);
   });
+
+  it("rejects completion when assignment is not active", async () => {
+    const { db, student, assignmentId } = await seedStudentParent();
+    await db
+      .update(goalAssignments)
+      .set({ status: "pending_approval" })
+      .where(eq(goalAssignments.id, assignmentId));
+    await expect(
+      completeGoal(db, { actorId: student.id, assignmentId, idempotencyKey: "pending-complete" }),
+    ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
+  });
+
+  it("rejects idempotency key reuse across different assignments", async () => {
+    const { db, parent, student, assignmentId } = await seedStudentParent();
+    const second = await createGoals(db, {
+      actorId: parent.id,
+      subjectIds: [student.id],
+      content: "第二个目标",
+      dueDate: "2026-12-02",
+      horizon: "short",
+      idempotencyKey: "second-goal",
+    });
+    await completeGoal(db, {
+      actorId: student.id,
+      assignmentId,
+      idempotencyKey: "shared-complete-key",
+    });
+    await expect(
+      completeGoal(db, {
+        actorId: student.id,
+        assignmentId: second.assignmentIds[0]!,
+        idempotencyKey: "shared-complete-key",
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("allows only one concurrent completion to succeed", async () => {
+    const { db, student, assignmentId } = await seedStudentParent();
+    const results = await Promise.allSettled([
+      completeGoal(db, {
+        actorId: student.id,
+        assignmentId,
+        idempotencyKey: "race-a",
+      }),
+      completeGoal(db, {
+        actorId: student.id,
+        assignmentId,
+        idempotencyKey: "race-b",
+      }),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const [row] = await db
+      .select({ status: goalAssignments.status })
+      .from(goalAssignments)
+      .where(eq(goalAssignments.id, assignmentId));
+    expect(row?.status).toBe("completed");
+  });
+
+  it("blocks evaluation racing ahead of completion", async () => {
+    const { db, parent, student, assignmentId } = await seedStudentParent();
+    await expect(
+      evaluateGoal(db, {
+        actorId: parent.id,
+        assignmentId,
+        outcome: "succeeded",
+        actualPoints: 1,
+        idempotencyKey: "eval-race",
+      }),
+    ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
+    await completeGoal(db, {
+      actorId: student.id,
+      assignmentId,
+      idempotencyKey: "complete-race",
+    });
+    const evaluated = await evaluateGoal(db, {
+      actorId: parent.id,
+      assignmentId,
+      outcome: "succeeded",
+      actualPoints: 0,
+      idempotencyKey: "eval-after-race",
+    });
+    expect(evaluated.status).toBe("succeeded");
+  });
 });

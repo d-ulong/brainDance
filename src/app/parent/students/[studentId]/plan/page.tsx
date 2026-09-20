@@ -44,7 +44,6 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
 
   const [createTitle, setCreateTitle] = useState("每天 20:00 完成作业");
   const [createLocalTime, setCreateLocalTime] = useState("20:00");
-  const [createStartDate, setCreateStartDate] = useState(todayFamilyDate());
   const [createEndDate, setCreateEndDate] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editLocalTime, setEditLocalTime] = useState("20:00");
@@ -120,7 +119,7 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
       await createFormalPlan(studentId, {
         title: createTitle,
         localTime: createLocalTime,
-        startDate: createStartDate,
+        startDate: todayFamilyDate(),
         endDate: createEndDate.trim() ? createEndDate : null,
       });
       setActionMessage("计划已创建");
@@ -283,15 +282,6 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
                 value={createLocalTime}
                 onChange={(e) => setCreateLocalTime(e.target.value)}
                 pattern="^\d{2}:\d{2}$"
-                required
-              />
-            </Field>
-            <Field label="开始日期">
-              <TextInput
-                data-testid="plan-start-date"
-                type="date"
-                value={createStartDate}
-                onChange={(e) => setCreateStartDate(e.target.value)}
                 required
               />
             </Field>

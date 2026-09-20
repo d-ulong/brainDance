@@ -237,7 +237,12 @@ export function StudentScheduleWorkspace({
                 onChange={(event) => setStartedAt(event.target.value)}
               />
             </label>
-            <div className="flex gap-2">
+            <div
+              className="bd-segmented-control"
+              role="group"
+              aria-label="完成时间填写方式"
+              data-testid="schedule-completion-mode"
+            >
               <button
                 type="button"
                 aria-pressed={completionMode === "duration"}
@@ -279,7 +284,7 @@ export function StudentScheduleWorkspace({
               </label>
             )}
           </div>
-          <div className="mt-5 flex justify-end gap-3">
+          <div className="bd-modal-footer-actions">
             <SecondaryButton onClick={() => setCompleting(null)}>取消</SecondaryButton>
             <PrimaryButton
               disabled={

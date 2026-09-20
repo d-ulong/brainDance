@@ -102,6 +102,54 @@ describe.skipIf(!hasDb)("goal completed migration constraints", () => {
     expect(row?.status).toBe("succeeded");
   });
 
+  it("rejects succeeded rows with only completed_by", async () => {
+    const db = isolated.db;
+    const [parent] = await db
+      .insert(users)
+      .values({
+        role: "parent",
+        displayName: "半填家长",
+        email: `half_parent_${Math.random()}@test.local`,
+        passwordHash: "test",
+        contactVerifiedAt: new Date(),
+        status: "active",
+      })
+      .returning({ id: users.id });
+    await expect(
+      insertAssignment({
+        status: "succeeded",
+        evaluatedBy: parent!.id,
+        evaluatedAt: new Date(),
+        completedBy: parent!.id,
+        completedAt: null,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects succeeded rows with only completed_at", async () => {
+    const db = isolated.db;
+    const [parent] = await db
+      .insert(users)
+      .values({
+        role: "parent",
+        displayName: "半填家长2",
+        email: `half_parent2_${Math.random()}@test.local`,
+        passwordHash: "test",
+        contactVerifiedAt: new Date(),
+        status: "active",
+      })
+      .returning({ id: users.id });
+    await expect(
+      insertAssignment({
+        status: "succeeded",
+        evaluatedBy: parent!.id,
+        evaluatedAt: new Date(),
+        completedBy: null,
+        completedAt: new Date(),
+      }),
+    ).rejects.toThrow();
+  });
+
   it("rejects half-populated completion pairs", async () => {
     const db = isolated.db;
     const [student] = await db

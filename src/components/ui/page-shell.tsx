@@ -64,20 +64,13 @@ function shellDisplayName(session: SessionInfo) {
   return session.role === "student" ? "学生" : session.role === "parent" ? "家长" : "成员";
 }
 
-function ShellIdentityCluster({ showLogout }: { showLogout: boolean }) {
-  const [session, setSession] = useState<SessionInfo | null>(null);
-
-  useEffect(() => {
-    if (!showLogout) return;
-    void fetchSession().then(setSession);
-  }, [showLogout]);
-
-  if (!showLogout || !session) return null;
+function ShellIdentityCluster({ session }: { session: SessionInfo | null }) {
+  if (!session) return null;
 
   const name = shellDisplayName(session);
 
   return (
-    <div className="bd-shell-identity flex max-w-[min(12rem,40vw)] flex-col items-end gap-0.5">
+    <div className="bd-shell-identity flex max-w-[min(16rem,52vw)] items-center justify-end gap-2">
       <ShellShanghaiClock />
       <span
         className="truncate text-sm font-semibold text-[var(--bd-text)]"
@@ -122,6 +115,7 @@ export function PageShell({
 }: PageShellProps) {
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
+  const showPageHeading = !hideHeading || Boolean(backHref);
 
   useEffect(() => {
     if (!showLogout) return;
@@ -154,7 +148,7 @@ export function PageShell({
           </Link>
           <div className="flex items-center gap-2">
             {showThemeToggle ? <ThemeToggle /> : null}
-            <ShellIdentityCluster showLogout={Boolean(showLogout)} />
+            {showLogout ? <ShellIdentityCluster session={session} /> : null}
             {showLogout ? (
               <>
                 <Link
@@ -187,9 +181,7 @@ export function PageShell({
             {secondaryNavigation ? (
               <div className="flex items-center justify-between gap-3">{secondaryNavigation}</div>
             ) : null}
-            {hideHeading ? (
-              <h1 className="sr-only">{title}</h1>
-            ) : (
+            {showPageHeading ? (
               <header className="bd-page-heading flex flex-wrap items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-1 items-start gap-2">
                   {backHref ? (
@@ -197,6 +189,7 @@ export function PageShell({
                       href={backHref}
                       className="bd-back-link bd-back-link-inline mt-0.5 shrink-0"
                       onClick={(event) => void navigate(event, backHref)}
+                      data-testid="page-back-link"
                     >
                       ← 返回
                     </Link>
@@ -218,6 +211,8 @@ export function PageShell({
                   </div>
                 ) : null}
               </header>
+            ) : (
+              <h1 className="sr-only">{title}</h1>
             )}
             <div className="bd-content flex flex-1 flex-col gap-4">{children}</div>
           </div>
@@ -343,15 +338,15 @@ export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`bd-input min-h-11 w-full rounded-2xl border border-neutral-300 bg-white px-3 py-2 text-base outline-none transition ${props.className ?? ""}`}
+      className={`bd-input min-h-11 w-full rounded-2xl border border-[var(--bd-border)] bg-[var(--bd-surface-soft)] px-3 py-2 text-base text-[var(--bd-text)] outline-none transition placeholder:text-[var(--bd-muted)] disabled:cursor-not-allowed disabled:opacity-60 ${props.className ?? ""}`}
     />
   );
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="flex flex-col gap-2 text-sm font-medium text-neutral-800">
-      <span>{label}</span>
+    <label className="bd-field flex flex-col gap-2 text-sm font-medium text-[var(--bd-text)]">
+      <span className="bd-field-label">{label}</span>
       {children}
     </label>
   );

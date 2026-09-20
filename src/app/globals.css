@@ -2355,6 +2355,85 @@ html:not([data-theme="candy"]) .bd-task-art-candy {
   background: var(--bd-surface-soft);
 }
 
+.bd-modal-body .bd-field-label,
+.bd-modal-body label > span:first-child {
+  color: var(--bd-text);
+}
+.bd-modal-body .bd-input,
+.bd-modal-body input:not([type="checkbox"]):not([type="radio"]),
+.bd-modal-body textarea,
+.bd-modal-body select {
+  background: var(--bd-surface-soft);
+  color: var(--bd-text);
+  border-color: var(--bd-border);
+}
+.bd-modal-body .bd-input::placeholder,
+.bd-modal-body input::placeholder,
+.bd-modal-body textarea::placeholder {
+  color: var(--bd-muted);
+}
+.bd-modal-body .bd-input:disabled,
+.bd-modal-body input:disabled,
+.bd-modal-body textarea:disabled,
+.bd-modal-body select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.bd-modal-body .text-neutral-500,
+.bd-modal-body .text-slate-500,
+.bd-modal-body .text-slate-600,
+.bd-modal-body .text-slate-700 {
+  color: var(--bd-muted) !important;
+}
+
+.bd-segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: 9999px;
+  border: 1px solid var(--bd-border);
+  background: var(--bd-surface-soft);
+}
+.bd-segmented-control button {
+  min-height: 2.75rem;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: var(--bd-muted);
+  background: transparent;
+}
+.bd-segmented-control button[aria-pressed="true"] {
+  color: var(--bd-text);
+  background: var(--bd-surface);
+  border-color: var(--bd-border);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--bd-shadow) 25%, transparent);
+}
+.bd-modal-footer-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+.bd-modal-footer-actions .bd-primary,
+.bd-modal-footer-actions button {
+  width: 100%;
+}
+
+@media (min-width: 641px) {
+  .bd-calendar-date-title input[type="date"] {
+    display: none;
+    pointer-events: none;
+  }
+  .bd-calendar-month {
+    min-width: 0;
+  }
+  .bd-calendar:has(.bd-calendar-month) {
+    overflow-x: hidden;
+  }
+}
+
 .bd-goal-card {
   border-radius: 1.25rem;
   border: 1px solid var(--bd-border);
