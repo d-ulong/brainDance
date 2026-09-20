@@ -56,7 +56,7 @@ export default function StudentPlanNewPage() {
     definition: Parameters<typeof savePlanLibrary>[0],
     priority: number,
   ) {
-    if (saveLock.current || activating) return;
+    if (saveLock.current || activateLock.current || activating) return;
     saveLock.current = true;
     setSaving(true);
     setError(null);
@@ -98,7 +98,8 @@ export default function StudentPlanNewPage() {
   }
 
   async function activateSavedPlan() {
-    if (!savedPlan || !studentId || activating || saving || activateLock.current) return;
+    if (!savedPlan || !studentId || activating || saving || activateLock.current || saveLock.current)
+      return;
     if (dirty) {
       setError("有未保存的修改，请先保存计划后再启用。");
       return;

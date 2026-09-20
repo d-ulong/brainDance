@@ -2,17 +2,35 @@
 
 import { useEffect, useRef } from "react";
 
-const HISTORY_GUARD = { __bdUnsavedGuard: 1 } as const;
+const GUARD_KEY = "__bdUnsavedGuard";
 
-function isGuardState(state: unknown): boolean {
-  return typeof state === "object" && state !== null && "__bdUnsavedGuard" in state;
+function readHistoryState(): Record<string, unknown> {
+  const state = window.history.state;
+  if (state && typeof state === "object" && !Array.isArray(state)) {
+    return { ...(state as Record<string, unknown>) };
+  }
+  return {};
+}
+
+function hasGuard(state: unknown): boolean {
+  return typeof state === "object" && state !== null && GUARD_KEY in state;
+}
+
+function withGuard(state: Record<string, unknown>) {
+  return { ...state, [GUARD_KEY]: 1 };
+}
+
+function withoutGuard(state: Record<string, unknown>) {
+  const next = { ...state };
+  delete next[GUARD_KEY];
+  return next;
 }
 
 export function useUnsavedChangesGuard(active: boolean) {
+  const activeRef = useRef(active);
   const trapArmed = useRef(false);
   const leavingConfirmed = useRef(false);
-  const skipPop = useRef(false);
-  const activeRef = useRef(active);
+  const collapsingTrap = useRef(false);
   activeRef.current = active;
 
   useEffect(() => {
@@ -23,40 +41,50 @@ export function useUnsavedChangesGuard(active: boolean) {
     }
 
     function armTrap() {
-      if (isGuardState(window.history.state)) return;
-      if (trapArmed.current) {
-        window.history.replaceState(HISTORY_GUARD, "");
+      const base = readHistoryState();
+      if (hasGuard(window.history.state)) {
+        trapArmed.current = true;
         return;
       }
-      window.history.pushState(HISTORY_GUARD, "");
+      if (trapArmed.current) {
+        window.history.replaceState(withGuard(base), "");
+        return;
+      }
+      window.history.pushState(withGuard(base), "");
       trapArmed.current = true;
     }
 
     function disarmTrap() {
       if (!trapArmed.current) return;
-      if (isGuardState(window.history.state)) {
-        window.history.replaceState(null, "");
+      if (!hasGuard(window.history.state)) {
+        trapArmed.current = false;
+        return;
       }
+      collapsingTrap.current = true;
+      window.history.back();
     }
 
     function onPopState(event: PopStateEvent) {
+      if (collapsingTrap.current) {
+        collapsingTrap.current = false;
+        trapArmed.current = false;
+        const base = readHistoryState();
+        if (hasGuard(event.state)) {
+          window.history.replaceState(withoutGuard(base), "");
+        }
+        return;
+      }
+
       if (leavingConfirmed.current) {
         leavingConfirmed.current = false;
         trapArmed.current = false;
         return;
       }
 
-      if (skipPop.current) {
-        skipPop.current = false;
-        return;
-      }
-
-      if (isGuardState(event.state) && !activeRef.current) {
-        window.history.replaceState(null, "");
-        return;
-      }
-
       if (!activeRef.current) {
+        if (hasGuard(event.state)) {
+          window.history.replaceState(withoutGuard(readHistoryState()), "");
+        }
         return;
       }
 
@@ -69,7 +97,7 @@ export function useUnsavedChangesGuard(active: boolean) {
         return;
       }
 
-      window.history.pushState(HISTORY_GUARD, "");
+      window.history.pushState(withGuard(readHistoryState()), "");
       trapArmed.current = true;
     }
 

@@ -19,6 +19,25 @@ import {
   type PlanLibraryDto,
 } from "@/lib/client/m2-api";
 
+type PlanWriteOp = "definition" | "bindings" | "refresh-bindings";
+
+function mergeSelectedWithBindingFacts(
+  baselineFactIds: string[],
+  serverFactIds: string[],
+  currentSelection: string[],
+): string[] {
+  const baseline = new Set(baselineFactIds);
+  const selected = new Set(currentSelection);
+  const merged = new Set(serverFactIds);
+  for (const id of selected) {
+    if (!baseline.has(id)) merged.add(id);
+  }
+  for (const id of baseline) {
+    if (!selected.has(id)) merged.delete(id);
+  }
+  return [...merged];
+}
+
 export default function ParentPlanEditPage({ params }: { params: Promise<{ planId: string }> }) {
   const { planId } = use(params);
   const router = useRouter();
@@ -36,8 +55,19 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [bindingsRefreshNeeded, setBindingsRefreshNeeded] = useState(false);
   const [refreshingBindings, setRefreshingBindings] = useState(false);
-  const saveDefinitionLock = useRef(false);
-  const bindingApplyLock = useRef(false);
+  const writeOpRef = useRef<PlanWriteOp | null>(null);
+
+  function tryBeginWrite(op: PlanWriteOp): boolean {
+    if (writeOpRef.current !== null) return false;
+    writeOpRef.current = op;
+    return true;
+  }
+
+  function endWrite(op: PlanWriteOp) {
+    if (writeOpRef.current === op) writeOpRef.current = null;
+  }
+
+  const bindingWriteBusy = savingBindings || refreshingBindings;
 
   const bindingDirty = useMemo(() => {
     if (!plan) return false;
@@ -94,8 +124,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
     definition: Parameters<typeof updatePlanLibrary>[2],
     priority: number,
   ) {
-    if (!plan || saveDefinitionLock.current) return;
-    saveDefinitionLock.current = true;
+    if (!plan || !tryBeginWrite("definition")) return;
     setSavingDefinition(true);
     setError(null);
     try {
@@ -115,33 +144,57 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       setError(cause instanceof ApiError ? cause.message : "计划定义保存失败");
     } finally {
       setSavingDefinition(false);
-      saveDefinitionLock.current = false;
+      endWrite("definition");
     }
   }
 
   async function reloadBindingsFromServer() {
-    if (!plan || refreshingBindings) return;
+    if (!plan || !tryBeginWrite("refresh-bindings")) return;
+    const baselineFacts = plan.bindings.map((binding) => binding.studentId);
+    const selectionSnapshot = [...selectedStudents];
     setRefreshingBindings(true);
     setError(null);
     try {
       const library = await fetchPlanLibrary();
       const refreshed = library.plans.find((row) => row.id === plan.id);
-      if (refreshed) {
-        setPlan(refreshed);
-        setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
-        setBindingsRefreshNeeded(false);
-        setMessage("绑定信息已重新读取");
+      if (!refreshed) {
+        setError("重新读取绑定失败：未找到该计划。");
+        return;
       }
+      const serverFacts = refreshed.bindings.map((binding) => binding.studentId);
+      setPlan((current) => {
+        if (!current) return current;
+        const next: PlanLibraryDto = { ...current, bindings: refreshed.bindings };
+        if (!definitionDirty) {
+          return {
+            ...next,
+            revision: refreshed.revision,
+            definition: refreshed.definition,
+            priority: refreshed.priority,
+          };
+        }
+        if (refreshed.revision !== current.revision) {
+          setError(
+            "服务端计划版本已更新，本地定义草稿仍保留。请先保存定义或刷新页面后再试。",
+          );
+        }
+        return next;
+      });
+      setSelectedStudents(
+        mergeSelectedWithBindingFacts(baselineFacts, serverFacts, selectionSnapshot),
+      );
+      setBindingsRefreshNeeded(false);
+      setMessage("绑定信息已重新读取");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "重新读取绑定失败");
     } finally {
       setRefreshingBindings(false);
+      endWrite("refresh-bindings");
     }
   }
 
   async function applyBindings() {
-    if (!plan || !bindingDirty || savingBindings || bindingApplyLock.current) return;
-    bindingApplyLock.current = true;
+    if (!plan || !bindingDirty || !tryBeginWrite("bindings")) return;
     setSavingBindings(true);
     setError(null);
     const submissionSelection = [...selectedStudents];
@@ -213,8 +266,28 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           const library = await fetchPlanLibrary();
           const refreshed = library.plans.find((row) => row.id === plan.id);
           if (refreshed) {
-            setPlan(refreshed);
-            setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
+            const serverFacts = refreshed.bindings.map((binding) => binding.studentId);
+            setPlan((current) => {
+              if (!current) return current;
+              const next: PlanLibraryDto = { ...current, bindings: refreshed.bindings };
+              if (!definitionDirty) {
+                return {
+                  ...next,
+                  revision: refreshed.revision,
+                  definition: refreshed.definition,
+                  priority: refreshed.priority,
+                };
+              }
+              if (refreshed.revision !== current.revision) {
+                setError(
+                  "服务端计划版本已更新，本地定义草稿仍保留。请先保存定义或刷新页面后再试。",
+                );
+              }
+              return next;
+            });
+            setSelectedStudents(
+              mergeSelectedWithBindingFacts([...previousIds], serverFacts, submissionSelection),
+            );
             setBindingsRefreshNeeded(false);
           }
         } catch (cause) {
@@ -250,7 +323,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       setError(cause instanceof ApiError ? cause.message : "绑定更新失败");
     } finally {
       setSavingBindings(false);
-      bindingApplyLock.current = false;
+      endWrite("bindings");
     }
   }
 
@@ -277,7 +350,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       ) : plan ? (
         <PlanLibraryEditForm
           plan={plan}
-          saving={savingDefinition}
+          saving={savingDefinition || bindingWriteBusy}
           onCancel={cancel}
           onDirtyChange={setDefinitionDirty}
           onValidationError={setError}
@@ -298,7 +371,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
                 {bindingsRefreshNeeded ? (
                   <PrimaryButton
                     type="button"
-                    disabled={refreshingBindings || savingBindings}
+                    disabled={refreshingBindings || savingBindings || savingDefinition}
                     onClick={() => void reloadBindingsFromServer()}
                     data-testid="plan-edit-refresh-bindings"
                   >

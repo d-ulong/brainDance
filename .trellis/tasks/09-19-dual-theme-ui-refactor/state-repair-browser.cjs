@@ -3,9 +3,11 @@ const { chromium } = require("@playwright/test");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { resolveImplementationEvidence } = require("./browser-evidence-common.cjs");
 
 const base = "http://127.0.0.1:3002";
 const failures = [];
+const evidenceMeta = resolveImplementationEvidence();
 
 function assert(name, ok, detail) {
   if (!ok) failures.push({ name, detail });
@@ -205,9 +207,9 @@ async function setupParentBindings(browser, options = {}) {
 const titleInput = (page) => page.locator("form input").first();
 const entryTitleInput = (page) => page.locator("form fieldset fieldset input").first();
 
-(async () => {
+async function runStateRepairBrowserEvidence() {
   const browser = await chromium.launch({ headless: true, channel: "chrome" });
-  const result = { checks: [] };
+  const result = { ...evidenceMeta, checks: [] };
   try {
     // R01: new → save → rename → save → activate blocked
     {
@@ -528,9 +530,16 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
       await s.page.goto(`${base}/student/plans/review-plan/edit`, { waitUntil: "networkidle" });
       await titleInput(s.page).fill("Saved once");
       await s.page.getByRole("button", { name: "保存修改", exact: true }).click();
-      await s.page.waitForTimeout(400);
+      await s.page.waitForTimeout(450);
+      await s.page.evaluate(() => history.back());
+      await s.page.waitForTimeout(900);
+      const listAfterCleanBack =
+        s.page.url().replace(/\/$/, "") === `${base}/student/plans`.replace(/\/$/, "");
+      assert("C3-clean-save-single-back", listAfterCleanBack, { url: s.page.url() });
       await s.page.evaluate(() => history.forward());
-      await s.page.waitForTimeout(300);
+      await s.page.waitForTimeout(900);
+      const backOnEdit = s.page.url().includes("/student/plans/review-plan/edit");
+      assert("C3-forward-returns-to-edit", backOnEdit, { url: s.page.url() });
       await titleInput(s.page).fill("Unsaved after forward");
       let confirms = 0;
       s.page.on("dialog", async (d) => {
@@ -545,7 +554,120 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
         url: s.page.url(),
         confirms,
       });
-      result.checks.push({ name: "S04", onList, confirms });
+      result.checks.push({
+        name: "S04",
+        listAfterCleanBack,
+        backOnEdit,
+        onList,
+        confirms,
+      });
+      await s.context.close();
+    }
+
+    {
+      const s = await setupParentBindings(browser);
+      let patchRequests = 0;
+      s.page.on("request", (request) => {
+        if (request.method() === "PATCH" && new URL(request.url()).pathname === "/api/plan-library") {
+          patchRequests += 1;
+        }
+      });
+      await s.context.route("**/api/plan-library/parent-plan/activate", async (route) => {
+        const studentId = route.request().postDataJSON().studentId;
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        if (!s.plan.bindings.some((b) => b.studentId === studentId)) {
+          s.plan.bindings.push({
+            studentId,
+            displayName: "Student B",
+            username: "b",
+            effectiveFrom: "2026-09-21",
+          });
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            itemsCreated: 0,
+            effectiveFrom: "2026-09-21",
+            generatedFrom: "2026-09-21",
+            generatedThrough: "2026-09-21",
+          }),
+        });
+      });
+      await s.page.goto(`${base}/parent/plans/parent-plan/edit`, { waitUntil: "networkidle" });
+      await s.page.locator("summary", { hasText: "已选择" }).click();
+      await s.page.getByRole("checkbox", { name: "Student B", exact: true }).check();
+      await s.page.getByTestId("plan-edit-save-bindings").click();
+      const titleDisabled = await titleInput(s.page).isDisabled();
+      const definitionSaveDisabled = await s.page.getByTestId("plan-edit-save").isDisabled();
+      if (!titleDisabled) await titleInput(s.page).fill("Changed during binding");
+      if (!definitionSaveDisabled) await s.page.getByTestId("plan-edit-save").click();
+      await s.page.waitForTimeout(1100);
+      assert("C1-binding-locks-definition", titleDisabled && definitionSaveDisabled && patchRequests === 0, {
+        titleDisabled,
+        definitionSaveDisabled,
+        patchRequests,
+      });
+      result.checks.push({ name: "C1-binding-locks-definition", titleDisabled, patchRequests });
+      await s.context.close();
+    }
+
+    {
+      const s = await setupParentBindings(browser);
+      await s.context.route("**/api/plan-library/parent-plan/activate", async (route) => {
+        const studentId = route.request().postDataJSON().studentId;
+        if (!s.plan.bindings.some((b) => b.studentId === studentId)) {
+          s.plan.bindings.push({
+            studentId,
+            displayName: "Student B",
+            username: "b",
+            effectiveFrom: "2026-09-21",
+          });
+        }
+        s.setFetchFail(true);
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            itemsCreated: 0,
+            effectiveFrom: "2026-09-21",
+            generatedFrom: "2026-09-21",
+            generatedThrough: "2026-09-21",
+          }),
+        });
+      });
+      await s.page.goto(`${base}/parent/plans/parent-plan/edit`, { waitUntil: "networkidle" });
+      const titleDraft = "Draft title during refresh";
+      await titleInput(s.page).fill(titleDraft);
+      await s.page.locator("summary", { hasText: "已选择" }).click();
+      const b = s.page.getByRole("checkbox", { name: "Student B", exact: true });
+      await b.check();
+      await s.page.getByTestId("plan-edit-save-bindings").click();
+      await s.page.waitForTimeout(500);
+      if (await s.page.getByRole("button", { name: "知道了" }).count()) {
+        await s.page.getByRole("button", { name: "知道了" }).click();
+      }
+      await b.uncheck();
+      const beforeRefresh = await b.isChecked();
+      s.setFetchFail(false);
+      await s.page.getByTestId("plan-edit-refresh-bindings").click();
+      await s.page.waitForTimeout(500);
+      const afterRefresh = await b.isChecked();
+      const saveBindingsVisible = await s.page.getByTestId("plan-edit-save-bindings").count();
+      const titleAfter = await titleInput(s.page).inputValue();
+      assert("C2-refresh-preserves-pending-removal", !beforeRefresh && !afterRefresh && saveBindingsVisible === 1, {
+        beforeRefresh,
+        afterRefresh,
+        saveBindingsVisible,
+      });
+      assert("C2-definition-draft-unchanged", titleAfter === titleDraft, { titleAfter, titleDraft });
+      result.checks.push({
+        name: "C2-refresh-pending-removal",
+        beforeRefresh,
+        afterRefresh,
+        saveBindingsVisible,
+        titleAfter,
+      });
       await s.context.close();
     }
   } finally {
@@ -558,7 +680,13 @@ const entryTitleInput = (page) => page.locator("form fieldset fieldset input").f
   fs.writeFileSync(file, JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ ...result, evidenceFile: file }, null, 2));
   if (failures.length) process.exitCode = 1;
-})().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+}
+
+module.exports = { setupStudentPlan, setupParentBindings };
+
+if (require.main === module) {
+  runStateRepairBrowserEvidence().catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  });
+}

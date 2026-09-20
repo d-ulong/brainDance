@@ -29,3 +29,6 @@ backups/
 # User-local Codex and shared-agent runtime integration
 .agents/
 .codex/
+
+# Generated at review time; must match git rev-parse HEAD when running browser evidence scripts
+.trellis/tasks/09-19-dual-theme-ui-refactor/implementation-head.pin

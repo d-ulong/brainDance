@@ -3,13 +3,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { chromium } = require("@playwright/test");
-const fixtureSource = fs
-  .readFileSync(path.join(__dirname, "state-repair-browser.cjs"), "utf8")
-  .split("(async () => {")[0];
-const { setupStudentPlan, setupParentBindings } = new Function(
-  "require",
-  fixtureSource + "\nreturn {setupStudentPlan,setupParentBindings};",
-)(require);
+const { resolveImplementationEvidence } = require("./browser-evidence-common.cjs");
+const { setupStudentPlan, setupParentBindings } = require("./state-repair-browser.cjs");
+const evidenceMeta = resolveImplementationEvidence();
 const base = "http://127.0.0.1:3002";
 const title = (p) => p.locator("form input").first();
 const failures = [];
@@ -20,7 +16,7 @@ function assert(name, ok, detail) {
 
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: "chrome" });
-  const result = { allApisMocked: true, checks: [] };
+  const result = { ...evidenceMeta, checks: [] };
   try {
     {
       const s = await setupStudentPlan(browser);
@@ -105,9 +101,20 @@ function assert(name, ok, detail) {
       await s.page.goto(`${base}/student/plans/review-plan/edit`, { waitUntil: "networkidle" });
       await title(s.page).fill("Saved");
       await s.page.getByRole("button", { name: "保存修改", exact: true }).click();
-      await s.page.waitForTimeout(300);
+      await s.page.waitForTimeout(450);
+      await s.page.evaluate(() => history.back());
+      await s.page.waitForTimeout(900);
+      const listUrl = `${base}/student/plans`.replace(/\/$/, "");
+      const onListAfterCleanBack = s.page.url().replace(/\/$/, "") === listUrl;
+      assert("C3-clean-back-before-forward", onListAfterCleanBack, { url: s.page.url() });
+      const urlBeforeForward = s.page.url();
       await s.page.evaluate(() => history.forward());
-      await s.page.waitForTimeout(300);
+      await s.page.waitForTimeout(900);
+      const forwardMoved = s.page.url() !== urlBeforeForward && s.page.url().includes("/edit");
+      assert("C3-forward-moves-to-edit", forwardMoved, {
+        urlBeforeForward,
+        urlAfterForward: s.page.url(),
+      });
       await title(s.page).fill("Unsaved after forward");
       let confirms = 0;
       s.page.on("dialog", async (d) => {
@@ -123,9 +130,10 @@ function assert(name, ok, detail) {
       });
       result.checks.push({
         name: "forward-after-save-then-back",
+        onListAfterCleanBack,
+        forwardMoved,
         url: s.page.url(),
         confirms,
-        visibleTitle: await title(s.page).inputValue().catch(() => null),
       });
       await s.context.close();
     }
