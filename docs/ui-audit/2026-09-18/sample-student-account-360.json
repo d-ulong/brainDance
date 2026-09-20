@@ -1,0 +1,29 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 1011,
+  "headings": [
+    {
+      "text": "我的",
+      "y": 185
+    },
+    {
+      "text": "小禾（示例）",
+      "y": 290
+    },
+    {
+      "text": "账号与家庭",
+      "y": 522
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

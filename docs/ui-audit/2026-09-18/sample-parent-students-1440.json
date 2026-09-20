@@ -1,0 +1,40 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1000,
+  "headings": [
+    {
+      "text": "学生",
+      "y": 19
+    },
+    {
+      "text": "家庭学生",
+      "y": 243
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 1086,
+      "scrollWidth": 1086
+    },
+    {
+      "label": "学生管理",
+      "width": 1006,
+      "scrollWidth": 1006
+    },
+    {
+      "label": "小禾（示例）的功能",
+      "width": 494,
+      "scrollWidth": 494
+    },
+    {
+      "label": "小远（示例）的功能",
+      "width": 494,
+      "scrollWidth": 494
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

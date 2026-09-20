@@ -1,0 +1,29 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1000,
+  "headings": [
+    {
+      "text": "我的",
+      "y": 174
+    },
+    {
+      "text": "家长（示例）",
+      "y": 291
+    },
+    {
+      "text": "账号与家庭",
+      "y": 263
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 1086,
+      "scrollWidth": 1086
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

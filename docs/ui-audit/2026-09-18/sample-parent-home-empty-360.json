@@ -1,0 +1,37 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 1466,
+  "headings": [
+    {
+      "text": "今天，和家人一起成长",
+      "y": 185
+    },
+    {
+      "text": "家长（示例），你好呀！",
+      "y": 300
+    },
+    {
+      "text": "家庭今日动态",
+      "y": 471
+    },
+    {
+      "text": "留一点时间，给陪伴和自己",
+      "y": 828
+    },
+    {
+      "text": "我的训练近况",
+      "y": 1075
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

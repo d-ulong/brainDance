@@ -1,0 +1,38 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 1911,
+  "headings": [
+    {
+      "text": "计划",
+      "y": 12
+    },
+    {
+      "text": "计划列表",
+      "y": 248
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    },
+    {
+      "label": "学生管理",
+      "width": 246,
+      "scrollWidth": 368
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": [
+    {
+      "className": "flex gap-2 overflow-x-auto pb-1",
+      "width": 246,
+      "scrollWidth": 368,
+      "height": 42,
+      "scrollHeight": 42
+    }
+  ]
+}

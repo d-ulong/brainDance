@@ -1,0 +1,30 @@
+{
+  "width": 1024,
+  "scrollWidth": 1024,
+  "height": 1167,
+  "headings": [
+    {
+      "text": "计划",
+      "y": 19
+    },
+    {
+      "text": "计划列表",
+      "y": 243
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 958,
+      "scrollWidth": 958
+    },
+    {
+      "label": "学生管理",
+      "width": 878,
+      "scrollWidth": 878
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

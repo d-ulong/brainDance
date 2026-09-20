@@ -1,0 +1,39 @@
+{
+  "checks": [
+    {
+      "theme": "space",
+      "width": 390,
+      "scrollWidth": 390,
+      "taskTop": 191,
+      "buttonBottom": 427,
+      "navigationCount": 5
+    },
+    {
+      "theme": "space",
+      "width": 360,
+      "scrollWidth": 360,
+      "taskTop": 191,
+      "buttonBottom": 427,
+      "navigationCount": 5
+    },
+    {
+      "theme": "candy",
+      "width": 390,
+      "scrollWidth": 390,
+      "taskTop": 191,
+      "buttonBottom": 427,
+      "navigationCount": 5
+    },
+    {
+      "theme": "candy",
+      "width": 360,
+      "scrollWidth": 360,
+      "taskTop": 191,
+      "buttonBottom": 427,
+      "navigationCount": 5
+    }
+  ],
+  "themeSwitch": true,
+  "componentTab": true,
+  "pageErrors": []
+}

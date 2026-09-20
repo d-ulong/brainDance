@@ -1,0 +1,21 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1000,
+  "headings": [
+    {
+      "text": "数字广度",
+      "y": 223
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 1086,
+      "scrollWidth": 1086
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

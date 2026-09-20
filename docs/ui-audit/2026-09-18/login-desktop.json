@@ -1,0 +1,18 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1000,
+  "headings": [
+    {
+      "text": "登录",
+      "y": 95
+    }
+  ],
+  "navigation": [],
+  "form": [
+    {
+      "width": 608,
+      "x": 416
+    }
+  ]
+}

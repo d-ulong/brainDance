@@ -1,0 +1,26 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1000,
+  "headings": [
+    {
+      "text": "训练中心",
+      "y": 225
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 1086,
+      "scrollWidth": 1086
+    },
+    {
+      "label": "训练项目",
+      "width": 1088,
+      "scrollWidth": 1088
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

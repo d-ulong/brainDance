@@ -1,0 +1,11 @@
+{
+  "focusBefore": {
+    "inside": false,
+    "text": "新增计划"
+  },
+  "focusAfterTab": {
+    "inside": false,
+    "tag": "BODY"
+  },
+  "dialogOpenAfterEscape": 1
+}

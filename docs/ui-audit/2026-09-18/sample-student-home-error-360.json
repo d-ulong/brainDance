@@ -1,0 +1,37 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 1241,
+  "headings": [
+    {
+      "text": "今天，向前一小步",
+      "y": 185
+    },
+    {
+      "text": "小禾（示例），你好呀！",
+      "y": 300
+    },
+    {
+      "text": "我的今日概览",
+      "y": 468
+    },
+    {
+      "text": "现在适合做什么",
+      "y": 608
+    },
+    {
+      "text": "我的训练近况",
+      "y": 1037
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

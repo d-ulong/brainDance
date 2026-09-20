@@ -1,0 +1,74 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 1997,
+  "headings": [
+    {
+      "text": "计划日程",
+      "y": 12
+    },
+    {
+      "text": "我的成长工作台",
+      "y": 244
+    },
+    {
+      "text": "日程日历",
+      "y": 623
+    },
+    {
+      "text": "计划",
+      "y": 0
+    },
+    {
+      "text": "目标",
+      "y": 0
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    },
+    {
+      "label": "我的成长工作台",
+      "width": 160,
+      "scrollWidth": 160
+    }
+  ],
+  "form": [],
+  "events": [
+    {
+      "y": 1736,
+      "height": 61
+    },
+    {
+      "y": 2384,
+      "height": 103
+    },
+    {
+      "y": 2495,
+      "height": 79
+    },
+    {
+      "y": 2655,
+      "height": 79
+    }
+  ],
+  "internalScroll": [
+    {
+      "className": "bd-calendar-scroll",
+      "width": 292,
+      "scrollWidth": 880,
+      "height": 849,
+      "scrollHeight": 849
+    },
+    {
+      "className": "bd-calendar-week-hours",
+      "width": 880,
+      "scrollWidth": 917,
+      "height": 768,
+      "scrollHeight": 1799
+    }
+  ]
+}

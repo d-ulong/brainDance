@@ -1,0 +1,42 @@
+{
+  "width": 1440,
+  "scrollWidth": 1440,
+  "height": 1303,
+  "headings": [
+    {
+      "text": "计划日程",
+      "y": 19
+    },
+    {
+      "text": "我的成长工作台",
+      "y": 245
+    },
+    {
+      "text": "日程日历",
+      "y": 0
+    },
+    {
+      "text": "计划",
+      "y": 484
+    },
+    {
+      "text": "目标",
+      "y": 0
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 1086,
+      "scrollWidth": 1086
+    },
+    {
+      "label": "我的成长工作台",
+      "width": 160,
+      "scrollWidth": 160
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}

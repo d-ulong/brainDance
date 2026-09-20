@@ -1,0 +1,26 @@
+{
+  "width": 360,
+  "scrollWidth": 360,
+  "height": 889,
+  "headings": [
+    {
+      "text": "训练中心",
+      "y": 236
+    }
+  ],
+  "navigation": [
+    {
+      "label": "主要功能",
+      "width": 326,
+      "scrollWidth": 326
+    },
+    {
+      "label": "训练项目",
+      "width": 328,
+      "scrollWidth": 328
+    }
+  ],
+  "form": [],
+  "events": [],
+  "internalScroll": []
+}
