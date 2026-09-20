@@ -1,1 +1,12 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Goal status migration, constraints, row locks and same-transaction facts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Thin M2 completion route and deterministic domain error mapping."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Training answers and sensitive content must never enter logs or audit metadata."}
+{"file":".trellis/spec/backend/goal-and-manual-points-contracts.md","reason":"Goal responsibility, rewards, ledger, audit, outbox and idempotency authority."}
+{"file":".trellis/spec/backend/schedule-execution-contracts.md","reason":"Preserve schedule DTO and completion facts while redesigning their UI."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Migration, authorization, route and transactional integration-test gates."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"PageShell, modal, accessibility and responsive component conventions."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Shared goal and training DTO unions across route, client and components."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Fresh-read UI mutations and local state conventions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Playwright, accessibility and 360/768/1440 evidence requirements."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Goal and training changes cross database, service, API, client and UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Avoid duplicate status labels, answer parsing and student/parent result components."}

@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/goal-and-manual-points-contracts.md","reason":"Audit goal authority, immutable facts, rewards and transaction boundaries."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Audit migration compatibility and database-enforced status invariants."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Audit that answer details never leak into operational/audit channels."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Audit responsive, accessible and state-labelled UI behavior."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Audit DTO agreement and exhaustive status/review unions."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Audit required focused commands and browser evidence."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace every new fact through all consumers and authorization boundaries."}

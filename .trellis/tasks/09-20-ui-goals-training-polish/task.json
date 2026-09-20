@@ -3,7 +3,7 @@
   "name": "ui-goals-training-polish",
   "title": "界面、目标与训练体验收敛",
   "description": "统一全局页头、计划与日程、目标完成评定状态机、训练结果明细，并承接上一轮未完成最终 SHA 签署的回归门槛。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
