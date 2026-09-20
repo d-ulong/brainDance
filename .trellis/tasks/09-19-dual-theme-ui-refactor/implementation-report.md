@@ -58,3 +58,36 @@
 ## 声明
 
 **已交最终复验**（不得自行 GO）
+
+---
+
+# 终局 NO-GO 后集中修复（F01–F06）
+
+- **修复基线 SHA**：`ff1fff84d10084c60c8181229a6e7ec28382015f`
+- **修复实现 SHA**：`36d23392ee4a720861bd2a442cd48291b3824454`
+
+| ID | 实现要点 |
+|---|---|
+| F01 | 家长编辑页定义保存与绑定分离；成功后刷新 `revision`；绑定顺序执行、部分失败可重试；加载请求可取消 |
+| F02 | Modal 焦点仅在挂载时初始化；`onClose` 用 ref；顶层 modal 栈 + capture 阶段 Escape |
+| F03 | `appendPlanDraftEntry` / `nextPlanEntryKey` 保证唯一 key |
+| F04 | 每周仅以 `weeklyWeekdays` 序列化；空选择表单校验拦截 |
+| F05 | `useUnsavedChangesGuard` 增加 `popstate` + 单次 history guard |
+| F06 | 定稿 SVG 插画；手机端 `.bd-task-art` 可见；家长/学生 `/plans/new` 独立页 |
+
+| 命令 | 退出码 |
+|---|---|
+| `node …/review-check.cjs` | 0 |
+| `node …/review-final-check.cjs` | 0（使用 `appendPlanDraftEntry` 模拟添加） |
+| `pnpm typecheck` | 0 |
+| `DATABASE_URL=…/braindance_test pnpm exec vitest run tests/unit/plans/plan-draft-serialization.test.ts tests/unit/ui/modal-layer.test.ts` | 0（5 tests） |
+| `node .trellis/tasks/09-19-dual-theme-ui-refactor/capture-remediation.cjs`（实现 SHA 后） | 0（21 张 mock） |
+| 增量 `%TEMP%\\bd-evidence-e01f3bc\\final-*-plan-new-360.*` | 0（2 张 mock，含 implementationSha） |
+
+## 未执行项（本轮）
+
+- 浏览器实机：连续 IME 输入、后退/前进全矩阵、200% 缩放、软键盘
+- 全量 E2E、`pnpm build`（若 dev 同目录运行）
+- 真实 DB 写流程绑定失败重试
+
+**已交审核**

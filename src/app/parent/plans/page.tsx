@@ -26,7 +26,6 @@ import {
   generatePlanLibraryRange,
   removePlanLibraryBinding,
   savePlanLibrary,
-  updatePlanLibrary,
   type LinkedStudentDto,
   type PlanDefinitionDto,
   type PlanLibraryDto,
@@ -192,8 +191,6 @@ function ParentPlansPageContent() {
   const [date, setDate] = useState(today());
   const [priority, setPriority] = useState("0");
   const [items, setItems] = useState<Draft[]>([blank()]);
-  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
-  const [editing, setEditing] = useState<{ id: string; revision: number } | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [action, setAction] = useState<Action>(null);
   const [actionStudents, setActionStudents] = useState<string[]>([]);
@@ -234,17 +231,15 @@ function ParentPlansPageContent() {
   }, [load, router]);
   const assignmentOptions = selfOption ? [selfOption, ...students] : students;
   function resetForm() {
-    setEditing(null);
     setTitle("");
     setDescription("");
     setDate(today());
     setPriority("0");
     setItems([blank()]);
-    setSelectedStudents(contextStudentId ? [contextStudentId] : selfOnly && selfOption ? [selfOption.studentId] : []);
   }
   function openNewPlan() {
-    resetForm();
-    setFormOpen(true);
+    const scope = selfOnly ? "?scope=self" : "";
+    router.push(`/parent/plans/new${scope}`);
   }
   function openEdit(plan: PlanLibraryDto, copy: boolean) {
     if (!copy) {
@@ -252,19 +247,11 @@ function ParentPlansPageContent() {
       router.push(`/parent/plans/${plan.id}/edit${scope}`);
       return;
     }
-    setEditing(copy ? null : { id: plan.id, revision: plan.revision });
-    setTitle(copy ? `${plan.definition.title} 副本` : plan.definition.title);
+    setTitle(`${plan.definition.title} 副本`);
     setDescription(plan.definition.description ?? "");
     setDate(plan.definition.startDate);
     setPriority(String(plan.priority));
     setItems(drafts(plan.definition));
-    if (copy) {
-      setSelectedStudents(
-        contextStudentId ? [contextStudentId] : selfOnly && selfOption ? [selfOption.studentId] : [],
-      );
-    } else {
-      setSelectedStudents(plan.bindings.map((binding) => binding.studentId));
-    }
     setFormOpen(true);
   }
   const change = (index: number, key: keyof Draft, value: string) =>
@@ -291,42 +278,11 @@ function ParentPlansPageContent() {
     setError(null);
     try {
       const planDefinition = definition(title, description, date, items);
-      const result = editing
-        ? await updatePlanLibrary(editing.id, editing.revision, planDefinition, Number(priority))
-        : await savePlanLibrary(planDefinition, Number(priority));
-      if (editing) {
-        const previousIds = new Set(
-          plans.find((plan) => plan.id === editing.id)?.bindings.map((binding) => binding.studentId) ??
-            [],
-        );
-        const nextIds = new Set(selectedStudents);
-        const toAdd = selectedStudents.filter((studentId) => !previousIds.has(studentId));
-        const toRemove = [...previousIds].filter((studentId) => !nextIds.has(studentId));
-        if (toAdd.length) {
-          await activateStudents(result.plan.id, toAdd);
-        }
-        for (const studentId of toRemove) {
-          await removePlanLibraryBinding(result.plan.id, studentId);
-        }
-        const bindNote =
-          toAdd.length || toRemove.length
-            ? `；绑定已更新（+${toAdd.length}/-${toRemove.length}）`
-            : "";
-        setMessage(`计划已更新，历史执行记录保持不变${bindNote}`);
-      } else if (selectedStudents.length) {
-        const activationResults = await activateStudents(result.plan.id, selectedStudents);
-        setMessage(
-          formatActivationSummary(
-            `计划已保存并绑定 ${selectedStudents.length} 名学生`,
-            activationResults,
-          ),
-        );
-      } else {
-        setMessage("计划已保存");
-      }
+      const result = await savePlanLibrary(planDefinition, Number(priority));
       setFormOpen(false);
       resetForm();
-      await load();
+      const scope = selfOnly ? "?scope=self" : "";
+      router.push(`/parent/plans/${result.plan.id}/edit${scope}`);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存计划失败");
     } finally {
@@ -596,8 +552,9 @@ function ParentPlansPageContent() {
       )}
       {formOpen ? (
         <Modal
-          title={editing ? "编辑计划" : "新增计划"}
+          title="复制计划"
           onClose={() => {
+            if (!window.confirm("确定关闭并放弃复制内容吗？")) return;
             setFormOpen(false);
             resetForm();
           }}
@@ -723,16 +680,11 @@ function ParentPlansPageContent() {
             <PrimaryButton type="button" onClick={() => setItems((old) => [...old, blank()])}>
               添加内容项
             </PrimaryButton>
-            <Field label={editing ? "绑定学生（可继续增删）" : "保存后绑定学生（可多选）"}>
-              <StudentMultiSelect
-                students={assignmentOptions}
-                selectedIds={selectedStudents}
-                onChange={setSelectedStudents}
-                emptyLabel="暂不绑定"
-              />
-            </Field>
+            <p className="text-sm text-[var(--bd-muted)]">
+              保存后会进入编辑页，可在「适用对象」中单独保存绑定变更。
+            </p>
             <PrimaryButton type="submit" disabled={saving} data-testid="plan-library-save">
-              {saving ? "保存中…" : editing ? "保存修改" : "保存计划"}
+              {saving ? "保存中…" : "保存副本并继续编辑"}
             </PrimaryButton>
           </form>
         </Modal>

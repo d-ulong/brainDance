@@ -3,15 +3,24 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
+  appendPlanDraftEntry,
   blankPlanEntry,
   planFromDefinition,
   toPlanDefinition,
+  validatePlanDraftEntries,
   type PlanDraftEntry,
 } from "@/lib/plans/plan-draft-serialization";
 import { Field, PrimaryButton, SecondaryButton, TextInput } from "@/components/ui/page-shell";
 import { type PlanDefinitionDto, type PlanLibraryDto } from "@/lib/client/m2-api";
 
-export { blankPlanEntry, planFromDefinition, toPlanDefinition, type PlanDraftEntry };
+export {
+  appendPlanDraftEntry,
+  blankPlanEntry,
+  planFromDefinition,
+  toPlanDefinition,
+  validatePlanDraftEntries,
+  type PlanDraftEntry,
+};
 
 const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
 
@@ -58,6 +67,8 @@ type PlanLibraryEditFormProps = {
   onSubmit: (definition: PlanDefinitionDto, priority: number) => void | Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
   bindingsSection?: ReactNode;
+  submitLabel?: string;
+  onValidationError?: (message: string) => void;
 };
 
 export function PlanLibraryEditForm({
@@ -67,6 +78,8 @@ export function PlanLibraryEditForm({
   onSubmit,
   onDirtyChange,
   bindingsSection,
+  submitLabel = "保存修改",
+  onValidationError,
 }: PlanLibraryEditFormProps) {
   const [title, setTitle] = useState(plan.definition.title);
   const [description, setDescription] = useState(plan.definition.description ?? "");
@@ -120,6 +133,11 @@ export function PlanLibraryEditForm({
       className="bd-plan-edit max-w-3xl space-y-4 self-stretch"
       onSubmit={(event) => {
         event.preventDefault();
+        const validationError = validatePlanDraftEntries(entries);
+        if (validationError) {
+          onValidationError?.(validationError);
+          return;
+        }
         void onSubmit(toPlanDefinition(title, description, startDate, entries), Number(priority));
       }}
     >
@@ -271,7 +289,7 @@ export function PlanLibraryEditForm({
           type="button"
           onClick={() => {
             markDirty();
-            setEntries((current) => [...current, blankPlanEntry(current.length)]);
+            setEntries((current) => [...current, appendPlanDraftEntry(current)]);
           }}
         >
           添加内容
@@ -324,7 +342,7 @@ export function PlanLibraryEditForm({
           取消
         </SecondaryButton>
         <PrimaryButton type="submit" disabled={saving} data-testid="plan-edit-save">
-          {saving ? "保存中…" : "保存修改"}
+          {saving ? "保存中…" : submitLabel}
         </PrimaryButton>
       </div>
     </form>

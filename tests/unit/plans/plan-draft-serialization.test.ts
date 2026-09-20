@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendPlanDraftEntry,
+  blankPlanEntry,
   planFromDefinition,
   roundTripPlanDefinition,
   toPlanDefinition,
+  validatePlanDraftEntries,
 } from "@/lib/plans/plan-draft-serialization";
 
 describe("plan draft serialization", () => {
@@ -26,6 +29,43 @@ describe("plan draft serialization", () => {
   it("preserves scoring, timing, and keys on round trip", () => {
     const roundTripped = roundTripPlanDefinition(sample);
     expect(roundTripped.entries[0]).toEqual(sample.entries[0]);
+  });
+
+  it("assigns unique keys after delete then add (F03)", () => {
+    const remaining = [blankPlanEntry(1)];
+    remaining.push(appendPlanDraftEntry(remaining));
+    const keys = remaining.map((entry) => entry.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toEqual(["item-2", "item-3"]);
+  });
+
+  it("does not restore stale weekdays when all are deselected (F04)", () => {
+    const source = {
+      title: "weekly",
+      startDate: "2026-09-19",
+      entries: [
+        {
+          key: "weekly",
+          title: "Read",
+          expectedTime: "17:00",
+          latestStartTime: null,
+          durationMinutes: null,
+          repeat: { kind: "weekly" as const, weekdays: [1, 3] },
+          points: {
+            onTimeWithin: 10,
+            onTimeOver: 0,
+            lateWithin: 0,
+            lateOver: 0,
+            incomplete: 0,
+          },
+        },
+      ],
+    };
+    const draft = planFromDefinition(source);
+    draft[0].weeklyWeekdays = [];
+    expect(validatePlanDraftEntries(draft)).toMatch(/至少选择一天/);
+    const actual = toPlanDefinition(source.title, "", source.startDate, draft);
+    expect(actual.entries[0].repeat).toEqual({ kind: "weekly", weekdays: [] });
   });
 
   it("preserves fields when only the plan title changes", () => {

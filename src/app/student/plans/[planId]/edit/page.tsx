@@ -49,10 +49,19 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
     setSaving(true);
     setError(null);
     try {
-      await updatePlanLibrary(plan.id, plan.revision, definition, priority);
+      const result = await updatePlanLibrary(plan.id, plan.revision, definition, priority);
+      setPlan((current) =>
+        current
+          ? {
+              ...current,
+              revision: result.plan.revision,
+              definition: result.plan.definition,
+              priority,
+            }
+          : current,
+      );
       setMessage("计划已更新，已有日程保持不变");
       setDirty(false);
-      router.push("/student/plans");
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败");
     } finally {

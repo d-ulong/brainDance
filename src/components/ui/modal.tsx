@@ -3,6 +3,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
+import { isTopModalLayer, registerModalLayer } from "@/components/ui/modal-layer";
+
 type ModalProps = {
   title: string;
   children: ReactNode;
@@ -43,10 +45,18 @@ export function Modal({
   const titleId = useId();
   const resolvedLabelId = labelledBy ?? titleId;
   const previousFocus = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const layerId = useRef(Symbol("modal-layer"));
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    return registerModalLayer(layerId.current);
+  }, [mounted]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -56,12 +66,22 @@ export function Modal({
       panel?.querySelector<HTMLElement>(FOCUSABLE) ??
       panel?.querySelector<HTMLElement>("button,[href],input,select,textarea");
     focusTarget?.focus();
+    return () => {
+      previousFocus.current?.focus();
+    };
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted) return;
 
     function onKeyDown(event: KeyboardEvent) {
+      if (!isTopModalLayer(layerId.current)) return;
+      const panel = panelRef.current;
       if (event.key === "Escape") {
         if (closeOnEscape) {
           event.preventDefault();
-          onClose();
+          event.stopPropagation();
+          onCloseRef.current();
         }
         return;
       }
@@ -81,12 +101,9 @@ export function Modal({
       }
     }
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-      previousFocus.current?.focus();
-    };
-  }, [closeOnEscape, mounted, onClose]);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [closeOnEscape, mounted]);
 
   if (!mounted) return null;
 
@@ -97,7 +114,7 @@ export function Modal({
       aria-modal="true"
       aria-labelledby={resolvedLabelId}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) onCloseRef.current();
       }}
     >
       <section
@@ -112,7 +129,7 @@ export function Modal({
             type="button"
             className="min-h-11 min-w-11 rounded-full text-lg text-slate-500 hover:bg-slate-100"
             aria-label="关闭"
-            onClick={onClose}
+            onClick={() => onCloseRef.current()}
           >
             ×
           </button>

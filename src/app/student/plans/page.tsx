@@ -298,13 +298,7 @@ export default function StudentPlansPage() {
   }
 
   function openCreate() {
-    setEditing(null);
-    setTitle("");
-    setDescription("");
-    setStartDate(todayFamilyDate());
-    setPriority("0");
-    setEntries([blankEntry()]);
-    setFormOpen(true);
+    router.push("/student/plans/new");
   }
 
   function openEdit(plan: PlanLibraryDto) {

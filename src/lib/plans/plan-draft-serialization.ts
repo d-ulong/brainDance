@@ -13,6 +13,25 @@ export type PlanDraftEntry = {
   points: [string, string, string, string, string];
 };
 
+/** Picks the lowest unused `item-N` key without renumbering existing entries. */
+export function nextPlanEntryKey(existing: readonly Pick<PlanDraftEntry, "key">[]): string {
+  const used = new Set(existing.map((entry) => entry.key.trim()).filter(Boolean));
+  let candidate = existing.length + 1;
+  while (used.has(`item-${candidate}`)) {
+    candidate += 1;
+  }
+  let key = `item-${candidate}`;
+  while (used.has(key)) {
+    candidate += 1;
+    key = `item-${candidate}`;
+  }
+  return key;
+}
+
+export function appendPlanDraftEntry(existing: readonly PlanDraftEntry[]): PlanDraftEntry {
+  return { ...blankPlanEntry(0), key: nextPlanEntryKey(existing) };
+}
+
 export const blankPlanEntry = (index = 0): PlanDraftEntry => ({
   key: `item-${index + 1}`,
   title: "",
@@ -63,14 +82,7 @@ function repeatFromEntry(entry: PlanDraftEntry, startDate: string) {
     return { kind: "once" as const, date: entry.repeatValue || startDate };
   }
   if (entry.repeat === "weekly") {
-    const weekdays =
-      entry.weeklyWeekdays.length > 0
-        ? [...entry.weeklyWeekdays]
-        : entry.repeatValue
-            .split(",")
-            .map(Number)
-            .filter((value) => value >= 1 && value <= 7);
-    return { kind: "weekly" as const, weekdays };
+    return { kind: "weekly" as const, weekdays: [...entry.weeklyWeekdays] };
   }
   if (entry.repeat === "monthly") {
     return {
@@ -82,6 +94,20 @@ function repeatFromEntry(entry: PlanDraftEntry, startDate: string) {
     };
   }
   return { kind: "daily" as const };
+}
+
+export function validatePlanDraftEntries(entries: PlanDraftEntry[]): string | null {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.repeat === "weekly" && entry.weeklyWeekdays.length === 0) {
+      return `内容 ${index + 1}：每周重复至少选择一天。`;
+    }
+  }
+  const keys = entries.map((entry) => entry.key.trim()).filter(Boolean);
+  if (new Set(keys).size !== keys.length) {
+    return "内容项标识重复，请删除后重新添加。";
+  }
+  return null;
 }
 
 export function toPlanDefinition(
