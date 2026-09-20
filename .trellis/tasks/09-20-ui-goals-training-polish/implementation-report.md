@@ -1,10 +1,8 @@
 # Implementation report
 
-> 证据 SHA：提交后由 Codex 填写 `FINAL_SHA` 占位符。
-
 ## Final SHA
 
-- **FINAL_SHA**: _(pending commit)_
+- **FINAL_SHA**: `970ad29022f76b2624c43a03a3d4f52cc5455d22`（已提交版本 report 仍为占位符，请以本 SHA 为准）
 - 基线：`d5ab29831ba5a1b4c0457fa36a5ac40777754c09`
 
 ## 变更摘要
