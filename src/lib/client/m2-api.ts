@@ -407,15 +407,17 @@ export type GoalDto = {
   expectedGift: string | null;
   notes: string | null;
   horizon: "short" | "medium" | "long";
-  status: "pending_approval" | "active" | "succeeded" | "failed";
+  status: "pending_approval" | "active" | "completed" | "succeeded" | "failed";
   actualPoints: number | null;
   actualGift: string | null;
   evaluationReason: string | null;
   evaluatedAt: string | null;
+  completedAt: string | null;
   giftRedeemedAt: string | null;
   revision: number;
   postNotes: Array<{ id: string; authorId: string; authorName: string; body: string; createdAt: string }>;
   canApprove: boolean;
+  canComplete: boolean;
   canEvaluate: boolean;
   canEdit: boolean;
   canAddNote: boolean;
@@ -473,6 +475,17 @@ export async function approveGoal(assignmentId: string) {
     idempotencyKeyPrefix: "approve-goal",
     body: {},
   });
+}
+
+export async function completeGoal(assignmentId: string) {
+  return apiWriteWithIdempotency<{ assignmentId: string; status: string; completedAt: string }>(
+    `/api/goals/${assignmentId}/complete`,
+    {
+      method: "POST",
+      idempotencyKeyPrefix: "complete-goal",
+      body: {},
+    },
+  );
 }
 
 export async function evaluateGoal(

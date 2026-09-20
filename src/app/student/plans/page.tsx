@@ -17,9 +17,11 @@ import {
   Toast,
 } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
+import { goalCardTone, goalStatusLabel } from "@/lib/goals/goal-display";
 
 import {
   activatePlanLibrary,
+  completeGoal,
   createGoals,
   fetchGoals,
   fetchPlanLibrary,
@@ -653,21 +655,10 @@ export default function StudentPlansPage() {
                   ? goals
                   : goals.filter((goal) => goal.horizon === goalHorizonFilter)
                 ).map((goal) => (
-                        <article
-                          key={goal.assignmentId}
-                          className="rounded-2xl bg-[var(--bd-surface-soft)] p-3"
-                        >
+                        <article key={goal.assignmentId} className={goalCardTone(goal.status)}>
                           <div className="flex justify-between gap-2">
                             <strong>{goal.content}</strong>
-                            <span className="text-xs text-[var(--bd-primary)]">
-                              {goal.status === "pending_approval"
-                                ? "待审批"
-                                : goal.status === "active"
-                                  ? "进行中"
-                                  : goal.status === "succeeded"
-                                    ? "已达成"
-                                    : "未达成"}
-                            </span>
+                            <span className="bd-goal-status-chip">{goalStatusLabel[goal.status]}</span>
                           </div>
                           <p className="mt-2 text-xs text-slate-500">
                             {horizonLabel[goal.horizon]} · 截止 {goal.dueDate}
@@ -680,15 +671,42 @@ export default function StudentPlansPage() {
                           ) : goal.actualGift ? (
                             <p className="mt-1 text-xs text-amber-700">礼物尚未兑现</p>
                           ) : null}
-                          {goal.canEdit ? (
-                            <button
-                              type="button"
-                              className="mt-2 text-sm font-semibold text-[var(--bd-primary)]"
-                              onClick={() => openGoalForm(goal)}
-                            >
-                              编辑提案
-                            </button>
-                          ) : null}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {goal.canEdit ? (
+                              <button
+                                type="button"
+                                className="text-sm font-semibold text-[var(--bd-primary)]"
+                                onClick={() => openGoalForm(goal)}
+                              >
+                                编辑提案
+                              </button>
+                            ) : null}
+                            {goal.canComplete ? (
+                              <PrimaryButton
+                                fullWidth={false}
+                                disabled={saving}
+                                onClick={() =>
+                                  void (async () => {
+                                    setSaving(true);
+                                    setError(null);
+                                    try {
+                                      await completeGoal(goal.assignmentId);
+                                      setMessage("已标记完成，等待家长评定");
+                                      if (studentId) await load(studentId);
+                                    } catch (cause) {
+                                      setError(
+                                        cause instanceof ApiError ? cause.message : "标记完成失败",
+                                      );
+                                    } finally {
+                                      setSaving(false);
+                                    }
+                                  })()
+                                }
+                              >
+                                完成目标
+                              </PrimaryButton>
+                            ) : null}
+                          </div>
                         </article>
                 ))}
               </div>

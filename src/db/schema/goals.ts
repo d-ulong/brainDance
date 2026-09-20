@@ -51,14 +51,17 @@ export const goalAssignments = pgTable("goal_assignments", {
   evaluationReason: text("evaluation_reason"),
   evaluatedBy: uuid("evaluated_by").references(() => users.id),
   evaluatedAt: timestamp("evaluated_at", { withTimezone: true }),
+  completedBy: uuid("completed_by").references(() => users.id),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("goal_assignments_definition_subject_unique").on(table.definitionId, table.subjectId),
-  check("goal_assignments_status_check", sql`${table.status} IN ('pending_approval', 'active', 'succeeded', 'failed')`),
+  check("goal_assignments_status_check", sql`${table.status} IN ('pending_approval', 'active', 'completed', 'succeeded', 'failed')`),
   check("goal_assignments_actual_points_check", sql`${table.actualPoints} IS NULL OR ${table.actualPoints} >= 0`),
   check("goal_assignments_terminal_fields_check", sql`
-    (${table.status} IN ('pending_approval', 'active') AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL)
+    (${table.status} IN ('pending_approval', 'active') AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL AND ${table.completedBy} IS NULL AND ${table.completedAt} IS NULL)
+    OR (${table.status} = 'completed' AND ${table.completedBy} IS NOT NULL AND ${table.completedAt} IS NOT NULL AND ${table.evaluatedBy} IS NULL AND ${table.evaluatedAt} IS NULL)
     OR (${table.status} IN ('succeeded', 'failed') AND ${table.evaluatedBy} IS NOT NULL AND ${table.evaluatedAt} IS NOT NULL)
   `),
 ]);

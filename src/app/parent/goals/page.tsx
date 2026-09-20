@@ -27,15 +27,10 @@ import {
   type LinkedStudentDto,
   type ManualPointAdjustmentDto,
 } from "@/lib/client/m2-api";
+import { goalCardTone, goalStatusLabel } from "@/lib/goals/goal-display";
 
 const horizonLabel = { short: "近期", medium: "中期", long: "远期" } as const;
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
-const goalStatus: Record<GoalDto["status"], string> = {
-  pending_approval: "待家长审批",
-  active: "进行中",
-  succeeded: "已达成",
-  failed: "未达成",
-};
 
 function ParentGoalsPageContent() {
   const router = useRouter();
@@ -200,8 +195,8 @@ function ParentGoalsPageContent() {
           ))}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          {visibleGoals.map((item) => <article key={item.assignmentId} className="rounded-3xl border border-[var(--bd-border)] bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3"><strong className="break-words">{item.content}</strong><span className="bd-chip">{goalStatus[item.status]}</span></div>
+          {visibleGoals.map((item) => <article key={item.assignmentId} className={goalCardTone(item.status)}>
+            <div className="flex items-start justify-between gap-3"><strong className="break-words">{item.content}</strong><span className="bd-goal-status-chip">{goalStatusLabel[item.status]}</span></div>
             <p className="mt-2 text-sm text-slate-600">{item.subjectName} · {horizonLabel[item.horizon]} · 截止 {item.dueDate}</p>
             <p className="mt-2 text-sm">期望：{item.expectedPoints ?? 0} 积分{item.expectedGift ? ` + ${item.expectedGift}` : ""}</p>
             {item.notes ? <p className="mt-2 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">{item.notes}</p> : null}
@@ -209,7 +204,8 @@ function ParentGoalsPageContent() {
             {item.canApprove ? <PrimaryButton className="mt-3" disabled={busy} onClick={() => void approve(item)}>批准生效</PrimaryButton> : null}
             {item.canRecordGiftRedemption ? <div className="mt-3 space-y-2 rounded-2xl bg-amber-50 p-3 text-sm"><p>实际礼物：{item.actualGift}（尚未兑现）</p><label className="block">兑现时间<input className="mt-1 min-h-11 w-full rounded-2xl border p-2" type="datetime-local" value={redeemingId === item.assignmentId ? redeemedAtInput : ""} onChange={(event) => { setRedeemingId(item.assignmentId); setRedeemedAtInput(event.target.value); }} /></label><PrimaryButton type="button" fullWidth={false} disabled={busy || redeemingId !== item.assignmentId || !redeemedAtInput} onClick={() => void (async () => { setBusy(true); setError(null); try { await recordGoalGiftRedemption(item.assignmentId, new Date(redeemedAtInput).toISOString()); setMessage("已记录礼物兑现"); setRedeemingId(null); setRedeemedAtInput(""); await load(); } catch (cause) { setError(cause instanceof ApiError ? cause.message : "记录兑现失败"); } finally { setBusy(false); } })()}>记录礼物兑现</PrimaryButton></div> : item.giftRedeemedAt ? <p className="mt-2 text-sm text-emerald-700">礼物已兑现：{new Date(item.giftRedeemedAt).toLocaleString("zh-CN")}</p> : null}
             {(item.canEdit || item.canEvaluate || item.canAddNote) ? <div className="mt-3 flex flex-wrap gap-2">{item.canEdit ? <SecondaryButton onClick={() => openGoalEdit(item)}>编辑目标</SecondaryButton> : null}{item.canEvaluate ? <SecondaryButton onClick={() => { setEvaluating(item); setOutcome("succeeded"); setActualPoints(String(item.expectedPoints ?? 0)); setActualGift(item.expectedGift ?? ""); setEvaluationReason(""); }}>评定目标</SecondaryButton> : null}{item.canAddNote ? <SecondaryButton onClick={() => { setNotingGoal(item); setPostNote(""); }}>补充说明</SecondaryButton> : null}</div> : null}
-            {item.status === "succeeded" || item.status === "failed" ? <p className="mt-3 text-sm font-semibold">最终：{item.status === "succeeded" ? "成功" : "失败"} · {item.actualPoints ?? 0} 分{item.actualGift ? ` · ${item.actualGift}` : ""}</p> : null}
+            {item.status === "succeeded" || item.status === "failed" ? <p className="mt-3 text-sm font-semibold">{goalStatusLabel[item.status]} · {item.actualPoints ?? 0} 分{item.actualGift ? ` · ${item.actualGift}` : ""}{item.evaluationReason ? ` · ${item.evaluationReason}` : ""}</p> : null}
+            {item.status === "completed" && item.completedAt ? <p className="mt-2 text-xs text-[var(--bd-muted)]">学生已于 {new Date(item.completedAt).toLocaleString("zh-CN")} 标记完成</p> : null}
             {item.postNotes.length ? <div className="mt-3 space-y-2 border-t border-[var(--bd-border)] pt-3"><strong className="text-sm">补充说明</strong>{item.postNotes.map((note) => <p key={note.id} className="rounded-2xl bg-slate-50 p-3 text-sm"><span className="font-semibold">{note.authorName}</span>：{note.body}<time className="ml-2 text-xs text-slate-500">{new Date(note.createdAt).toLocaleString("zh-CN")}</time></p>)}</div> : null}
           </article>)}
           {!visibleGoals.length ? <p className="text-sm text-slate-500">暂无目标。</p> : null}
@@ -246,7 +242,7 @@ function ParentGoalsPageContent() {
     {notingGoal ? <Modal title="追加评定说明" layer="critical" onClose={() => setNotingGoal(null)}><p className="mb-3 text-sm font-semibold">{notingGoal.subjectName} · {notingGoal.content}</p><Field label="补充说明（保存后不可删除）"><textarea maxLength={1000} className="min-h-28 w-full rounded-2xl border p-3" value={postNote} onChange={(event) => setPostNote(event.target.value)} /></Field><div className="mt-4 flex justify-end gap-2"><SecondaryButton onClick={() => setNotingGoal(null)}>取消</SecondaryButton><PrimaryButton disabled={busy || !postNote.trim()} onClick={() => void savePostNote()}>追加说明</PrimaryButton></div></Modal> : null}
     {evaluating ? <Modal title="评定目标" onClose={() => setEvaluating(null)}>
       <div className="space-y-3"><p className="font-semibold">{evaluating.subjectName} · {evaluating.content}</p>
-        <Field label="结果"><select className="min-h-11 w-full rounded-2xl border p-2" value={outcome} onChange={(event) => setOutcome(event.target.value as "succeeded" | "failed")}><option value="succeeded">成功</option><option value="failed">失败</option></select></Field>
+        <Field label="结果"><select className="min-h-11 w-full rounded-2xl border p-2" value={outcome} onChange={(event) => setOutcome(event.target.value as "succeeded" | "failed")}><option value="succeeded">达成</option><option value="failed">未达成</option></select></Field>
         <Field label="最终积分"><TextInput type="number" min={0} disabled={outcome === "failed" || evaluating.isPersonal} value={outcome === "failed" || evaluating.isPersonal ? "0" : actualPoints} onChange={(event) => setActualPoints(event.target.value)} /></Field>
         <Field label="最终礼物"><TextInput disabled={outcome === "failed" || evaluating.isPersonal} value={outcome === "failed" || evaluating.isPersonal ? "" : actualGift} onChange={(event) => setActualGift(event.target.value)} /></Field>
         <Field label="说明（奖励变化时必填）"><textarea className="min-h-20 w-full rounded-2xl border p-3" value={evaluationReason} onChange={(event) => setEvaluationReason(event.target.value)} /></Field>

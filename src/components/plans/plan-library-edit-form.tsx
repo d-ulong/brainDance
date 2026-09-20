@@ -83,13 +83,16 @@ export function PlanLibraryEditForm({
 }: PlanLibraryEditFormProps) {
   const [title, setTitle] = useState(plan.definition.title);
   const [description, setDescription] = useState(plan.definition.description ?? "");
-  const [startDate, setStartDate] = useState(plan.definition.startDate);
+  const planStartDateRef = useRef(plan.definition.startDate);
   const [priority, setPriority] = useState(String(plan.priority));
   const [entries, setEntries] = useState<PlanDraftEntry[]>(() =>
     planFromDefinition(plan.definition),
   );
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const dirtyNotified = useRef(false);
+
+  useEffect(() => {
+    planStartDateRef.current = plan.definition.startDate;
+  }, [plan.definition.startDate]);
 
   function markDirty() {
     if (!dirtyNotified.current) {
@@ -140,7 +143,10 @@ export function PlanLibraryEditForm({
           onValidationError?.(validationError);
           return;
         }
-        void onSubmit(toPlanDefinition(title, description, startDate, entries), Number(priority));
+        void onSubmit(
+          toPlanDefinition(title, description, planStartDateRef.current, entries),
+          Number(priority),
+        );
       }}
     >
       <fieldset disabled={fieldsLocked} className="space-y-4 border-0 p-0 m-0 min-w-0">
@@ -164,6 +170,19 @@ export function PlanLibraryEditForm({
             onChange={(event) => {
               markDirty();
               setDescription(event.target.value);
+            }}
+          />
+        </Field>
+        <Field label="优先级">
+          <TextInput
+            required
+            type="number"
+            min="0"
+            max="100"
+            value={priority}
+            onChange={(event) => {
+              markDirty();
+              setPriority(event.target.value);
             }}
           />
         </Field>
@@ -306,46 +325,13 @@ export function PlanLibraryEditForm({
         </section>
       ) : null}
 
-      <details
-        className="bd-panel"
-        open={advancedOpen}
-        onToggle={(event) => setAdvancedOpen((event.target as HTMLDetailsElement).open)}
-      >
-        <summary className="cursor-pointer text-lg font-black">高级设置</summary>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <Field label="开始日期">
-            <TextInput
-              required
-              type="date"
-              value={startDate}
-              onChange={(event) => {
-                markDirty();
-                setStartDate(event.target.value);
-              }}
-            />
-          </Field>
-          <Field label="优先级">
-            <TextInput
-              required
-              type="number"
-              min="0"
-              max="100"
-              value={priority}
-              onChange={(event) => {
-                markDirty();
-                setPriority(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-      </details>
       </fieldset>
 
-      <div className="bd-plan-edit-actions sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] flex flex-wrap gap-3 rounded-2xl border border-[var(--bd-border)] bg-[var(--bd-surface)] p-3 shadow-lg">
-        <SecondaryButton type="button" onClick={onCancel}>
+      <div className="bd-plan-edit-footer flex flex-col gap-3 sm:flex-row sm:justify-end">
+        <SecondaryButton type="button" onClick={onCancel} className="w-full sm:w-auto">
           取消
         </SecondaryButton>
-        <PrimaryButton type="submit" disabled={saving} data-testid="plan-edit-save">
+        <PrimaryButton type="submit" disabled={saving} data-testid="plan-edit-save" fullWidth={false}>
           {saving ? "保存中…" : submitLabel}
         </PrimaryButton>
       </div>

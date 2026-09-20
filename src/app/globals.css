@@ -2136,6 +2136,12 @@ body {
   }
 }
 
+.bd-mobile-schedule-list,
+.bd-mobile-calendar-week,
+.bd-mobile-calendar-month {
+  display: none;
+}
+
 /* Mobile schedule: day list first; hour grid hidden on narrow screens. */
 .bd-mobile-schedule-list {
   display: none;
@@ -2295,4 +2301,107 @@ html:not([data-theme="candy"]) .bd-task-art-candy {
   background: var(--bd-surface);
   padding: clamp(1rem, 3vw, 1.5rem);
   box-shadow: 0 10px 26px color-mix(in srgb, var(--bd-shadow) 45%, transparent);
+}
+
+.bd-shell-identity {
+  min-width: 0;
+}
+.bd-shell-clock {
+  white-space: nowrap;
+}
+@media (max-width: 639px) {
+  .bd-shell-clock {
+    display: block;
+    font-size: 0.68rem;
+  }
+}
+
+.bd-back-link-inline {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.bd-heading-aside {
+  line-height: 1.35;
+}
+
+.bd-plan-edit-footer {
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--bd-border);
+}
+
+.bd-modal-overlay {
+  background: color-mix(in srgb, var(--bd-shadow) 55%, transparent);
+}
+.bd-modal-panel {
+  background: var(--bd-surface);
+  color: var(--bd-text);
+  border: 1px solid var(--bd-border);
+}
+.bd-modal-header {
+  border-color: var(--bd-border);
+  color: var(--bd-text);
+}
+.bd-modal-body {
+  color: var(--bd-text);
+}
+.bd-modal-close {
+  color: var(--bd-muted);
+}
+.bd-modal-close:hover {
+  background: var(--bd-surface-soft);
+}
+
+.bd-goal-card {
+  border-radius: 1.25rem;
+  border: 1px solid var(--bd-border);
+  padding: 1rem;
+}
+.bd-goal-card-pending {
+  background: color-mix(in srgb, #c4b5fd 14%, var(--bd-surface));
+}
+.bd-goal-card-active {
+  background: color-mix(in srgb, var(--bd-primary) 10%, var(--bd-surface));
+}
+.bd-goal-card-completed {
+  background: color-mix(in srgb, #fbbf24 16%, var(--bd-surface));
+}
+.bd-goal-card-succeeded {
+  background: color-mix(in srgb, #34d399 14%, var(--bd-surface));
+}
+.bd-goal-card-failed {
+  background: color-mix(in srgb, #fb7185 12%, var(--bd-surface));
+}
+.bd-goal-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  border: 1px solid var(--bd-border);
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.bd-calendar-event {
+  background: color-mix(in srgb, var(--bd-primary) 9%, var(--bd-surface));
+}
+.bd-calendar-event-completed {
+  border-left-color: #34d399;
+  background: color-mix(in srgb, #34d399 12%, var(--bd-surface));
+}
+.bd-calendar-event-pending {
+  border-left-color: var(--bd-muted);
+}
+.bd-calendar-event-in_progress {
+  border-left-color: var(--bd-primary);
+}
+.bd-calendar-event-expired,
+.bd-calendar-event-skipped,
+.bd-calendar-event-cancelled {
+  border-left-color: #fb7185;
+  background: color-mix(in srgb, #fb7185 10%, var(--bd-surface));
 }

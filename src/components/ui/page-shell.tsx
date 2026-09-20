@@ -2,17 +2,98 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { apiLogout } from "@/lib/client/api";
+import { apiLogout, fetchSession, type SessionInfo } from "@/lib/client/api";
 import { ThemeToggle } from "@/components/ui/app-theme";
 import { TopTabs } from "@/components/ui/top-tabs";
 import { BrandLogo } from "@/components/ui/brand-logo";
+
+function formatShanghaiClock(date: Date) {
+  const weekday = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    weekday: "short",
+  }).format(date);
+  const rest = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  return `${rest} ${weekday}`;
+}
+
+function ShellShanghaiClock() {
+  const [clock, setClock] = useState<string | null>(null);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    function schedule() {
+      setClock(formatShanghaiClock(new Date()));
+      const now = new Date();
+      const shanghai = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
+      const msUntilNextMinute =
+        (60 - shanghai.getSeconds()) * 1000 - shanghai.getMilliseconds();
+      timer = setTimeout(schedule, Math.max(msUntilNextMinute, 1_000));
+    }
+
+    schedule();
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  return (
+    <time
+      className="bd-shell-clock hidden text-right text-xs leading-snug text-[var(--bd-muted)] sm:block"
+      dateTime={clock ?? undefined}
+      suppressHydrationWarning
+      data-testid="shell-shanghai-clock"
+    >
+      {clock ?? "\u00a0"}
+    </time>
+  );
+}
+
+function shellDisplayName(session: SessionInfo) {
+  if (session.displayName?.trim()) return session.displayName.trim();
+  if (session.account?.trim()) return session.account.trim();
+  return session.role === "student" ? "学生" : session.role === "parent" ? "家长" : "成员";
+}
+
+function ShellIdentityCluster({ showLogout }: { showLogout: boolean }) {
+  const [session, setSession] = useState<SessionInfo | null>(null);
+
+  useEffect(() => {
+    if (!showLogout) return;
+    void fetchSession().then(setSession);
+  }, [showLogout]);
+
+  if (!showLogout || !session) return null;
+
+  const name = shellDisplayName(session);
+
+  return (
+    <div className="bd-shell-identity flex max-w-[min(12rem,40vw)] flex-col items-end gap-0.5">
+      <ShellShanghaiClock />
+      <span
+        className="truncate text-sm font-semibold text-[var(--bd-text)]"
+        data-testid="shell-display-name"
+      >
+        {name}
+      </span>
+    </div>
+  );
+}
 
 type PageShellProps = {
   title: string;
   subtitle?: string;
   subtitleKind?: "help" | "status";
+  headingAside?: ReactNode;
   children: ReactNode;
   showLogout?: boolean;
   backHref?: string;
@@ -31,6 +112,7 @@ export function PageShell({
   children,
   showLogout,
   backHref,
+  headingAside,
   secondaryNavigation,
   hideHeading = false,
   hideTabs = false,
@@ -39,6 +121,12 @@ export function PageShell({
   onBeforeNavigate,
 }: PageShellProps) {
   const router = useRouter();
+  const [session, setSession] = useState<SessionInfo | null>(null);
+
+  useEffect(() => {
+    if (!showLogout) return;
+    void fetchSession().then(setSession);
+  }, [showLogout]);
 
   async function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
     event.preventDefault();
@@ -66,60 +154,69 @@ export function PageShell({
           </Link>
           <div className="flex items-center gap-2">
             {showThemeToggle ? <ThemeToggle /> : null}
-            <Link
-              href="/account"
-              className="bd-shell-avatar"
-              aria-label="我的账号"
-              data-testid="shell-account-link"
-              onClick={(event) => void navigate(event, "/account")}
-            >
-              <span aria-hidden="true">我</span>
-            </Link>
+            <ShellIdentityCluster showLogout={Boolean(showLogout)} />
             {showLogout ? (
-              <button
-                type="button"
-                className="bd-shell-logout shrink-0"
-                onClick={() => void logout()}
-              >
-                退出
-              </button>
+              <>
+                <Link
+                  href="/account"
+                  className="bd-shell-avatar shrink-0"
+                  aria-label={
+                    session ? `账号：${shellDisplayName(session)}` : "我的账号"
+                  }
+                  data-testid="shell-account-link"
+                  onClick={(event) => void navigate(event, "/account")}
+                >
+                  <span aria-hidden="true">
+                    {session ? shellDisplayName(session).slice(0, 1) : "…"}
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  className="bd-shell-logout shrink-0"
+                  onClick={() => void logout()}
+                >
+                  退出
+                </button>
+              </>
             ) : null}
           </div>
         </header>
         <div className="bd-app-body">
           {hideTabs ? null : <TopTabs onBeforeNavigate={onBeforeNavigate} />}
           <div className="bd-main-column">
-            {secondaryNavigation || backHref ? (
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">{secondaryNavigation}</div>
-                {backHref ? (
-                  <Link
-                    href={backHref}
-                    className="bd-back-link shrink-0"
-                    onClick={(event) => void navigate(event, backHref)}
-                  >
-                    ← 返回
-                  </Link>
-                ) : null}
-              </div>
+            {secondaryNavigation ? (
+              <div className="flex items-center justify-between gap-3">{secondaryNavigation}</div>
             ) : null}
             {hideHeading ? (
               <h1 className="sr-only">{title}</h1>
             ) : (
-              <header className="bd-page-heading flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <h1 className="inline text-xl font-bold tracking-tight break-words">{title}</h1>
-                  {subtitle && subtitleKind === "status" ? (
-                    <p className="mt-1 text-sm font-semibold text-[var(--bd-primary)]">
-                      {subtitle}
-                    </p>
-                  ) : subtitle ? (
-                    <details className="bd-page-help">
-                      <summary>使用说明</summary>
-                      <p className="mt-2 text-sm break-words text-[var(--bd-muted)]">{subtitle}</p>
-                    </details>
+              <header className="bd-page-heading flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-1 items-start gap-2">
+                  {backHref ? (
+                    <Link
+                      href={backHref}
+                      className="bd-back-link bd-back-link-inline mt-0.5 shrink-0"
+                      onClick={(event) => void navigate(event, backHref)}
+                    >
+                      ← 返回
+                    </Link>
                   ) : null}
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-xl font-bold tracking-tight break-words">{title}</h1>
+                    {subtitle && subtitleKind === "status" ? (
+                      <p className="mt-1 text-sm font-semibold text-[var(--bd-primary)]">
+                        {subtitle}
+                      </p>
+                    ) : subtitle ? (
+                      <p className="mt-1 text-sm break-words text-[var(--bd-muted)]">{subtitle}</p>
+                    ) : null}
+                  </div>
                 </div>
+                {headingAside ? (
+                  <div className="bd-heading-aside w-full min-w-[min(100%,12rem)] sm:ml-auto sm:w-auto sm:max-w-[min(100%,20rem)] sm:text-right">
+                    {headingAside}
+                  </div>
+                ) : null}
               </header>
             )}
             <div className="bd-content flex flex-1 flex-col gap-4">{children}</div>

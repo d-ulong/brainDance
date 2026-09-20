@@ -36,15 +36,17 @@ export type GoalDto = {
   expectedGift: string | null;
   notes: string | null;
   horizon: "short" | "medium" | "long";
-  status: "pending_approval" | "active" | "succeeded" | "failed";
+  status: "pending_approval" | "active" | "completed" | "succeeded" | "failed";
   actualPoints: number | null;
   actualGift: string | null;
   evaluationReason: string | null;
   evaluatedAt: string | null;
+  completedAt: string | null;
   giftRedeemedAt: string | null;
   revision: number;
   postNotes: Array<{ id: string; authorId: string; authorName: string; body: string; createdAt: string }>;
   canApprove: boolean;
+  canComplete: boolean;
   canEvaluate: boolean;
   canEdit: boolean;
   canAddNote: boolean;
@@ -209,7 +211,7 @@ export async function listGoals(db: Database, actorId: string): Promise<GoalDto[
   for (const note of notes) notesByAssignment.set(note.assignmentId, [...(notesByAssignment.get(note.assignmentId) ?? []), note]);
   const definitionIds = [...new Set(rows.map(({ definition }) => definition.id))];
   const terminal = definitionIds.length
-    ? await db.select({ definitionId: goalAssignments.definitionId }).from(goalAssignments).where(and(inArray(goalAssignments.definitionId, definitionIds), inArray(goalAssignments.status, ["succeeded", "failed"])))
+    ? await db.select({ definitionId: goalAssignments.definitionId }).from(goalAssignments).where(and(inArray(goalAssignments.definitionId, definitionIds), inArray(goalAssignments.status, ["completed", "succeeded", "failed"])))
     : [];
   const frozenDefinitions = new Set(terminal.map((item) => item.definitionId));
   const userIds = [...new Set([
@@ -244,11 +246,13 @@ export async function listGoals(db: Database, actorId: string): Promise<GoalDto[
     actualGift: assignment.actualGift,
     evaluationReason: assignment.evaluationReason,
     evaluatedAt: assignment.evaluatedAt?.toISOString() ?? null,
+    completedAt: assignment.completedAt?.toISOString() ?? null,
     giftRedeemedAt: redemptionByAssignment.get(assignment.id)?.redeemedAt.toISOString() ?? null,
     revision: definition.revision,
     postNotes: (notesByAssignment.get(assignment.id) ?? []).map((note) => ({ id: note.id, authorId: note.authorId, authorName: nameById.get(note.authorId) ?? "家庭成员", body: note.body, createdAt: note.createdAt.toISOString() })),
     canApprove: actor.role === "parent" && assignment.status === "pending_approval" && assignment.subjectId !== actor.id,
-    canEvaluate: actor.role === "parent" && assignment.responsibleParentId === actor.id && assignment.status === "active",
+    canComplete: actor.id === assignment.subjectId && assignment.status === "active",
+    canEvaluate: actor.role === "parent" && assignment.responsibleParentId === actor.id && assignment.status === "completed",
     canEdit: !frozenDefinitions.has(definition.id) && ((actor.role === "parent" && assignment.responsibleParentId === actor.id) || (actor.role === "student" && definition.creatorId === actor.id && assignment.subjectId === actor.id && assignment.status === "pending_approval")),
     canAddNote: actor.role === "parent" && assignment.responsibleParentId === actor.id && (assignment.status === "succeeded" || assignment.status === "failed"),
     canRecordGiftRedemption: actor.role === "parent" && assignment.responsibleParentId === actor.id && assignment.status === "succeeded" && Boolean(assignment.actualGift?.trim()) && !redemptionByAssignment.has(assignment.id),
@@ -280,7 +284,7 @@ export async function updateGoal(db: Database, input: {
     const ownsPendingProposal = actor.role === "student" && row.definition.creatorId === actor.id && row.assignment.subjectId === actor.id && row.assignment.status === "pending_approval";
     const isResponsibleParent = actor.role === "parent" && row.assignment.responsibleParentId === actor.id;
     if (!ownsPendingProposal && !isResponsibleParent) throw new GoalError("FORBIDDEN", "只有目标提案人或责任家长可以编辑");
-    const [terminal] = await tx.select({ id: goalAssignments.id }).from(goalAssignments).where(and(eq(goalAssignments.definitionId, row.definition.id), inArray(goalAssignments.status, ["succeeded", "failed"]))).limit(1);
+    const [terminal] = await tx.select({ id: goalAssignments.id }).from(goalAssignments).where(and(eq(goalAssignments.definitionId, row.definition.id), inArray(goalAssignments.status, ["completed", "succeeded", "failed"]))).limit(1);
     if (terminal) throw new GoalError("STATE_CONFLICT", "已有目标完成评定，核心内容不可再修改");
     if (row.definition.revision !== input.revision) throw new GoalError("STATE_CONFLICT", "目标已被更新，请刷新后重试");
     const [updated] = await tx.update(goalDefinitions).set({ content, dueDate: input.dueDate, expectedPoints, expectedGift: payload.expectedGift, notes: payload.notes, horizon: input.horizon, revision: sql`${goalDefinitions.revision} + 1`, updatedAt: new Date() }).where(and(eq(goalDefinitions.id, row.definition.id), eq(goalDefinitions.revision, input.revision))).returning({ revision: goalDefinitions.revision });
@@ -344,6 +348,54 @@ export async function approveGoal(db: Database, input: { actorId: string; assign
   });
 }
 
+export async function completeGoal(
+  db: Database,
+  input: { actorId: string; assignmentId: string; idempotencyKey: string; now?: Date },
+) {
+  const actor = await requireGoalActor(db, input.actorId);
+  const hash = hashIdempotencyPayload({ assignmentId: input.assignmentId, action: "complete" });
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM goal_assignments WHERE id = ${input.assignmentId}::uuid FOR UPDATE`);
+    const replay = await findCommand(tx, actor.id, input.idempotencyKey, hash);
+    if (replay) return JSON.parse(replay) as { assignmentId: string; status: string; completedAt: string };
+    const [row] = await tx
+      .select({ assignment: goalAssignments, definition: goalDefinitions })
+      .from(goalAssignments)
+      .innerJoin(goalDefinitions, eq(goalDefinitions.id, goalAssignments.definitionId))
+      .where(eq(goalAssignments.id, input.assignmentId))
+      .limit(1);
+    if (!row) throw new GoalError("NOT_FOUND", "目标不存在");
+    if (row.assignment.subjectId !== actor.id) {
+      throw new GoalError("FORBIDDEN", "只有目标对象本人可以标记完成");
+    }
+    if (row.assignment.status !== "active") {
+      throw new GoalError("STATE_CONFLICT", "目标当前不可标记完成");
+    }
+    const now = input.now ?? new Date();
+    await tx
+      .update(goalAssignments)
+      .set({ status: "completed", completedBy: actor.id, completedAt: now, updatedAt: now })
+      .where(eq(goalAssignments.id, row.assignment.id));
+    const result = { assignmentId: row.assignment.id, status: "completed", completedAt: now.toISOString() };
+    await tx.insert(goalCommands).values({ actorId: actor.id, key: input.idempotencyKey, payloadHash: hash, result: JSON.stringify(result) });
+    await appendAuditEvent(tx, {
+      actorId: actor.id,
+      action: "goal.completed",
+      resourceType: "goal_assignment",
+      resourceId: row.assignment.id,
+      idempotencyKey: `audit:goal-complete:${actor.id}:${input.idempotencyKey}`,
+    });
+    await appendOutboxEvent(tx, {
+      aggregateType: "goal_assignment",
+      aggregateId: row.assignment.id,
+      eventType: "goal.completed",
+      dedupeKey: `goal.completed:${actor.id}:${input.idempotencyKey}`,
+      payload: result,
+    });
+    return result;
+  });
+}
+
 export async function evaluateGoal(
   db: Database,
   input: { actorId: string; assignmentId: string; outcome: "succeeded" | "failed"; actualPoints?: number | null; actualGift?: string | null; reason?: string | null; idempotencyKey: string; now?: Date },
@@ -367,7 +419,10 @@ export async function evaluateGoal(
       .limit(1);
     if (!row) throw new GoalError("NOT_FOUND", "目标不存在");
     if (row.assignment.responsibleParentId !== actor.id) throw new GoalError("FORBIDDEN", "只有该目标的责任家长可以评定");
-    if (row.assignment.status !== "active") throw new GoalError("STATE_CONFLICT", "目标已经评定或尚未生效");
+    if (row.assignment.subjectId !== actor.id) {
+      await requireLinked(tx, actor.id, row.assignment.subjectId);
+    }
+    if (row.assignment.status !== "completed") throw new GoalError("STATE_CONFLICT", "目标尚未完成或已经评定");
     const [subject] = await tx.select({ role: users.role }).from(users).where(eq(users.id, row.assignment.subjectId)).limit(1);
     if (!subject) throw new GoalError("NOT_FOUND", "目标对象不存在");
     const finalPoints = subject.role === "student" && input.outcome === "succeeded" ? actualPoints : 0;

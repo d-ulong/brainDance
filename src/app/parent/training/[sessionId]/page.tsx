@@ -11,6 +11,7 @@ import {
   formatTrainingKeyLabel,
 } from "@/components/training/metric-labels";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import { TrainingSessionReview } from "@/components/training/training-session-review";
 import { TrendsPanel } from "@/components/training/trends-panel";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
@@ -75,12 +76,12 @@ export default function ParentTrainingResultPage({
 
   return (
     <PageShell
-      title="家长训练结果"
-      subtitle={`${formatTrainingKeyLabel(detail.trainingKey)} · 会话 ${sessionId?.slice(0, 8)}…`}
+      title={formatTrainingKeyLabel(detail.trainingKey)}
+      subtitle={`会话 ${sessionId?.slice(0, 8)}…`}
+      headingAside={<TrainingDisclaimer />}
       backHref="/parent/training"
       showLogout
     >
-      <TrainingDisclaimer />
       <Alert tone="info" data-testid="parent-training-result-notice">
         以下为您本人的本次指标与个人趋势，仅供个人练习复盘，不构成诊断或排名。
       </Alert>
@@ -100,8 +101,9 @@ export default function ParentTrainingResultPage({
           </span>
         </p>
       </Alert>
+      {detail.trialReview ? <TrainingSessionReview trials={detail.trialReview} /> : null}
       <section
-        className="rounded-xl border border-neutral-300 bg-white p-4"
+        className="rounded-xl border border-[var(--bd-border)] bg-[var(--bd-surface)] p-4"
         data-testid="parent-training-metrics"
       >
         <h2 className="mb-3 text-sm font-semibold">本次指标</h2>

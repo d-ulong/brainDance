@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession } from "@/lib/client/api";
 import { TRAINING_OPTIONS } from "@/lib/client/training-api";
@@ -39,11 +38,16 @@ export default function TrainingHubPage() {
   return (
     <PageShell
       title="训练中心"
-      subtitle="训练参数按年龄档（5–8 / 9–12 / 13–18 岁）自动匹配；跨档后历史趋势分段展示。选择一项标准训练开始练习。"
+      headingAside={
+        <p className="text-xs text-[var(--bd-muted)]">
+          训练参数按年龄档（5–8 / 9–12 / 13–18 岁）自动匹配。
+          <br />
+          跨档后历史趋势分段展示；选择一项标准训练开始练习。
+        </p>
+      }
       backHref="/"
       showLogout
     >
-      <TrainingDisclaimer />
       <nav className="grid gap-4 sm:grid-cols-3" aria-label="训练项目">
         {TRAINING_OPTIONS.map((option, index) => (
           <Link

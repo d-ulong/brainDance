@@ -29,6 +29,43 @@ export type TrainingMetricDto = {
   calculationVersion: string;
 };
 
+export type ReactionTrialReviewDto = {
+  kind: "reaction";
+  trialIndex: number;
+  prompt: string;
+  expectedAction: string;
+  actualAction: string | null;
+  correct: boolean;
+  reactionMs: number | null;
+};
+
+export type StroopTrialReviewDto = {
+  kind: "stroop";
+  trialIndex: number;
+  word: string;
+  inkColor: string;
+  expectedColor: string;
+  selectedColor: string | null;
+  correct: boolean;
+  reactionMs: number;
+};
+
+export type DigitSpanTrialReviewDto = {
+  kind: "digit-span";
+  mode: "forward" | "backward";
+  attemptIndex: number;
+  presentedSequence: string;
+  ruleDirection: string;
+  expectedSequence: string;
+  submittedSequence: string | null;
+  correct: boolean;
+};
+
+export type TrainingTrialReviewDto =
+  | ReactionTrialReviewDto
+  | StroopTrialReviewDto
+  | DigitSpanTrialReviewDto;
+
 export type TrainingSessionDetail = {
   sessionId: string;
   trainingKey: TrainingKey;
@@ -43,6 +80,7 @@ export type TrainingSessionDetail = {
   invalidReason: string | null;
   metrics: TrainingMetricDto[];
   eventCount: number;
+  trialReview: TrainingTrialReviewDto[] | null;
 };
 
 export type TrainingSummary = {

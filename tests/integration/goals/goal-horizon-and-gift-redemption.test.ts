@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { auditEvents, families, goalGiftRedemptions, outboxEvents, relationships, users } from "@/db/schema";
 import {
+  completeGoal,
   createGoals,
   evaluateGoal,
   listGoals,
@@ -101,6 +102,7 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       status: "active",
     });
 
+    await completeGoal(db, { actorId: student!.id, assignmentId, idempotencyKey: "complete-gift-goal" });
     await evaluateGoal(db, {
       actorId: parent!.id,
       assignmentId,
@@ -245,6 +247,11 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       dueDate: "2026-10-03",
       horizon: "long",
       idempotencyKey: "no-gift-goal",
+    });
+    await completeGoal(db, {
+      actorId: student!.id,
+      assignmentId: noGift.assignmentIds[0]!,
+      idempotencyKey: "complete-no-gift",
     });
     await evaluateGoal(db, {
       actorId: parent!.id,

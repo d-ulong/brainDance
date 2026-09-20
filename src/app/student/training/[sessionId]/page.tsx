@@ -11,6 +11,7 @@ import {
   formatTrainingKeyLabel,
 } from "@/components/training/metric-labels";
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
+import { TrainingSessionReview } from "@/components/training/training-session-review";
 import { TrendsPanel } from "@/components/training/trends-panel";
 import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
@@ -71,12 +72,12 @@ export default function TrainingResultPage({ params }: { params: Promise<{ sessi
 
   return (
     <PageShell
-      title="训练结果"
-      subtitle={`${formatTrainingKeyLabel(detail.trainingKey)} · 会话 ${sessionId?.slice(0, 8)}…`}
+      title={formatTrainingKeyLabel(detail.trainingKey)}
+      subtitle={`会话 ${sessionId?.slice(0, 8)}…`}
+      headingAside={<TrainingDisclaimer />}
       backHref="/student/training"
       showLogout
     >
-      <TrainingDisclaimer />
       <Alert tone={detail.status === "completed" ? "success" : "info"}>
         <p>
           状态：<span data-testid="session-status">{detail.status}</span>
@@ -90,7 +91,8 @@ export default function TrainingResultPage({ params }: { params: Promise<{ sessi
           <span data-testid="age-band"> {formatAgeBand(detail.ageBand)}</span>
         </p>
       </Alert>
-      <section className="rounded-xl border border-neutral-300 bg-white p-4">
+      {detail.trialReview ? <TrainingSessionReview trials={detail.trialReview} /> : null}
+      <section className="rounded-xl border border-[var(--bd-border)] bg-[var(--bd-surface)] p-4">
         <h2 className="mb-3 text-sm font-semibold">本次指标</h2>
         <ul className="flex flex-col gap-2">
           {detail.metrics.map((metric) => (

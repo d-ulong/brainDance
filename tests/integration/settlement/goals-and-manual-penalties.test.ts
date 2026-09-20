@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { families, pointBalanceProjection, relationships, users } from "@/db/schema";
-import { addGoalNote, approveGoal, createGoals, evaluateGoal, listGoals, updateGoal } from "@/modules/goals/goal.service";
+import { addGoalNote, approveGoal, completeGoal, createGoals, evaluateGoal, listGoals, updateGoal } from "@/modules/goals/goal.service";
 import { createManualPenalty, listManualPenalties, reverseManualPenalty } from "@/modules/settlement/manual-points.service";
 import { closeIsolatedM2Database, openIsolatedM2Database, type IsolatedM2Database } from "../migrations/m2-isolated-database";
 
@@ -37,6 +37,7 @@ describe.skipIf(!hasDb)("goals and manual penalties", () => {
     const proposal = (await listGoals(db, student!.id)).find((goal) => goal.assignmentId === assignmentId)!;
     await updateGoal(db, { actorId: student!.id, assignmentId, revision: proposal.revision, content: "完成一周阅读目标", dueDate: "2026-09-30", expectedPoints: 7, expectedGift: "一本书", horizon: "medium", idempotencyKey: "goal-proposal-edit" });
     await approveGoal(db, { actorId: parentOne!.id, assignmentId, idempotencyKey: "goal-approve" });
+    await completeGoal(db, { actorId: student!.id, assignmentId, idempotencyKey: "goal-complete" });
     await expect(evaluateGoal(db, { actorId: parentTwo!.id, assignmentId, outcome: "succeeded", actualPoints: 7, actualGift: "一本书", idempotencyKey: "wrong-parent" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await evaluateGoal(db, { actorId: parentOne!.id, assignmentId, outcome: "succeeded", actualPoints: 7, actualGift: "一本书", idempotencyKey: "goal-evaluate" });
     expect((await listGoals(db, student!.id))[0]).toMatchObject({ status: "succeeded", actualPoints: 7, responsibleParentId: parentOne!.id });
@@ -68,6 +69,7 @@ describe.skipIf(!hasDb)("goals and manual penalties", () => {
     await updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision, content: "新目标", dueDate: "2026-10-01", expectedPoints: 8, expectedGift: "新礼物", notes: "新备注", horizon: "long", idempotencyKey: "update-goal" });
     expect((await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)).toMatchObject({ content: "新目标", revision: before.revision + 1, canEdit: true });
 
+    await completeGoal(db, { actorId: student!.id, assignmentId, idempotencyKey: "complete-edited-goal" });
     await evaluateGoal(db, { actorId: parent!.id, assignmentId, outcome: "succeeded", actualPoints: 8, actualGift: "新礼物", idempotencyKey: "evaluate-edited-goal" });
     await expect(updateGoal(db, { actorId: parent!.id, assignmentId, revision: before.revision + 1, content: "不能覆盖", dueDate: "2026-10-02", horizon: "long", idempotencyKey: "update-terminal-goal" })).rejects.toMatchObject({ code: "STATE_CONFLICT" });
     await addGoalNote(db, { actorId: parent!.id, assignmentId, body: "评定后的补充说明", idempotencyKey: "terminal-note" });

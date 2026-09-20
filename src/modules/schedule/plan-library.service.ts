@@ -866,10 +866,20 @@ export async function generatePlanLibraryRange(
       .limit(1);
     if (!activation)
       throw new ScheduleError("NOT_FOUND", "所选日期内没有这套计划的生效区间");
-    const generatedFrom =
-      input.from < activation.plan_activations.effectiveFrom
-        ? activation.plan_activations.effectiveFrom
-        : input.from;
+    const effectiveFrom = activation.plan_activations.effectiveFrom;
+    if (input.from < effectiveFrom) {
+      throw new ScheduleError(
+        "VALIDATION_ERROR",
+        `计划从 ${effectiveFrom} 起生效，开始日期不能早于该日期`,
+      );
+    }
+    if (input.through < effectiveFrom) {
+      throw new ScheduleError(
+        "VALIDATION_ERROR",
+        `计划从 ${effectiveFrom} 起生效，结束日期不能早于该日期`,
+      );
+    }
+    const generatedFrom = input.from;
     const effectiveThrough = activation.plan_activations.effectiveUntil
       ? addFamilyDays(activation.plan_activations.effectiveUntil, -1)
       : input.through;

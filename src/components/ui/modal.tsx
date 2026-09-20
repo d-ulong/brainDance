@@ -109,7 +109,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className={`fixed inset-0 ${layerClass[layer]} grid place-items-center bg-slate-950/45 p-4`}
+      className={`bd-modal-overlay fixed inset-0 ${layerClass[layer]} grid place-items-center p-4`}
       role="dialog"
       aria-modal="true"
       aria-labelledby={resolvedLabelId}
@@ -119,22 +119,22 @@ export function Modal({
     >
       <section
         ref={panelRef}
-        className={`flex max-h-[calc(100vh-2rem)] w-full ${size === "wide" ? "max-w-5xl" : "max-w-2xl"} flex-col overflow-hidden rounded-3xl bg-white shadow-xl`}
+        className={`bd-modal-panel flex max-h-[calc(100vh-2rem)] w-full ${size === "wide" ? "max-w-5xl" : "max-w-2xl"} flex-col overflow-hidden rounded-3xl shadow-xl`}
       >
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
-          <h2 id={resolvedLabelId} className="text-lg font-bold text-slate-900">
+        <div className="bd-modal-header flex shrink-0 items-center justify-between gap-3 border-b px-5 py-4">
+          <h2 id={resolvedLabelId} className="text-lg font-bold">
             {title}
           </h2>
           <button
             type="button"
-            className="min-h-11 min-w-11 rounded-full text-lg text-slate-500 hover:bg-slate-100"
+            className="bd-modal-close min-h-11 min-w-11 rounded-full text-lg"
             aria-label="关闭"
             onClick={() => onCloseRef.current()}
           >
             ×
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="bd-modal-body min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </section>
     </div>,
     document.body,

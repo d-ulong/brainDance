@@ -48,6 +48,10 @@ import {
   queryTrainingTrends,
   type TrainingTrendsResponse,
 } from "@/modules/training/trends.service";
+import {
+  buildTrainingTrialReview,
+  type TrainingTrialReviewDto,
+} from "@/modules/training/training-review";
 import type { TrendWindow } from "@/modules/training/trend-window";
 
 export type StartTrainingSessionInput = {
@@ -120,6 +124,7 @@ export type TrainingSessionDetail = {
   invalidReason: string | null;
   metrics: TrainingMetricDto[];
   eventCount: number;
+  trialReview: TrainingTrialReviewDto[] | null;
 };
 
 export type ParentTrainingSummary = {
@@ -997,6 +1002,15 @@ export async function getTrainingSessionForSubject(
   const session = await loadOwnedSession(db, subject.traineeId, sessionId);
   const metrics = await loadSessionMetrics(db, sessionId);
   const events = await loadSessionEvents(db, sessionId);
+  let trialReview: TrainingTrialReviewDto[] | null = null;
+  if (session.status === "completed") {
+    const definition = await getSessionTrainingDefinition(db, session);
+    trialReview = buildTrainingTrialReview(
+      session.trainingKey,
+      events,
+      definition.metricSchema ?? {},
+    );
+  }
 
   return {
     sessionId: session.id,
@@ -1012,6 +1026,7 @@ export async function getTrainingSessionForSubject(
     invalidReason: session.invalidReason,
     metrics,
     eventCount: events.length,
+    trialReview,
   };
 }
 
