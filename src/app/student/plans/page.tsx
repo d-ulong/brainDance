@@ -102,23 +102,6 @@ function toDefinition(
   };
 }
 
-function fromDefinition(plan: PlanDefinitionDto): DraftEntry[] {
-  return plan.entries.map((entry) => ({
-    title: entry.title,
-    description: entry.description ?? "",
-    expectedTime: entry.expectedTime,
-    repeat: entry.repeat.kind as DraftEntry["repeat"],
-    repeatValue:
-      entry.repeat.kind === "once"
-        ? (entry.repeat.date ?? "")
-        : entry.repeat.kind === "weekly"
-          ? (entry.repeat.weekdays?.join(",") ?? "")
-          : entry.repeat.kind === "monthly"
-            ? (entry.repeat.days?.join(",") ?? "")
-            : "",
-  }));
-}
-
 export default function StudentPlansPage() {
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
@@ -139,7 +122,7 @@ export default function StudentPlansPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<PlanLibraryDto | null>(null);
+  const editing: PlanLibraryDto | null = null;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("0");

@@ -235,6 +235,15 @@ export async function fetchTrainingSession(sessionId: string): Promise<TrainingS
   return apiFetch<TrainingSessionDetail>(`/api/training/sessions/${sessionId}`);
 }
 
+export async function fetchStudentTrainingSession(
+  studentId: string,
+  sessionId: string,
+): Promise<TrainingSessionDetail> {
+  return apiFetch<TrainingSessionDetail>(
+    `/api/family/students/${studentId}/training/sessions/${sessionId}`,
+  );
+}
+
 export async function fetchTrainingSummary(
   studentId: string,
   trainingKey: TrainingKey,

@@ -205,6 +205,19 @@ export default function ParentTrainingSummaryPage({
             <p className="mt-3 text-xs text-neutral-500">
               家长仅可查看汇总与趋势，不能修改原始成绩。
             </p>
+            {summary.lastSession.status === "completed" ? (
+              <PrimaryButton
+                className="mt-3"
+                data-testid="parent-student-training-session-link"
+                onClick={() =>
+                  router.push(
+                    `/parent/students/${studentId}/training/${summary.lastSession!.sessionId}`,
+                  )
+                }
+              >
+                查看最近训练逐题明细
+              </PrimaryButton>
+            ) : null}
           </>
         ) : (
           <Alert tone="info" className="mt-2">
