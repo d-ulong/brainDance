@@ -45,7 +45,6 @@ function ParentPlanNewPageContent() {
     setError(null);
     try {
       const result = await savePlanLibrary(definition, priority);
-      setDirty(false);
       const scope = scopeSelf ? "?scope=self" : "";
       router.push(`/parent/plans/${result.plan.id}/edit${scope}`);
     } catch (cause) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
@@ -19,6 +19,7 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const saveLock = useRef(false);
   useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
@@ -45,7 +46,8 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
   }, [planId, router]);
 
   async function save(definition: Parameters<typeof updatePlanLibrary>[2], priority: number) {
-    if (!plan) return;
+    if (!plan || saveLock.current) return;
+    saveLock.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -61,11 +63,11 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
           : current,
       );
       setMessage("计划已更新，已有日程保持不变");
-      setDirty(false);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存失败");
     } finally {
       setSaving(false);
+      saveLock.current = false;
     }
   }
 
@@ -94,6 +96,7 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
           saving={saving}
           onCancel={cancel}
           onDirtyChange={setDirty}
+          onValidationError={setError}
           onSubmit={(definition, priority) => save(definition, priority)}
         />
       ) : (

@@ -12,6 +12,7 @@ import {
   activatePlanLibrary,
   savePlanLibrary,
   todayFamilyDate,
+  updatePlanLibrary,
   type PlanLibraryDto,
 } from "@/lib/client/m2-api";
 import { planLibraryCreateTemplate } from "@/lib/plans/plan-create-template";
@@ -20,12 +21,11 @@ export default function StudentPlanNewPage() {
   const router = useRouter();
   const [startDate] = useState(todayFamilyDate());
   const template = useMemo(() => planLibraryCreateTemplate(startDate), [startDate]);
+  const [savedPlan, setSavedPlan] = useState<PlanLibraryDto | null>(null);
+  const formPlan = savedPlan ?? template;
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activating, setActivating] = useState(false);
-  const [createdPlan, setCreatedPlan] = useState<Pick<PlanLibraryDto, "id" | "revision"> | null>(
-    null,
-  );
   const [studentId, setStudentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -43,7 +43,7 @@ export default function StudentPlanNewPage() {
     })();
   }, [router]);
 
-  async function createPlan(
+  async function persistPlan(
     definition: Parameters<typeof savePlanLibrary>[0],
     priority: number,
   ) {
@@ -52,10 +52,34 @@ export default function StudentPlanNewPage() {
     setSaving(true);
     setError(null);
     try {
-      const result = await savePlanLibrary(definition, priority);
-      setCreatedPlan({ id: result.plan.id, revision: result.plan.revision });
+      if (savedPlan) {
+        const result = await updatePlanLibrary(
+          savedPlan.id,
+          savedPlan.revision,
+          definition,
+          priority,
+        );
+        setSavedPlan((current) =>
+          current
+            ? {
+                ...current,
+                revision: result.plan.revision,
+                definition: result.plan.definition,
+                priority,
+              }
+            : current,
+        );
+      } else {
+        const result = await savePlanLibrary(definition, priority);
+        setSavedPlan({
+          ...template,
+          id: result.plan.id,
+          revision: result.plan.revision,
+          definition: result.plan.definition,
+          priority,
+        });
+      }
       setMessage("计划已保存。可继续编辑，或启用计划生成日程。");
-      setDirty(false);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "保存计划失败");
     } finally {
@@ -65,11 +89,15 @@ export default function StudentPlanNewPage() {
   }
 
   async function activateSavedPlan() {
-    if (!createdPlan || !studentId || activating) return;
+    if (!savedPlan || !studentId || activating || saving) return;
+    if (dirty) {
+      setError("有未保存的修改，请先保存计划后再启用。");
+      return;
+    }
     setActivating(true);
     setError(null);
     try {
-      const activation = await activatePlanLibrary(createdPlan.id, studentId, startDate);
+      const activation = await activatePlanLibrary(savedPlan.id, studentId, startDate);
       if (activation.itemsCreated > 0) {
         setMessage(
           `计划已启用，并生成 ${activation.itemsCreated} 项日程（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
@@ -103,15 +131,15 @@ export default function StudentPlanNewPage() {
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
       <PlanLibraryEditForm
-        plan={template}
+        plan={formPlan}
         saving={saving}
         submitLabel="保存计划"
         onCancel={cancel}
         onDirtyChange={setDirty}
         onValidationError={setError}
-        onSubmit={(definition, priority) => createPlan(definition, priority)}
+        onSubmit={(definition, priority) => persistPlan(definition, priority)}
       />
-      {createdPlan ? (
+      {savedPlan ? (
         <div className="mt-4 max-w-3xl">
           <PrimaryButton
             type="button"

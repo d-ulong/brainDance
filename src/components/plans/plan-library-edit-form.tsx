@@ -128,6 +128,8 @@ export function PlanLibraryEditForm({
     );
   }
 
+  const fieldsLocked = saving;
+
   return (
     <form
       className="bd-plan-edit max-w-3xl space-y-4 self-stretch"
@@ -141,6 +143,7 @@ export function PlanLibraryEditForm({
         void onSubmit(toPlanDefinition(title, description, startDate, entries), Number(priority));
       }}
     >
+      <fieldset disabled={fieldsLocked} className="space-y-4 border-0 p-0 m-0 min-w-0">
       <section className="bd-panel space-y-3">
         <h2 className="text-lg font-black">基本信息</h2>
         <Field label="计划名称">
@@ -336,6 +339,7 @@ export function PlanLibraryEditForm({
           </Field>
         </div>
       </details>
+      </fieldset>
 
       <div className="bd-plan-edit-actions sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] flex flex-wrap gap-3 rounded-2xl border border-[var(--bd-border)] bg-[var(--bd-surface)] p-3 shadow-lg">
         <SecondaryButton type="button" onClick={onCancel}>

@@ -108,7 +108,6 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           : current,
       );
       setMessage("计划定义已保存");
-      setDefinitionDirty(false);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "计划定义保存失败");
     } finally {
@@ -155,11 +154,49 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
         }
       }
 
-      const library = await fetchPlanLibrary();
-      const refreshed = library.plans.find((row) => row.id === plan.id);
-      if (refreshed) {
-        setPlan(refreshed);
-        setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
+      if (added.length || removed.length) {
+        setPlan((current) => {
+          if (!current) return current;
+          const remaining = current.bindings.filter(
+            (binding) => !removed.includes(binding.studentId),
+          );
+          const existingIds = new Set(remaining.map((binding) => binding.studentId));
+          const stubs = added
+            .filter((studentId) => !existingIds.has(studentId))
+            .map((studentId) => {
+              const fromList = [...students, ...(selfOption ? [selfOption] : [])].find(
+                (row) => row.studentId === studentId,
+              );
+              return {
+                studentId,
+                displayName: fromList?.displayName ?? studentId.slice(0, 8),
+                username: fromList?.username ?? null,
+                effectiveFrom: new Date().toISOString().slice(0, 10),
+              };
+            });
+          return { ...current, bindings: [...remaining, ...stubs] };
+        });
+      }
+
+      if (failures.length === 0) {
+        try {
+          const library = await fetchPlanLibrary();
+          const refreshed = library.plans.find((row) => row.id === plan.id);
+          if (refreshed) {
+            setPlan(refreshed);
+            setSelectedStudents(refreshed.bindings.map((binding) => binding.studentId));
+          }
+        } catch (cause) {
+          setError(
+            added.length || removed.length
+              ? `部分绑定已写入（+${added.length}/-${removed.length}），但刷新计划失败，请重试保存绑定。${
+                  cause instanceof ApiError ? cause.message : ""
+                }`
+              : cause instanceof ApiError
+                ? cause.message
+                : "刷新计划失败",
+          );
+        }
       }
 
       if (added.length || removed.length) {
