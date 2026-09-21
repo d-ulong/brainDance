@@ -70,12 +70,18 @@ export default function ParentPushLibraryPage() {
         const params = new URLSearchParams(window.location.search);
         const initialStudentId = params.get("studentId") ?? "";
         const initialPushId = params.get("pushId") ?? "";
-        const response = await fetchPushLibrary(initialStudentId ? { studentId: initialStudentId } : undefined);
+        const response = await fetchPushLibrary(
+          initialStudentId ? { studentId: initialStudentId } : undefined,
+        );
         setEntries(response.entries);
         setStudents(response.students);
         setFilterStudentId(initialStudentId);
         if (initialPushId) {
-          setViewing(response.entries.find((entry) => entry.deliveries.some((delivery) => delivery.pushId === initialPushId)) ?? null);
+          setViewing(
+            response.entries.find((entry) =>
+              entry.deliveries.some((delivery) => delivery.pushId === initialPushId),
+            ) ?? null,
+          );
         }
       } catch (cause) {
         setError(cause instanceof ApiError ? cause.message : "加载推送失败");
@@ -88,15 +94,28 @@ export default function ParentPushLibraryPage() {
     let active = true;
     setDetailPush(null);
     const deliveries = viewing?.deliveries ?? [];
-    if (!deliveries.length) return () => { active = false; };
+    if (!deliveries.length)
+      return () => {
+        active = false;
+      };
     void Promise.all(deliveries.map((delivery) => getPush(delivery.studentId, delivery.pushId)))
-      .then((pushes) => { if (active) setDetailPush(pushes.find((push) => push.media.length > 0) ?? pushes[0] ?? null); })
-      .catch((cause) => { if (active) setError(cause instanceof ApiError ? cause.message : "无法加载推送附件"); });
-    return () => { active = false; };
+      .then((pushes) => {
+        if (active)
+          setDetailPush(pushes.find((push) => push.media.length > 0) ?? pushes[0] ?? null);
+      })
+      .catch((cause) => {
+        if (active) setError(cause instanceof ApiError ? cause.message : "无法加载推送附件");
+      });
+    return () => {
+      active = false;
+    };
   }, [viewing]);
   function chooseImages(files: FileList | null, apply: (files: File[]) => void) {
     const selected = Array.from(files ?? []);
-    if (selected.length > MAX_PUSH_IMAGES) { setError(`一次最多选择 ${MAX_PUSH_IMAGES} 张图片`); return; }
+    if (selected.length > MAX_PUSH_IMAGES) {
+      setError(`一次最多选择 ${MAX_PUSH_IMAGES} 张图片`);
+      return;
+    }
     apply(selected);
   }
   async function uploadImages(studentId: string, files: File[]) {
@@ -128,7 +147,9 @@ export default function ParentPushLibraryPage() {
     setBody(entry.body);
     setLinkUrl(entry.linkUrl ?? "");
     setTags(entry.tags.join(", "));
-    setAnswerDisclosureDays(entry.answerDisclosureDays === null ? "" : String(entry.answerDisclosureDays));
+    setAnswerDisclosureDays(
+      entry.answerDisclosureDays === null ? "" : String(entry.answerDisclosureDays),
+    );
     setImageFiles([]);
     setClearExistingImages(false);
     setRecipientIds([]);
@@ -151,17 +172,23 @@ export default function ParentPushLibraryPage() {
           .filter(Boolean),
         answerDisclosureDays: answerDisclosureDays === "" ? null : Number(answerDisclosureDays),
       });
-      if (imageFiles.length && !recipientIds.length && !editing?.deliveries.length) throw new Error("草稿图片需要先选择接收学生，以建立私有访问授权");
+      if (imageFiles.length && !recipientIds.length && !editing?.deliveries.length)
+        throw new Error("草稿图片需要先选择接收学生，以建立私有访问授权");
       if (editing?.deliveries.length) {
         for (const delivery of editing.deliveries) {
           const current = await getPush(delivery.studentId, delivery.pushId);
-          if (!current.canEdit || !["draft", "scheduled", "published"].includes(current.status)) continue;
+          if (!current.canEdit || !["draft", "scheduled", "published"].includes(current.status))
+            continue;
           const mediaIds = imageFiles.length
             ? await uploadImages(delivery.studentId, imageFiles)
             : clearExistingImages
               ? []
               : current.media.map((media) => media.mediaId);
-          await editPush(delivery.studentId, delivery.pushId, { body, linkUrl: linkUrl || undefined, mediaIds });
+          await editPush(delivery.studentId, delivery.pushId, {
+            body,
+            linkUrl: linkUrl || undefined,
+            mediaIds,
+          });
         }
       }
       if (recipientIds.length) {
@@ -235,7 +262,13 @@ export default function ParentPushLibraryPage() {
       setAdditionalImageFiles([]);
       await load();
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "追加学生失败");
+      setError(
+        cause instanceof ApiError
+          ? cause.message
+          : cause instanceof Error
+            ? cause.message
+            : "追加学生失败",
+      );
     } finally {
       setSaving(false);
     }
@@ -250,10 +283,8 @@ export default function ParentPushLibraryPage() {
     <PageShell
       title="家长推送"
       subtitle="推送先保存为内容，再选择接收学生；学生作答彼此独立"
-      backHref="/parent/students"
       showLogout
       hideHeading
-      secondaryNavigation={<StudentManagementTabs />}
     >
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
@@ -262,6 +293,7 @@ export default function ParentPushLibraryPage() {
           <h2>推送列表</h2>
           <p>可按学生、日期和标签查询已有推送。</p>
         </div>
+        <StudentManagementTabs />
         <PrimaryButton
           type="button"
           fullWidth={false}
@@ -271,7 +303,9 @@ export default function ParentPushLibraryPage() {
           新增推送
         </PrimaryButton>
       </section>
-      {filterStudentId ? <StudentContextBanner studentId={filterStudentId} label="正在查看推送的学生" /> : null}
+      {filterStudentId ? (
+        <StudentContextBanner studentId={filterStudentId} label="正在查看推送的学生" />
+      ) : null}
       <section className="bd-filter-panel" aria-label="推送筛选">
         <div className="bd-filter-fields">
           <select
@@ -332,10 +366,18 @@ export default function ParentPushLibraryPage() {
                   <p className="bd-library-card-title">{entry.body || "仅链接推送"}</p>
                   <span
                     className="bd-library-count"
-                    title={entry.deliveries.length ? entry.deliveries.map((delivery) => {
-                      const student = students.find((item) => item.studentId === delivery.studentId);
-                      return student?.displayName || student?.username || "未命名学生";
-                    }).join("、") : "尚未推送给学生"}
+                    title={
+                      entry.deliveries.length
+                        ? entry.deliveries
+                            .map((delivery) => {
+                              const student = students.find(
+                                (item) => item.studentId === delivery.studentId,
+                              );
+                              return student?.displayName || student?.username || "未命名学生";
+                            })
+                            .join("、")
+                        : "尚未推送给学生"
+                    }
                   >
                     {entry.deliveries.length} 人
                   </span>
@@ -399,7 +441,14 @@ export default function ParentPushLibraryPage() {
               />
             </Field>
             <Field label="学生作答公开天数（可选）">
-              <TextInput type="number" min={0} max={365} value={answerDisclosureDays} onChange={(event) => setAnswerDisclosureDays(event.target.value)} placeholder="不填则立即向其他学生公开" />
+              <TextInput
+                type="number"
+                min={0}
+                max={365}
+                value={answerDisclosureDays}
+                onChange={(event) => setAnswerDisclosureDays(event.target.value)}
+                placeholder="不填则立即向其他学生公开"
+              />
             </Field>
             <Field label="图片（可选，0–5 张；每张 JPG/PNG/WebP，≤10MB）">
               <input
@@ -409,12 +458,37 @@ export default function ParentPushLibraryPage() {
                 accept="image/jpeg,image/png,image/webp"
                 onChange={(event) => chooseImages(event.target.files, setImageFiles)}
               />
-              {imageFiles.length ? <span className="text-xs text-slate-500">已选择 {imageFiles.length} 张</span> : null}
+              {imageFiles.length ? (
+                <span className="text-xs text-slate-500">已选择 {imageFiles.length} 张</span>
+              ) : null}
             </Field>
-            {editing?.deliveries.length ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={clearExistingImages} disabled={imageFiles.length > 0} onChange={(event) => setClearExistingImages(event.target.checked)} />移除已有图片（重新选择图片时会替换）</label> : null}
-            <Field label={editing ? "追加接收学生（可多选，可不选）" : "接收学生（可多选；不选则保存草稿）"}>
+            {editing?.deliveries.length ? (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={clearExistingImages}
+                  disabled={imageFiles.length > 0}
+                  onChange={(event) => setClearExistingImages(event.target.checked)}
+                />
+                移除已有图片（重新选择图片时会替换）
+              </label>
+            ) : null}
+            <Field
+              label={
+                editing ? "追加接收学生（可多选，可不选）" : "接收学生（可多选；不选则保存草稿）"
+              }
+            >
               <StudentMultiSelect
-                students={editing ? students.filter((student) => !editing.deliveries.some((delivery) => delivery.studentId === student.studentId)) : students}
+                students={
+                  editing
+                    ? students.filter(
+                        (student) =>
+                          !editing.deliveries.some(
+                            (delivery) => delivery.studentId === student.studentId,
+                          ),
+                      )
+                    : students
+                }
                 selectedIds={recipientIds}
                 onChange={setRecipientIds}
                 emptyLabel={editing ? "不追加学生，仅更新已有推送" : "不选择学生，保存为草稿"}
@@ -441,11 +515,29 @@ export default function ParentPushLibraryPage() {
         <Modal title="推送详情" size="wide" onClose={() => setViewing(null)}>
           <div className="bd-push-detail text-sm">
             <article className="bd-push-hero">
-              <div className="bd-push-hero-meta"><span>💌 家庭推送</span><span>{viewing.deliveries.length ? "已发布" : "草稿"}</span></div>
+              <div className="bd-push-hero-meta">
+                <span>💌 家庭推送</span>
+                <span>{viewing.deliveries.length ? "已发布" : "草稿"}</span>
+              </div>
               <p className="bd-push-hero-body">{viewing.body || "仅链接推送"}</p>
               {viewing.linkUrl ? <VideoLinkPreview url={viewing.linkUrl} /> : null}
-              {detailPush?.media.length ? <div className="bd-push-content-media"><h3>推送附件</h3><MediaPreviewList studentId={detailPush.studentId} media={detailPush.media} testIdPrefix={`push-content-media-${viewing.id}`} /></div> : null}
-              <p className="relative z-10 text-slate-600">{viewing.tags.length ? viewing.tags.map((tag) => `#${tag}`).join(" ") : "无标签"} · 已投递给 {viewing.deliveries.length} 名学生{viewing.answerDisclosureDays === null ? " · 作答立即公开" : ` · ${viewing.answerDisclosureDays} 天后公开`}</p>
+              {detailPush?.media.length ? (
+                <div className="bd-push-content-media">
+                  <h3>推送附件</h3>
+                  <MediaPreviewList
+                    studentId={detailPush.studentId}
+                    media={detailPush.media}
+                    testIdPrefix={`push-content-media-${viewing.id}`}
+                  />
+                </div>
+              ) : null}
+              <p className="relative z-10 text-slate-600">
+                {viewing.tags.length ? viewing.tags.map((tag) => `#${tag}`).join(" ") : "无标签"} ·
+                已投递给 {viewing.deliveries.length} 名学生
+                {viewing.answerDisclosureDays === null
+                  ? " · 作答立即公开"
+                  : ` · ${viewing.answerDisclosureDays} 天后公开`}
+              </p>
             </article>
             {viewing.deliveries.length ? (
               <div className="grid gap-3 lg:grid-cols-2" aria-label="学生作答与评论">
@@ -489,18 +581,38 @@ export default function ParentPushLibraryPage() {
           }}
         >
           <div className="space-y-4">
-            <p className="text-sm text-neutral-600">已接收的学生不会自动重复发送；请选择需要追加的学生。</p>
+            <p className="text-sm text-neutral-600">
+              已接收的学生不会自动重复发送；请选择需要追加的学生。
+            </p>
             <StudentMultiSelect
-              students={students.filter((student) => !addingRecipients.deliveries.some((delivery) => delivery.studentId === student.studentId))}
+              students={students.filter(
+                (student) =>
+                  !addingRecipients.deliveries.some(
+                    (delivery) => delivery.studentId === student.studentId,
+                  ),
+              )}
               selectedIds={additionalRecipientIds}
               onChange={setAdditionalRecipientIds}
               emptyLabel="选择要追加的学生"
             />
             <Field label="图片（可选，0–5 张；需要随本次追加重新上传）">
-              <input type="file" multiple accept="image/jpeg,image/png,image/webp" onChange={(event) => chooseImages(event.target.files, setAdditionalImageFiles)} />
-              {additionalImageFiles.length ? <span className="text-xs text-slate-500">已选择 {additionalImageFiles.length} 张</span> : null}
+              <input
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => chooseImages(event.target.files, setAdditionalImageFiles)}
+              />
+              {additionalImageFiles.length ? (
+                <span className="text-xs text-slate-500">
+                  已选择 {additionalImageFiles.length} 张
+                </span>
+              ) : null}
             </Field>
-            <PrimaryButton type="button" disabled={saving || !additionalRecipientIds.length} onClick={() => void addRecipients()}>
+            <PrimaryButton
+              type="button"
+              disabled={saving || !additionalRecipientIds.length}
+              onClick={() => void addRecipients()}
+            >
               {saving ? "追加中…" : "确认添加学生"}
             </PrimaryButton>
           </div>

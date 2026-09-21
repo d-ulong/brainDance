@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { ScheduleCalendar, rangeForCalendarDate, type CalendarView } from "@/components/schedule/schedule-calendar";
+import {
+  ScheduleCalendar,
+  rangeForCalendarDate,
+  type CalendarView,
+} from "@/components/schedule/schedule-calendar";
 import { ClearScheduleDialog } from "@/components/schedule/clear-schedule-dialog";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { Modal } from "@/components/ui/modal";
-import { PrimaryButton, SecondaryButton, Toast } from "@/components/ui/page-shell";
+import { PrimaryButton, SecondaryButton, TextInput, Toast } from "@/components/ui/page-shell";
 import { ApiError } from "@/lib/client/api";
 import {
   clearSchedule,
@@ -14,6 +18,7 @@ import {
   fetchPointsPeriodSummary,
   fetchScheduleItems,
   startPlanItem,
+  updateTaskExecution,
   todayFamilyDate,
   type PointsPeriodSummaryDto,
   type ScheduleItemDto,
@@ -48,6 +53,10 @@ export function StudentScheduleWorkspace({
   const [view, setView] = useState<CalendarView>("day");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completing, setCompleting] = useState<ScheduleItemDto | null>(null);
+  const [homeworkItem, setHomeworkItem] = useState<ScheduleItemDto | null>(null);
+  const [homeworkTitle, setHomeworkTitle] = useState("");
+  const [homeworkDifficulty, setHomeworkDifficulty] = useState("");
+  const [homeworkMinutes, setHomeworkMinutes] = useState("");
   const [completionMode, setCompletionMode] = useState<"end" | "duration">("duration");
   const [startedAt, setStartedAt] = useState("");
   const [completedAt, setCompletedAt] = useState("");
@@ -143,6 +152,44 @@ export function StudentScheduleWorkspace({
     setCompleting(item);
   }
 
+  async function toggleChecklist(item: ScheduleItemDto, taskId: string) {
+    try {
+      await updateTaskExecution(item.id, {
+        checklist: (item.checklist ?? []).map((task) =>
+          task.id === taskId ? { ...task, completed: !task.completed } : task,
+        ),
+      });
+      await load(selectedDate, view);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "更新子任务失败");
+    }
+  }
+
+  async function addHomeworkTask() {
+    if (!homeworkItem || !homeworkTitle.trim()) return;
+    try {
+      await updateTaskExecution(homeworkItem.id, {
+        checklist: [
+          ...(homeworkItem.checklist ?? []),
+          {
+            id: `homework-${crypto.randomUUID()}`,
+            title: homeworkTitle.trim(),
+            completed: false,
+            ...(homeworkDifficulty.trim() ? { difficulty: homeworkDifficulty.trim() } : {}),
+            ...(Number(homeworkMinutes) > 0 ? { durationMinutes: Number(homeworkMinutes) } : {}),
+          },
+        ],
+      });
+      setHomeworkItem(null);
+      setHomeworkTitle("");
+      setHomeworkDifficulty("");
+      setHomeworkMinutes("");
+      await load(selectedDate, view);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "添加子学习任务失败");
+    }
+  }
+
   async function confirmClear(from: string, through: string) {
     setBusyId("clear");
     setError(null);
@@ -204,16 +251,65 @@ export function StudentScheduleWorkspace({
         onDateChange={setSelectedDate}
         onViewChange={setView}
         renderActions={(item) =>
-          item.effectiveStatus === "pending" || item.effectiveStatus === "in_progress" ? (
+          item.effectiveStatus === "pending" ||
+          item.effectiveStatus === "in_progress" ||
+          item.effectiveStatus === "completed" ? (
             <>
+              {item.checklist?.map((task) => (
+                <button
+                  type="button"
+                  key={task.id}
+                  disabled={busyId === item.id}
+                  onClick={() => void toggleChecklist(item, task.id)}
+                >
+                  {task.completed ? `✓ ${task.title}` : `完成子任务：${task.title}`}
+                </button>
+              ))}
+              {item.taskType === "homework" && item.effectiveStatus !== "completed" ? (
+                <button type="button" onClick={() => setHomeworkItem(item)}>
+                  添加子学习任务
+                </button>
+              ) : null}
+              {item.taskType === "exercise" && item.effectiveStatus !== "completed" ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void updateTaskExecution(item.id, {
+                      pomodoroAction:
+                        item.pomodoro?.state === "running"
+                          ? "pause"
+                          : item.pomodoro?.state === "paused"
+                            ? "resume"
+                            : "start",
+                    }).then(() => load(selectedDate, view))
+                  }
+                >
+                  {item.pomodoro?.state === "running"
+                    ? "暂停番茄钟"
+                    : item.pomodoro?.state === "paused"
+                      ? "继续番茄钟"
+                      : "开启番茄钟"}
+                </button>
+              ) : null}
               {item.effectiveStatus === "pending" ? (
-                <button type="button" disabled={busyId === item.id} onClick={() => void run(item, "start")}>
+                <button
+                  type="button"
+                  disabled={busyId === item.id}
+                  onClick={() => void run(item, "start")}
+                >
                   {actorMode === "parent" ? "开始" : "开始"}
                 </button>
               ) : null}
-              <button type="button" disabled={busyId === item.id} onClick={() => openCompletion(item)}>
+              <button
+                type="button"
+                disabled={busyId === item.id}
+                onClick={() => openCompletion(item)}
+              >
                 完成
               </button>
+              {item.effectiveStatus === "completed" ? (
+                <span className="text-xs text-slate-500">可在编辑期限内调整子任务</span>
+              ) : null}
             </>
           ) : null
         }
@@ -302,6 +398,45 @@ export function StudentScheduleWorkspace({
               }
             >
               确认并完成结算
+            </PrimaryButton>
+          </div>
+        </Modal>
+      ) : null}
+      {homeworkItem ? (
+        <Modal
+          title={`子学习任务：${homeworkItem.title}`}
+          onClose={() => setHomeworkItem(null)}
+          layer="normal"
+        >
+          <div className="grid gap-3">
+            <label className="grid gap-1 text-sm font-semibold">
+              名称
+              <TextInput
+                value={homeworkTitle}
+                onChange={(event) => setHomeworkTitle(event.target.value)}
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-semibold">
+              难度（可选）
+              <TextInput
+                value={homeworkDifficulty}
+                onChange={(event) => setHomeworkDifficulty(event.target.value)}
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-semibold">
+              耗时分钟（可选）
+              <TextInput
+                type="number"
+                min="1"
+                value={homeworkMinutes}
+                onChange={(event) => setHomeworkMinutes(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="bd-modal-footer-actions">
+            <SecondaryButton onClick={() => setHomeworkItem(null)}>取消</SecondaryButton>
+            <PrimaryButton disabled={!homeworkTitle.trim()} onClick={() => void addHomeworkTask()}>
+              添加
             </PrimaryButton>
           </div>
         </Modal>

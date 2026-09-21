@@ -34,6 +34,11 @@ export type ScheduleItemDto = {
   pointsRuleLabel?: string | null;
   maximumPoints?: number;
   durationMinutes?: number | null;
+  taskType?: "normal" | "homework" | "exercise";
+  completionStandard?: string | null;
+  checklist?: Array<{ id: string; title: string; completed: boolean }>;
+  pomodoro?: { state?: "running" | "paused"; pauseCount?: number; pausedSeconds?: number };
+  canEditExecution?: boolean;
 };
 
 export type PointsBalanceDto = {
@@ -182,7 +187,10 @@ export async function clearSchedule(studentId: string, from: string, through: st
   );
 }
 
-export async function completeScheduleItem(itemId: string, execution?: { startedAt?: string; completedAt?: string; durationMinutes?: number }) {
+export async function completeScheduleItem(
+  itemId: string,
+  execution?: { startedAt?: string; completedAt?: string; durationMinutes?: number },
+) {
   return apiWriteWithIdempotency<{
     scheduleItemId: string;
     eventId: string;
@@ -206,6 +214,25 @@ export async function startPlanItem(itemId: string) {
     method: "POST",
     idempotencyKeyPrefix: "start-plan-item",
     body: {},
+  });
+}
+export async function updateTaskExecution(
+  itemId: string,
+  body: {
+    checklist?: Array<{
+      id: string;
+      title: string;
+      completed: boolean;
+      difficulty?: string;
+      durationMinutes?: number;
+    }>;
+    pomodoroAction?: "start" | "pause" | "resume";
+  },
+) {
+  return apiWriteWithIdempotency(`/api/schedule-items/${itemId}/execution`, {
+    method: "PATCH",
+    idempotencyKeyPrefix: "schedule-task-execution",
+    body,
   });
 }
 
@@ -297,6 +324,9 @@ export type PlanDefinitionDto = {
     expectedTime: string;
     latestStartTime?: string | null;
     durationMinutes?: number | null;
+    taskType?: "normal" | "homework" | "exercise";
+    completionStandard?: string | null;
+    checklist?: Array<{ id: string; title: string }>;
     repeat: { kind: string; date?: string; weekdays?: number[]; days?: number[] };
     points: {
       onTimeWithin: number;
@@ -415,7 +445,13 @@ export type GoalDto = {
   completedAt: string | null;
   giftRedeemedAt: string | null;
   revision: number;
-  postNotes: Array<{ id: string; authorId: string; authorName: string; body: string; createdAt: string }>;
+  postNotes: Array<{
+    id: string;
+    authorId: string;
+    authorName: string;
+    body: string;
+    createdAt: string;
+  }>;
   canApprove: boolean;
   canComplete: boolean;
   canEvaluate: boolean;
@@ -445,36 +481,48 @@ export async function createGoals(body: {
   });
 }
 
-export async function updateGoal(assignmentId: string, body: {
-  revision: number;
-  content: string;
-  dueDate: string;
-  expectedPoints?: number | null;
-  expectedGift?: string | null;
-  notes?: string | null;
-  horizon: "short" | "medium" | "long";
-}) {
-  return apiWriteWithIdempotency<{ assignmentId: string; revision: number }>(`/api/goals/${assignmentId}`, {
-    method: "PATCH",
-    idempotencyKeyPrefix: "update-goal",
-    body,
-  });
+export async function updateGoal(
+  assignmentId: string,
+  body: {
+    revision: number;
+    content: string;
+    dueDate: string;
+    expectedPoints?: number | null;
+    expectedGift?: string | null;
+    notes?: string | null;
+    horizon: "short" | "medium" | "long";
+  },
+) {
+  return apiWriteWithIdempotency<{ assignmentId: string; revision: number }>(
+    `/api/goals/${assignmentId}`,
+    {
+      method: "PATCH",
+      idempotencyKeyPrefix: "update-goal",
+      body,
+    },
+  );
 }
 
 export async function addGoalNote(assignmentId: string, body: string) {
-  return apiWriteWithIdempotency<{ noteId: string; assignmentId: string }>(`/api/goals/${assignmentId}/notes`, {
-    method: "POST",
-    idempotencyKeyPrefix: "add-goal-note",
-    body: { body },
-  });
+  return apiWriteWithIdempotency<{ noteId: string; assignmentId: string }>(
+    `/api/goals/${assignmentId}/notes`,
+    {
+      method: "POST",
+      idempotencyKeyPrefix: "add-goal-note",
+      body: { body },
+    },
+  );
 }
 
 export async function approveGoal(assignmentId: string) {
-  return apiWriteWithIdempotency<{ assignmentId: string; status: string }>(`/api/goals/${assignmentId}/approve`, {
-    method: "POST",
-    idempotencyKeyPrefix: "approve-goal",
-    body: {},
-  });
+  return apiWriteWithIdempotency<{ assignmentId: string; status: string }>(
+    `/api/goals/${assignmentId}/approve`,
+    {
+      method: "POST",
+      idempotencyKeyPrefix: "approve-goal",
+      body: {},
+    },
+  );
 }
 
 export async function completeGoal(assignmentId: string) {
@@ -497,7 +545,11 @@ export async function evaluateGoal(
     reason?: string | null;
   },
 ) {
-  return apiWriteWithIdempotency<{ assignmentId: string; status: string; ledgerEntryId: string | null }>(`/api/goals/${assignmentId}/evaluate`, {
+  return apiWriteWithIdempotency<{
+    assignmentId: string;
+    status: string;
+    ledgerEntryId: string | null;
+  }>(`/api/goals/${assignmentId}/evaluate`, {
     method: "POST",
     idempotencyKeyPrefix: "evaluate-goal",
     body,
@@ -505,11 +557,14 @@ export async function evaluateGoal(
 }
 
 export async function recordGoalGiftRedemption(assignmentId: string, redeemedAt: string) {
-  return apiWriteWithIdempotency<{ assignmentId: string; giftRedeemedAt: string }>(`/api/goals/${assignmentId}/gift-redemption`, {
-    method: "POST",
-    idempotencyKeyPrefix: "goal-gift-redemption",
-    body: { redeemedAt },
-  });
+  return apiWriteWithIdempotency<{ assignmentId: string; giftRedeemedAt: string }>(
+    `/api/goals/${assignmentId}/gift-redemption`,
+    {
+      method: "POST",
+      idempotencyKeyPrefix: "goal-gift-redemption",
+      body: { redeemedAt },
+    },
+  );
 }
 
 export type ManualPointAdjustmentDto = {
@@ -527,7 +582,9 @@ export type ManualPointAdjustmentDto = {
 };
 
 export async function fetchManualPenalties(studentId: string) {
-  return apiFetch<{ adjustments: ManualPointAdjustmentDto[] }>(`/api/family/students/${studentId}/points/penalties`);
+  return apiFetch<{ adjustments: ManualPointAdjustmentDto[] }>(
+    `/api/family/students/${studentId}/points/penalties`,
+  );
 }
 
 export async function createManualPenalty(studentId: string, points: number, reason: string) {
@@ -538,12 +595,19 @@ export async function createManualPenalty(studentId: string, points: number, rea
   });
 }
 
-export async function reverseManualPenalty(studentId: string, adjustmentId: string, reason: string) {
-  return apiWriteWithIdempotency(`/api/family/students/${studentId}/points/penalties/${adjustmentId}/reverse`, {
-    method: "POST",
-    idempotencyKeyPrefix: "reverse-manual-penalty",
-    body: { reason },
-  });
+export async function reverseManualPenalty(
+  studentId: string,
+  adjustmentId: string,
+  reason: string,
+) {
+  return apiWriteWithIdempotency(
+    `/api/family/students/${studentId}/points/penalties/${adjustmentId}/reverse`,
+    {
+      method: "POST",
+      idempotencyKeyPrefix: "reverse-manual-penalty",
+      body: { reason },
+    },
+  );
 }
 
 export type PointsPeriodSummaryDto = {
@@ -566,5 +630,7 @@ export type PointsPeriodSummaryDto = {
 
 export async function fetchPointsPeriodSummary(studentId: string, from: string, through: string) {
   const params = new URLSearchParams({ from, through });
-  return apiFetch<PointsPeriodSummaryDto>(`/api/family/students/${studentId}/points/summary?${params.toString()}`);
+  return apiFetch<PointsPeriodSummaryDto>(
+    `/api/family/students/${studentId}/points/summary?${params.toString()}`,
+  );
 }

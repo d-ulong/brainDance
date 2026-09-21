@@ -12,6 +12,10 @@ const dateSchema = z
   }, "日期不存在");
 const timeSchema = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
 const pointsSchema = z.number().int().min(-2_147_483_648).max(2_147_483_647);
+const taskTypeSchema = z.enum(["normal", "homework", "exercise"]).default("normal");
+const checklistItemSchema = z
+  .object({ id: z.string().trim().min(1).max(128), title: z.string().trim().min(1).max(200) })
+  .strict();
 const uniqueNumbers = (max: number) =>
   z
     .array(z.number().int().min(1).max(max))
@@ -36,6 +40,9 @@ const planEntrySchema = z
     expectedTime: timeSchema,
     latestStartTime: timeSchema.nullish(),
     durationMinutes: z.number().int().positive().max(2_147_483_647).nullish(),
+    taskType: taskTypeSchema,
+    completionStandard: z.string().trim().max(500).nullish(),
+    checklist: z.array(checklistItemSchema).max(30).default([]),
     repeat: repeatRuleSchema,
     points: z
       .object({
@@ -49,6 +56,9 @@ const planEntrySchema = z
   })
   .strict()
   .superRefine((entry, ctx) => {
+    if (entry.taskType !== "normal" && entry.checklist.length) {
+      ctx.addIssue({ code: "custom", path: ["checklist"], message: "固定子任务只适用于普通任务" });
+    }
     if (entry.startDate && entry.endDate && entry.startDate > entry.endDate) {
       ctx.addIssue({ code: "custom", path: ["endDate"], message: "结束日期不能早于起始日期" });
     }
@@ -96,9 +106,9 @@ export const planDefinitionSchema = z
     });
   });
 
-export type RepeatRule = z.infer<typeof repeatRuleSchema>;
-export type PlanEntry = z.infer<typeof planEntrySchema>;
-export type PlanDefinition = z.infer<typeof planDefinitionSchema>;
+export type RepeatRule = z.input<typeof repeatRuleSchema>;
+export type PlanEntry = z.input<typeof planEntrySchema>;
+export type PlanDefinition = z.input<typeof planDefinitionSchema>;
 
 /** Pure recurrence expansion; binding bounds and write idempotency belong to the caller. */
 export function generatePlanOccurrences(

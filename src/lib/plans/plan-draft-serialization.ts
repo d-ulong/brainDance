@@ -11,6 +11,9 @@ export type PlanDraftEntry = {
   repeatValue: string;
   weeklyWeekdays: number[];
   points: [string, string, string, string, string];
+  taskType: "normal" | "homework" | "exercise";
+  completionStandard: string;
+  checklist: Array<{ id: string; title: string }>;
 };
 
 /** Picks the lowest unused `item-N` key without renumbering existing entries. */
@@ -43,6 +46,9 @@ export const blankPlanEntry = (index = 0): PlanDraftEntry => ({
   repeatValue: "",
   weeklyWeekdays: [],
   points: ["10", "0", "0", "0", "0"],
+  taskType: "normal",
+  completionStandard: "",
+  checklist: [],
 });
 
 export function planFromDefinition(plan: PlanDefinitionDto): PlanDraftEntry[] {
@@ -66,7 +72,9 @@ export function planFromDefinition(plan: PlanDefinitionDto): PlanDraftEntry[] {
             ? (entry.repeat.days?.join(",") ?? "")
             : "",
     weeklyWeekdays:
-      entry.repeat.kind === "weekly" ? [...(entry.repeat.weekdays ?? [])].sort((a, b) => a - b) : [],
+      entry.repeat.kind === "weekly"
+        ? [...(entry.repeat.weekdays ?? [])].sort((a, b) => a - b)
+        : [],
     points: [
       String(entry.points.onTimeWithin),
       String(entry.points.onTimeOver),
@@ -74,6 +82,9 @@ export function planFromDefinition(plan: PlanDefinitionDto): PlanDraftEntry[] {
       String(entry.points.lateOver),
       String(entry.points.incomplete),
     ],
+    taskType: entry.taskType ?? "normal",
+    completionStandard: entry.completionStandard ?? "",
+    checklist: entry.checklist ?? [],
   }));
 }
 
@@ -102,6 +113,12 @@ export function validatePlanDraftEntries(entries: PlanDraftEntry[]): string | nu
     if (entry.repeat === "weekly" && entry.weeklyWeekdays.length === 0) {
       return `内容 ${index + 1}：每周重复至少选择一天。`;
     }
+    if (entry.taskType !== "normal" && entry.checklist.length) {
+      return `内容 ${index + 1}：只有普通任务可以设置固定子任务。`;
+    }
+    if (entry.checklist.some((item) => !item.title.trim())) {
+      return `内容 ${index + 1}：子任务名称不能为空。`;
+    }
   }
   const keys = entries.map((entry) => entry.key.trim()).filter(Boolean);
   if (new Set(keys).size !== keys.length) {
@@ -127,6 +144,12 @@ export function toPlanDefinition(
       expectedTime: entry.expectedTime,
       latestStartTime: entry.latestStartTime.trim() ? entry.latestStartTime : null,
       durationMinutes: entry.durationMinutes.trim() ? Number(entry.durationMinutes) : null,
+      taskType: entry.taskType,
+      completionStandard: entry.completionStandard.trim() || null,
+      checklist: entry.checklist.map((item, itemIndex) => ({
+        id: item.id || `check-${itemIndex + 1}`,
+        title: item.title.trim(),
+      })),
       repeat: repeatFromEntry(entry, startDate),
       points: {
         onTimeWithin: Number(entry.points[0]),

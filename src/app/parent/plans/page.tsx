@@ -412,10 +412,8 @@ function ParentPlansPageContent() {
     <PageShell
       title="计划"
       subtitle="计划可复用；绑定后会生成未来 15 天日程"
-      backHref={selfOnly ? "/account" : "/parent/students"}
       showLogout
       hideHeading
-      secondaryNavigation={selfOnly ? undefined : <StudentManagementTabs />}
     >
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
@@ -443,6 +441,7 @@ function ParentPlansPageContent() {
               : "先查看与管理已有计划，再按需新增。"}
           </p>
         </div>
+        {!selfOnly ? <StudentManagementTabs /> : null}
         <PrimaryButton
           type="button"
           fullWidth={false}

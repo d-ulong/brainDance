@@ -1,7 +1,13 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions, planItemRules, scheduleEvents, scheduleItems } from "@/db/schema";
+import {
+  factVersions,
+  planItemRules,
+  scheduleEvents,
+  scheduleItems,
+  scheduleTaskExecutions,
+} from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
@@ -35,7 +41,11 @@ export type CompleteScheduleInput = {
   actorRole?: "parent" | "student";
   scheduleItemId: string;
   idempotencyKey: string;
-  body?: Record<string, unknown> & { startedAt?: string; completedAt?: string; durationMinutes?: number };
+  body?: Record<string, unknown> & {
+    startedAt?: string;
+    completedAt?: string;
+    durationMinutes?: number;
+  };
   now?: Date;
   requestId?: string;
   settleForFact?: SettleForFactFn;
@@ -161,7 +171,8 @@ export async function completeScheduleItem(
   }
 
   if ((input.actorRole ?? "student") === "student") {
-    if (preflightItem.studentId !== input.actorId) throw new ScheduleError("FORBIDDEN", "学生只能完成自己的日程");
+    if (preflightItem.studentId !== input.actorId)
+      throw new ScheduleError("FORBIDDEN", "学生只能完成自己的日程");
   } else if (preflightItem.studentId !== input.actorId) {
     await requireActiveRelationship(db, input.actorId, preflightItem.studentId);
   }
@@ -200,26 +211,65 @@ export async function completeScheduleItem(
         throw new ScheduleError("STATE_CONFLICT", "Schedule item is not pending");
       }
 
-      const [planRule] = await tx.select({ id: planItemRules.scheduleItemId, startedAt: planItemRules.startedAt }).from(planItemRules).where(eq(planItemRules.scheduleItemId, item.id)).limit(1);
-      if ((planRule ? isPastPlanSettlementDeadline(item.familyDate, now) : isPastCompletionWindow(item.familyDate, now))) {
+      const [planRule] = await tx
+        .select({
+          id: planItemRules.scheduleItemId,
+          startedAt: planItemRules.startedAt,
+          entry: planItemRules.entry,
+        })
+        .from(planItemRules)
+        .where(eq(planItemRules.scheduleItemId, item.id))
+        .limit(1);
+      const taskType =
+        planRule?.entry.taskType === "homework" || planRule?.entry.taskType === "exercise"
+          ? planRule.entry.taskType
+          : "normal";
+      const configuredChecklist = Array.isArray(planRule?.entry.checklist)
+        ? planRule.entry.checklist
+        : [];
+      const [execution] = await tx
+        .select({ checklist: scheduleTaskExecutions.checklist })
+        .from(scheduleTaskExecutions)
+        .where(eq(scheduleTaskExecutions.scheduleItemId, item.id))
+        .limit(1);
+      const checklist = Array.isArray(execution?.checklist)
+        ? execution.checklist
+        : configuredChecklist;
+      if (taskType !== "exercise" && checklist.some((entry) => entry.completed !== true)) {
+        throw new ScheduleError("STATE_CONFLICT", "请先完成全部子任务，再完成主任务");
+      }
+      if (
+        planRule
+          ? isPastPlanSettlementDeadline(item.familyDate, now)
+          : isPastCompletionWindow(item.familyDate, now)
+      ) {
         expiredStudentId = item.studentId;
         throw new ScheduleError("WINDOW_EXPIRED", "Completion window has expired");
       }
 
       let startedAt = planRule?.startedAt ?? null;
       let completedAt = now;
-      const manualExecution = Boolean(input.body?.startedAt || input.body?.completedAt || input.body?.durationMinutes || (input.actorRole ?? "student") === "parent");
+      const manualExecution = Boolean(
+        input.body?.startedAt ||
+        input.body?.completedAt ||
+        input.body?.durationMinutes ||
+        (input.actorRole ?? "student") === "parent",
+      );
       if (manualExecution) {
         if (!startedAt) {
           if (!input.body?.startedAt) throw new ScheduleError("VALIDATION_ERROR", "请填写开始时间");
           startedAt = new Date(input.body.startedAt);
         }
         if (input.body?.completedAt) completedAt = new Date(input.body.completedAt);
-        else if (input.body?.durationMinutes !== undefined) completedAt = new Date(startedAt.getTime() + input.body.durationMinutes * 60_000);
+        else if (input.body?.durationMinutes !== undefined)
+          completedAt = new Date(startedAt.getTime() + input.body.durationMinutes * 60_000);
         else throw new ScheduleError("VALIDATION_ERROR", "请填写结束时间或完成时长");
-        if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(completedAt.getTime())) throw new ScheduleError("VALIDATION_ERROR", "执行时间格式不正确");
-        if (toFamilyDate(startedAt) !== item.familyDate) throw new ScheduleError("VALIDATION_ERROR", "开始时间必须在任务日期当天");
-        if (completedAt <= startedAt) throw new ScheduleError("VALIDATION_ERROR", "结束时间必须晚于开始时间");
+        if (!Number.isFinite(startedAt.getTime()) || !Number.isFinite(completedAt.getTime()))
+          throw new ScheduleError("VALIDATION_ERROR", "执行时间格式不正确");
+        if (toFamilyDate(startedAt) !== item.familyDate)
+          throw new ScheduleError("VALIDATION_ERROR", "开始时间必须在任务日期当天");
+        if (completedAt <= startedAt)
+          throw new ScheduleError("VALIDATION_ERROR", "结束时间必须晚于开始时间");
         if (completedAt > now) {
           throw new ScheduleError(
             "VALIDATION_ERROR",
@@ -228,7 +278,11 @@ export async function completeScheduleItem(
               : "结束时间不能晚于当前时间",
           );
         }
-        if (planRule && !planRule.startedAt) await tx.update(planItemRules).set({ startedAt }).where(eq(planItemRules.scheduleItemId, item.id));
+        if (planRule && !planRule.startedAt)
+          await tx
+            .update(planItemRules)
+            .set({ startedAt })
+            .where(eq(planItemRules.scheduleItemId, item.id));
       }
 
       const completionKind = deriveCompletionKind(completedAt, item.familyDate);
@@ -264,7 +318,18 @@ export async function completeScheduleItem(
           studentId: item.studentId,
           factKey: "schedule.completed",
           sourceKind: manualExecution ? "manual" : "system",
-          value: { completion_kind: completionKind, ...(startedAt ? { started_at: startedAt.toISOString(), completed_at: completedAt.toISOString(), duration_minutes: Math.round((completedAt.getTime() - startedAt.getTime()) / 60_000) } : {}) },
+          value: {
+            completion_kind: completionKind,
+            ...(startedAt
+              ? {
+                  started_at: startedAt.toISOString(),
+                  completed_at: completedAt.toISOString(),
+                  duration_minutes: Math.round(
+                    (completedAt.getTime() - startedAt.getTime()) / 60_000,
+                  ),
+                }
+              : {}),
+          },
           idempotencyKey: input.idempotencyKey,
           idempotencyPayloadHash: bodyHash,
           completionKind,

@@ -95,6 +95,20 @@ function EventCard({
         {!compact && item.description ? (
           <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{item.description}</p>
         ) : null}
+        {!compact && item.completionStandard ? (
+          <p className="mt-1 text-xs font-semibold text-[var(--bd-primary)]">
+            完成标准：{item.completionStandard}
+          </p>
+        ) : null}
+        {!compact && item.taskType === "exercise" ? (
+          <p className="mt-1 text-xs text-slate-500">运动分析暂未开放；可记录执行时间。</p>
+        ) : null}
+        {!compact && item.checklist?.length ? (
+          <p className="mt-1 text-xs text-slate-600">
+            子任务：{item.checklist.filter((task) => task.completed).length}/{item.checklist.length}{" "}
+            已完成
+          </p>
+        ) : null}
       </div>
       {actions ? <div className="bd-calendar-event-actions">{actions}</div> : null}
     </article>

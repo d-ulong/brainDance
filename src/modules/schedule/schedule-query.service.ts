@@ -4,6 +4,7 @@ import type { Database } from "@/db";
 import {
   factVersions,
   planItemRules,
+  scheduleTaskExecutions,
   planScheduleSlots,
   plans,
   pointLedgerEntries,
@@ -99,6 +100,10 @@ export type ScheduleItemDto = {
   pointsRuleLabel: string | null;
   maximumPoints: number;
   durationMinutes: number | null;
+  taskType: "normal" | "homework" | "exercise";
+  completionStandard: string | null;
+  checklist: Array<{ id: string; title: string; completed: boolean }>;
+  pomodoro: { state?: "running" | "paused"; pauseCount?: number; pausedSeconds?: number };
 };
 
 const POINTS_RULE_LABELS: Record<string, string> = {
@@ -140,12 +145,14 @@ export async function queryScheduleItems(
       item: scheduleItems,
       planTitle: plans.title,
       startedAt: planItemRules.startedAt,
+      taskExecution: scheduleTaskExecutions,
       pointsEarned: pointLedgerEntries.amount,
       pointsExplanation: pointLedgerEntries.explanation,
     })
     .from(scheduleItems)
     .innerJoin(plans, eq(plans.id, scheduleItems.planId))
     .leftJoin(planItemRules, eq(planItemRules.scheduleItemId, scheduleItems.id))
+    .leftJoin(scheduleTaskExecutions, eq(scheduleTaskExecutions.scheduleItemId, scheduleItems.id))
     .leftJoin(
       factVersions,
       and(
@@ -164,58 +171,103 @@ export async function queryScheduleItems(
       ),
     );
 
-  return rows.map(({ item, planTitle, startedAt, pointsEarned, pointsExplanation }) => {
-    const entry = item.planSnapshot?.entry;
-    const title =
-      typeof entry === "object" &&
-      entry !== null &&
-      "title" in entry &&
-      typeof entry.title === "string"
-        ? entry.title
-        : planTitle;
-    const description =
-      typeof entry === "object" &&
-      entry !== null &&
-      "description" in entry &&
-      typeof (entry as { description?: unknown }).description === "string"
-        ? (entry as { description: string }).description
-        : null;
-    const maximumPoints =
-      typeof entry === "object" && entry !== null
-        ? maximumPointsFromEntry(entry as Record<string, unknown>)
-        : 0;
-    const durationMinutes =
-      typeof entry === "object" &&
-      entry !== null &&
-      "durationMinutes" in entry &&
-      typeof (entry as { durationMinutes?: unknown }).durationMinutes === "number"
-        ? (entry as { durationMinutes: number }).durationMinutes
-        : null;
-    return {
-      id: item.id,
-      planId: item.planId,
-      planVersionId: item.planVersionId,
-      studentId: item.studentId,
-      ownerId: item.ownerId,
-      familyDate: item.familyDate,
-      slotKey: item.slotKey,
-      scheduledAt: item.scheduledAt,
-      status: item.status,
-      source: item.source,
-      occurrenceKey: item.occurrenceKey,
-      effectiveStatus: effectiveStatus(
-        { status: item.status, familyDate: item.familyDate, startedAt },
-        now,
-      ),
-      title,
-      planTitle,
-      priority: item.priority,
-      startedAt,
-      description,
-      pointsEarned: pointsEarned ?? null,
-      pointsRuleLabel: labelForPointsExplanation(pointsExplanation),
-      maximumPoints,
-      durationMinutes,
-    };
-  });
+  return rows.map(
+    ({ item, planTitle, startedAt, taskExecution, pointsEarned, pointsExplanation }) => {
+      const entry = item.planSnapshot?.entry;
+      const title =
+        typeof entry === "object" &&
+        entry !== null &&
+        "title" in entry &&
+        typeof entry.title === "string"
+          ? entry.title
+          : planTitle;
+      const description =
+        typeof entry === "object" &&
+        entry !== null &&
+        "description" in entry &&
+        typeof (entry as { description?: unknown }).description === "string"
+          ? (entry as { description: string }).description
+          : null;
+      const maximumPoints =
+        typeof entry === "object" && entry !== null
+          ? maximumPointsFromEntry(entry as Record<string, unknown>)
+          : 0;
+      const durationMinutes =
+        typeof entry === "object" &&
+        entry !== null &&
+        "durationMinutes" in entry &&
+        typeof (entry as { durationMinutes?: unknown }).durationMinutes === "number"
+          ? (entry as { durationMinutes: number }).durationMinutes
+          : null;
+      const taskType =
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as { taskType?: unknown }).taskType === "homework"
+          ? "homework"
+          : typeof entry === "object" &&
+              entry !== null &&
+              (entry as { taskType?: unknown }).taskType === "exercise"
+            ? "exercise"
+            : "normal";
+      const configuredChecklist =
+        typeof entry === "object" &&
+        entry !== null &&
+        Array.isArray((entry as { checklist?: unknown }).checklist)
+          ? ((entry as { checklist: Array<{ id?: unknown; title?: unknown }> }).checklist ?? [])
+          : [];
+      const savedChecklist = Array.isArray(taskExecution?.checklist)
+        ? taskExecution.checklist
+        : configuredChecklist;
+      const checklist = savedChecklist.flatMap((candidate, index) => {
+        const task = candidate as Record<string, unknown>;
+        const id = typeof task.id === "string" ? task.id : `check-${index + 1}`;
+        const title = typeof task.title === "string" ? task.title : "";
+        return title ? [{ id, title, completed: task.completed === true }] : [];
+      });
+      const completionStandard =
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { completionStandard?: unknown }).completionStandard === "string"
+          ? (entry as { completionStandard: string }).completionStandard
+          : null;
+      const pomodoro =
+        taskExecution?.pomodoro && typeof taskExecution.pomodoro === "object"
+          ? (taskExecution.pomodoro as {
+              state?: "running" | "paused";
+              pauseCount?: number;
+              pausedSeconds?: number;
+            })
+          : {};
+      return {
+        id: item.id,
+        planId: item.planId,
+        planVersionId: item.planVersionId,
+        studentId: item.studentId,
+        ownerId: item.ownerId,
+        familyDate: item.familyDate,
+        slotKey: item.slotKey,
+        scheduledAt: item.scheduledAt,
+        status: item.status,
+        source: item.source,
+        occurrenceKey: item.occurrenceKey,
+        effectiveStatus: effectiveStatus(
+          { status: item.status, familyDate: item.familyDate, startedAt },
+          now,
+        ),
+        title,
+        planTitle,
+        priority: item.priority,
+        startedAt,
+        description,
+        pointsEarned: pointsEarned ?? null,
+        pointsRuleLabel: labelForPointsExplanation(pointsExplanation),
+        maximumPoints,
+        durationMinutes,
+        taskType,
+        completionStandard,
+        checklist,
+        pomodoro,
+      };
+    },
+  );
 }
