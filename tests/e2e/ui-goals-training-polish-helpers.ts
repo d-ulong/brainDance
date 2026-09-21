@@ -6,6 +6,34 @@ import { getStroopSchemaForAgeBand } from "@/modules/training/stroop-v1";
 
 import type { E2eFixture } from "./ui-helpers";
 
+const STROOP_COLOR_LABEL = {
+  red: "红",
+  blue: "蓝",
+  green: "绿",
+  yellow: "黄",
+} as const;
+
+const POLISH_STROOP_INK = STROOP_COLORS[0]!;
+
+export type TrainingReviewExpectations = {
+  reaction: {
+    expectedAction: string;
+    actualAction: string;
+    correctLabel: string;
+  };
+  stroop: {
+    expectedColor: string;
+    selectedColor: string;
+    correctLabel: string;
+  };
+  digitSpan: {
+    presentedSequence: string;
+    expectedSequence: string;
+    submittedSequence: string;
+    correctLabel: string;
+  };
+};
+
 export type UiGoalsTrainingSeed = {
   formalPlanId: string;
   goalAssignmentId: string;
@@ -13,7 +41,21 @@ export type UiGoalsTrainingSeed = {
   reactionSessionId: string;
   stroopSessionId: string;
   digitSpanSessionId: string;
+  trainingReview: TrainingReviewExpectations;
 };
+
+function firstDigitSpanReviewExpectation(ageBand: "5-8" | "9-12" | "13-18") {
+  const schema = getDigitSpanSchemaForAgeBand(ageBand);
+  const length = schema.forwardMinLength;
+  const digits = Array.from({ length }, (_, index) => index + 1);
+  const sequence = digits.join("");
+  return {
+    presentedSequence: sequence,
+    expectedSequence: sequence,
+    submittedSequence: sequence,
+    correctLabel: "正确",
+  };
+}
 
 export function shanghaiToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
@@ -130,7 +172,9 @@ async function completeStroopViaApi(request: APIRequestContext): Promise<string>
   return started.sessionId;
 }
 
-async function completeDigitSpanViaApi(request: APIRequestContext): Promise<string> {
+async function completeDigitSpanViaApi(
+  request: APIRequestContext,
+): Promise<{ sessionId: string; ageBand: "5-8" | "9-12" | "13-18" }> {
   const startResponse = await request.post("/api/training/sessions", {
     data: {
       trainingKey: "digit-span",
@@ -204,7 +248,7 @@ async function completeDigitSpanViaApi(request: APIRequestContext): Promise<stri
     data: { idempotencyKey: `polish-digit-submit-${Date.now()}` },
   });
   expect(submitResponse.ok()).toBeTruthy();
-  return started.sessionId;
+  return { sessionId: started.sessionId, ageBand: started.ageBand };
 }
 
 export async function seedUiGoalsTrainingPolish(
@@ -301,7 +345,21 @@ export async function seedUiGoalsTrainingPolish(
 
   const reactionSessionId = await completeReactionViaApi(request);
   const stroopSessionId = await completeStroopViaApi(request);
-  const digitSpanSessionId = await completeDigitSpanViaApi(request);
+  const digitSpanCompleted = await completeDigitSpanViaApi(request);
+  const digitSpanSessionId = digitSpanCompleted.sessionId;
+  const trainingReview: TrainingReviewExpectations = {
+    reaction: {
+      expectedAction: "看到绿色后及时按键",
+      actualAction: "键盘",
+      correctLabel: "正确",
+    },
+    stroop: {
+      expectedColor: STROOP_COLOR_LABEL[POLISH_STROOP_INK],
+      selectedColor: STROOP_COLOR_LABEL[POLISH_STROOP_INK],
+      correctLabel: "正确",
+    },
+    digitSpan: firstDigitSpanReviewExpectation(digitSpanCompleted.ageBand),
+  };
 
   await logoutApi(request);
 
@@ -328,5 +386,6 @@ export async function seedUiGoalsTrainingPolish(
     reactionSessionId,
     stroopSessionId,
     digitSpanSessionId,
+    trainingReview,
   };
 }

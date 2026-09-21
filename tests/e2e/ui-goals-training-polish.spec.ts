@@ -7,6 +7,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   seedUiGoalsTrainingPolish,
   shanghaiToday,
+  type TrainingReviewExpectations,
   type UiGoalsTrainingSeed,
 } from "./ui-goals-training-polish-helpers";
 import { fillField, loadE2eFixture, loginViaUi } from "./ui-helpers";
@@ -172,12 +173,97 @@ async function assertShellIdentity(page: Page) {
   const expected = shanghaiClockExpectation();
   expect(clockText).toContain(String(expected.month));
   expect(clockText).toContain(String(expected.day));
-  const clockMinute = Number(clockText.match(/(\d{1,2}):(\d{2})/)?.[2] ?? NaN);
-  const clockHour = Number(clockText.match(/(\d{1,2}):(\d{2})/)?.[1] ?? NaN);
+  const clockMatch = clockText.match(/(\d{1,2}):(\d{2})/);
+  expect(clockMatch).not.toBeNull();
+  const clockHour = Number(clockMatch![1]);
+  const clockMinute = Number(clockMatch![2]);
   expect(Number.isFinite(clockHour)).toBe(true);
   expect(Number.isFinite(clockMinute)).toBe(true);
-  const minuteDelta = Math.abs(clockMinute - expected.minute);
-  expect(minuteDelta <= 1 || minuteDelta >= 59).toBe(true);
+  const expectedMinutes = expected.hour * 60 + expected.minute;
+  const clockMinutes = clockHour * 60 + clockMinute;
+  const minuteDelta = Math.min(
+    Math.abs(clockMinutes - expectedMinutes),
+    24 * 60 - Math.abs(clockMinutes - expectedMinutes),
+  );
+  expect(minuteDelta).toBeLessThanOrEqual(1);
+}
+
+async function assertGoalState(card: Locator, className: RegExp, exactLabel: string) {
+  await expect(card).toHaveClass(className);
+  await expect(card.getByText(exactLabel, { exact: true })).toBeVisible();
+}
+
+async function assertNoInternalHorizontalScroll(locator: Locator) {
+  const dimensions = await locator.evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+}
+
+async function assertVerticalScrollContainer(locator: Locator) {
+  await expect(locator).toBeVisible();
+  const styles = await locator.evaluate((element) => getComputedStyle(element).overflowY);
+  expect(["auto", "scroll"]).toContain(styles);
+  await assertNoInternalHorizontalScroll(locator);
+}
+
+async function assertHorizontalScrollContainer(locator: Locator) {
+  await expect(locator).toBeVisible();
+  const styles = await locator.evaluate((element) => getComputedStyle(element).overflowX);
+  expect(["auto", "scroll"]).toContain(styles);
+}
+
+async function assertNonScrollingSurface(locator: Locator) {
+  await expect(locator).toBeVisible();
+  const styles = await locator.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { overflowX: computed.overflowX, overflowY: computed.overflowY };
+  });
+  expect(styles.overflowX).not.toBe("scroll");
+  expect(styles.overflowY).not.toBe("scroll");
+  await assertNoInternalHorizontalScroll(locator);
+}
+
+async function assertCalendarViewDocumentAndScroll(
+  page: Page,
+  viewportLabel: (typeof VIEWPORTS)[number]["label"],
+  view: "day" | "week" | "month",
+) {
+  await assertCalendarLayoutForViewport(page, viewportLabel, view);
+  await expectNoHorizontalScroll(page);
+
+  if (viewportLabel === "360") {
+    if (view === "day") {
+      await assertNonScrollingSurface(page.getByTestId("schedule-mobile-day-list"));
+    } else if (view === "week") {
+      await assertNonScrollingSurface(page.getByTestId("schedule-mobile-week"));
+    } else {
+      await assertNonScrollingSurface(page.getByTestId("schedule-mobile-month"));
+    }
+    await expect(page.locator(".bd-calendar-day-scroll")).toBeHidden();
+    await expect(page.locator(".bd-calendar-scroll")).toBeHidden();
+    await expect(page.locator(".bd-calendar-month")).toBeHidden();
+    return;
+  }
+
+  await expect(page.getByTestId("schedule-mobile-day-list")).toBeHidden();
+  await expect(page.getByTestId("schedule-mobile-week")).toBeHidden();
+  await expect(page.getByTestId("schedule-mobile-month")).toBeHidden();
+
+  if (view === "day") {
+    await assertVerticalScrollContainer(page.locator(".bd-calendar-day-scroll"));
+    return;
+  }
+  if (view === "week") {
+    await assertHorizontalScrollContainer(page.locator(".bd-calendar-scroll"));
+    return;
+  }
+  await expect(page.locator(".bd-calendar-month")).toBeVisible();
+  const calendarOverflowX = await page.locator("section.bd-calendar").evaluate((element) => {
+    return getComputedStyle(element).overflowX;
+  });
+  expect(calendarOverflowX).toBe("hidden");
 }
 
 async function assertModalContrastRatios(page: Page) {
@@ -342,22 +428,38 @@ async function openScheduleCompletionModal(page: Page) {
   return completeButton;
 }
 
-async function assertTrainingReviewRow(page: Page, kind: "reaction" | "stroop" | "digit-span") {
+function reviewValueLocator(row: Locator, label: string) {
+  return row.locator(
+    `xpath=.//dt[normalize-space(.)=${JSON.stringify(label)}]/following-sibling::dd[1]`,
+  );
+}
+
+async function assertTrainingReviewRow(
+  page: Page,
+  kind: keyof TrainingReviewExpectations,
+  expected: TrainingReviewExpectations[typeof kind],
+) {
   const row = page.locator(".bd-training-review-row").first();
   await expect(row).toBeVisible();
-  await expect(row.getByText("是否正确")).toBeVisible();
-  await expect(row.locator("dd").filter({ hasText: /^正确$/ })).toBeVisible();
   if (kind === "reaction") {
-    await expect(row).toContainText("看到绿色后及时按键");
-    await expect(row).toContainText("键盘");
-  } else if (kind === "stroop") {
-    await expect(row).toContainText("红");
-    await expect(row).toContainText("正确颜色");
-  } else {
-    await expect(row).toContainText("呈现序列");
-    await expect(row).toContainText("正确答案");
-    await expect(row).toContainText("我的输入");
+    const values = expected as TrainingReviewExpectations["reaction"];
+    await expect(reviewValueLocator(row, "期望动作")).toHaveText(values.expectedAction);
+    await expect(reviewValueLocator(row, "我的作答")).toHaveText(values.actualAction);
+    await expect(reviewValueLocator(row, "是否正确")).toHaveText(values.correctLabel);
+    return;
   }
+  if (kind === "stroop") {
+    const values = expected as TrainingReviewExpectations["stroop"];
+    await expect(reviewValueLocator(row, "正确颜色")).toHaveText(values.expectedColor);
+    await expect(reviewValueLocator(row, "我的选择")).toHaveText(values.selectedColor);
+    await expect(reviewValueLocator(row, "是否正确")).toHaveText(values.correctLabel);
+    return;
+  }
+  const values = expected as TrainingReviewExpectations["digitSpan"];
+  await expect(reviewValueLocator(row, "呈现序列")).toHaveText(values.presentedSequence);
+  await expect(reviewValueLocator(row, "正确答案")).toHaveText(values.expectedSequence);
+  await expect(reviewValueLocator(row, "我的输入")).toHaveText(values.submittedSequence);
+  await expect(reviewValueLocator(row, "是否正确")).toHaveText(values.correctLabel);
 }
 
 test.describe.configure({ mode: "serial", timeout: 300_000 });
@@ -447,7 +549,7 @@ test.describe("ui goals training polish remediation", () => {
         await page.getByRole("button", { name: "日程", exact: true }).click();
         await expect(page.getByTestId("student-schedule-workspace")).toBeVisible();
 
-        await assertCalendarLayoutForViewport(page, viewport.label, "day");
+        await assertCalendarViewDocumentAndScroll(page, viewport.label, "day");
         await screenshotWithTheme(page, theme, `schedule-day-${theme}-${viewport.label}.png`, {
           fullPage: true,
         });
@@ -463,17 +565,16 @@ test.describe("ui goals training polish remediation", () => {
         await assertModalFocusBehavior(page, completeButton);
 
         await page.getByRole("button", { name: "周", exact: true }).click();
-        await assertCalendarLayoutForViewport(page, viewport.label, "week");
+        await assertCalendarViewDocumentAndScroll(page, viewport.label, "week");
         await screenshotWithTheme(page, theme, `schedule-week-${theme}-${viewport.label}.png`, {
           fullPage: true,
         });
 
         await page.getByRole("button", { name: "月", exact: true }).click();
-        await assertCalendarLayoutForViewport(page, viewport.label, "month");
+        await assertCalendarViewDocumentAndScroll(page, viewport.label, "month");
         await screenshotWithTheme(page, theme, `schedule-month-${theme}-${viewport.label}.png`, {
           fullPage: true,
         });
-        await expectNoHorizontalScroll(page);
       });
     }
   }
@@ -495,13 +596,11 @@ test.describe("ui goals training polish remediation", () => {
     }
 
     await openGoalsWorkspace();
-    await expect(goalCard()).toHaveClass(/bd-goal-card-active/);
-    await expect(goalCard().getByText("进行中", { exact: true })).toBeVisible();
+    await assertGoalState(goalCard(), /bd-goal-card-active/, "进行中");
     await screenshotWithTheme(page, "candy", "goal-active-candy-768.png", { fullPage: true });
 
     await applyThemeOnDocument(page, "space");
-    await expect(goalCard()).toHaveClass(/bd-goal-card-active/);
-    await expect(goalCard().getByText("进行中", { exact: true })).toBeVisible();
+    await assertGoalState(goalCard(), /bd-goal-card-active/, "进行中");
     await screenshotWithTheme(page, "space", "goal-active-space-768.png", { fullPage: true });
 
     const completeResponse = page.waitForResponse(
@@ -513,10 +612,10 @@ test.describe("ui goals training polish remediation", () => {
     );
     await goalCard().getByRole("button", { name: "完成目标" }).click();
     await completeResponse;
-    await expect(goalCard()).toHaveClass(/bd-goal-card-completed/, { timeout: 20_000 });
-    await expect(goalCard().getByText("已完成 · 待评定", { exact: true })).toBeVisible();
+    await assertGoalState(goalCard(), /bd-goal-card-completed/, "已完成 · 待评定");
     await screenshotWithTheme(page, "space", "goal-completed-space-768.png", { fullPage: true });
     await applyThemeOnDocument(page, "candy");
+    await assertGoalState(goalCard(), /bd-goal-card-completed/, "已完成 · 待评定");
     await screenshotWithTheme(page, "candy", "goal-completed-candy-768.png", { fullPage: true });
 
     await page.reload();
@@ -560,10 +659,10 @@ test.describe("ui goals training polish remediation", () => {
     await page.goto("/student/plans?view=goals");
     await assertTheme(page, "candy");
     await openGoalsWorkspace();
-    await expect(goalCard()).toHaveClass(/bd-goal-card-succeeded/);
-    await expect(goalCard().getByText("已评定 · 达成", { exact: true })).toBeVisible();
+    await assertGoalState(goalCard(), /bd-goal-card-succeeded/, "已评定 · 达成");
     await screenshotWithTheme(page, "candy", "goal-succeeded-candy-768.png", { fullPage: true });
     await applyThemeOnDocument(page, "space");
+    await assertGoalState(goalCard(), /bd-goal-card-succeeded/, "已评定 · 达成");
     await screenshotWithTheme(page, "space", "goal-succeeded-space-768.png", { fullPage: true });
   });
 
@@ -576,16 +675,19 @@ test.describe("ui goals training polish remediation", () => {
   const trainingCases = [
     {
       key: "reaction" as const,
+      reviewKey: "reaction" as const,
       sessionId: () => seed.reactionSessionId,
       metric: "metric-median_reaction_ms",
     },
     {
       key: "stroop" as const,
+      reviewKey: "stroop" as const,
       sessionId: () => seed.stroopSessionId,
       metric: "metric-interference_delta",
     },
     {
       key: "digit-span" as const,
+      reviewKey: "digitSpan" as const,
       sessionId: () => seed.digitSpanSessionId,
       metric: "metric-forward_max_span",
     },
@@ -601,11 +703,14 @@ test.describe("ui goals training polish remediation", () => {
       await expect(page.getByTestId("session-status")).toHaveText("completed", {
         timeout: 20_000,
       });
-      await assertTrainingReviewRow(page, trainingCase.key);
+      await assertTrainingReviewRow(
+        page,
+        trainingCase.reviewKey,
+        seed.trainingReview[trainingCase.reviewKey],
+      );
       await expect(page.getByTestId(trainingCase.metric)).toBeVisible();
       await expectNoHorizontalScroll(page);
-      await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, `training-student-${trainingCase.key}-360.png`),
+      await screenshotWithTheme(page, "space", `training-student-${trainingCase.key}-360.png`, {
         fullPage: true,
       });
     });
@@ -622,9 +727,12 @@ test.describe("ui goals training polish remediation", () => {
       await expect(page.getByTestId("session-status")).toHaveText("completed", {
         timeout: 20_000,
       });
-      await assertTrainingReviewRow(page, trainingCase.key);
-      await page.screenshot({
-        path: path.join(SCREENSHOT_DIR, `training-parent-${trainingCase.key}-768.png`),
+      await assertTrainingReviewRow(
+        page,
+        trainingCase.reviewKey,
+        seed.trainingReview[trainingCase.reviewKey],
+      );
+      await screenshotWithTheme(page, "space", `training-parent-${trainingCase.key}-768.png`, {
         fullPage: true,
       });
     });
@@ -641,7 +749,7 @@ test.describe("ui goals training polish remediation", () => {
     await expect(page).toHaveURL(
       new RegExp(`/parent/students/${fixture.studentId}/training/[0-9a-f-]{36}$`, "i"),
     );
-    await assertTrainingReviewRow(page, "reaction");
+    await assertTrainingReviewRow(page, "reaction", seed.trainingReview.reaction);
   });
 
   for (const theme of ["candy", "space"] as const) {
@@ -654,7 +762,7 @@ test.describe("ui goals training polish remediation", () => {
       await expect(page.getByTestId("session-status")).toHaveText("completed", {
         timeout: 20_000,
       });
-      await assertTrainingReviewRow(page, "reaction");
+      await assertTrainingReviewRow(page, "reaction", seed.trainingReview.reaction);
       await screenshotWithTheme(page, theme, `training-result-${theme}-1440.png`, {
         fullPage: true,
       });
