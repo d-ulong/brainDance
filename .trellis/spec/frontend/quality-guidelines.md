@@ -92,6 +92,7 @@ Run on mobile project when changing horizontal layout or wide content.
 - User-visible errors via `<Alert tone="error">` with message from `ApiError` when possible.
 - Loading states via `<LoadingState />` or disabled buttons with in-progress label (`登录中…`).
 - Credentials: `apiFetch` uses `credentials: "same-origin"` for session cookies.
+- Portaled dialogs render outside `.bd-shell`; controls inside them must use `var(--bd-surface*)`, `var(--bd-text)`, and `var(--bd-muted)` directly instead of relying on `.bd-shell .bg-white` / `.text-slate-*` remapping. Theme E2E must assert computed foreground/background contrast, not only the active theme attribute.
 
 ### Forbidden patterns
 

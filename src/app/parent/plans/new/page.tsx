@@ -35,10 +35,7 @@ function ParentPlanNewPageContent() {
     })();
   }, [router]);
 
-  async function createPlan(
-    definition: Parameters<typeof savePlanLibrary>[0],
-    priority: number,
-  ) {
+  async function createPlan(definition: Parameters<typeof savePlanLibrary>[0], priority: number) {
     if (saveLock.current) return;
     saveLock.current = true;
     setSaving(true);
@@ -65,7 +62,6 @@ function ParentPlanNewPageContent() {
       title="新增计划"
       showLogout
       backHref={scopeSelf ? "/parent/plans?scope=self" : "/parent/plans"}
-      workspace="parent"
       onBeforeNavigate={async () => {
         if (!dirty) return true;
         return window.confirm("有未保存的修改，确定离开吗？");
@@ -88,7 +84,13 @@ function ParentPlanNewPageContent() {
 
 export default function ParentPlanNewPage() {
   return (
-    <Suspense fallback={<PageShell title="新增计划"><LoadingState /></PageShell>}>
+    <Suspense
+      fallback={
+        <PageShell title="新增计划">
+          <LoadingState />
+        </PageShell>
+      }
+    >
       <ParentPlanNewPageContent />
     </Suspense>
   );

@@ -31,16 +31,16 @@ export function StudentMultiSelect({
   }
 
   return (
-    <div className="space-y-2">
-      <details className="rounded-2xl border border-neutral-300 bg-white">
-        <summary className="min-h-11 cursor-pointer list-none px-3 py-2 text-sm text-neutral-700">
+    <div className="bd-student-multi-select space-y-2">
+      <details className="rounded-2xl border border-[var(--bd-border)] bg-[var(--bd-surface-soft)] text-[var(--bd-text)]">
+        <summary className="min-h-11 cursor-pointer list-none px-3 py-2 text-sm font-medium text-[var(--bd-text)]">
           {selected.length ? `已选择 ${selected.length} 名学生` : emptyLabel}
         </summary>
         <div className="max-h-52 space-y-1 overflow-y-auto border-t p-2">
           {students.length ? (
             students.map((student) => (
               <label
-                className="flex min-h-11 items-center gap-2 rounded-xl px-2 hover:bg-slate-50"
+                className="flex min-h-11 items-center gap-2 rounded-xl px-2 text-[var(--bd-text)] hover:bg-[var(--bd-surface)]"
                 key={student.studentId}
               >
                 <input
@@ -53,7 +53,7 @@ export function StudentMultiSelect({
               </label>
             ))
           ) : (
-            <p className="px-2 py-2 text-sm text-neutral-500">暂无已关联学生</p>
+            <p className="px-2 py-2 text-sm text-[var(--bd-muted)]">暂无已关联学生</p>
           )}
         </div>
       </details>
@@ -64,7 +64,7 @@ export function StudentMultiSelect({
               type="button"
               key={student.studentId}
               disabled={disabled}
-              className="min-h-9 rounded-full bg-violet-100 px-3 text-sm text-violet-800 disabled:opacity-50"
+              className="min-h-9 rounded-full border border-[var(--bd-border)] bg-[var(--bd-surface-soft)] px-3 text-sm font-semibold text-[var(--bd-primary)] disabled:opacity-60"
               onClick={() => toggle(student.studentId, false)}
             >
               {student.displayName || student.username || "未命名学生"} ×

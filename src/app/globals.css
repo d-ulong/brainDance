@@ -6,7 +6,7 @@
   --bd-surface: #12243a;
   --bd-surface-soft: #193248;
   --bd-text: #edf4fc;
-  --bd-muted: #9bacbf;
+  --bd-muted: #c2d0de;
   --bd-border: #29425c;
   --bd-primary: #88e5f0;
   --bd-hero: radial-gradient(ellipse at 85% 20%, #18395488, transparent 65%), #12243a;
@@ -80,7 +80,10 @@ body {
 }
 
 .bd-shell .text-neutral-600,
-.bd-shell .text-neutral-500 {
+.bd-shell .text-neutral-500,
+.bd-shell .text-slate-700,
+.bd-shell .text-slate-600,
+.bd-shell .text-slate-500 {
   color: var(--bd-muted);
 }
 
@@ -1798,7 +1801,7 @@ body {
   }
 }
 
-/* App shell: masthead, sidebar nav on desktop, bottom nav on mobile. */
+/* App shell: masthead, top navigation on desktop, bottom navigation on mobile. */
 .bd-app-body {
   display: flex;
   flex: 1;
@@ -1849,28 +1852,6 @@ body {
 .bd-login-heading {
   margin-bottom: 1.25rem;
   text-align: center;
-}
-@media (min-width: 900px) {
-  .bd-app-parent .bd-app-body {
-    display: grid;
-    grid-template-columns: minmax(13.5rem, 14rem) minmax(0, 1fr);
-    align-items: start;
-    gap: 1.25rem;
-  }
-  .bd-app-parent .bd-top-tabs {
-    position: sticky;
-    top: 0.75rem;
-    flex-direction: column;
-    overflow: visible;
-    padding: 0.5rem;
-    min-height: 18rem;
-  }
-  .bd-app-parent .bd-top-tab {
-    flex: 0 0 auto;
-    width: 100%;
-    justify-content: flex-start;
-    padding-inline: 0.85rem;
-  }
 }
 @media (max-width: 899px) {
   .bd-shell {

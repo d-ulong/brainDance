@@ -58,7 +58,6 @@ export default function ParentStudentsPage() {
       backHref="/"
       showLogout
       hideHeading
-      workspace="parent"
       secondaryNavigation={<StudentManagementTabs />}
     >
       <div className="bd-library-toolbar">
@@ -67,12 +66,12 @@ export default function ParentStudentsPage() {
           <p>在一个地方查看每个孩子的计划、训练与家庭内容。</p>
         </div>
         <div className="flex flex-wrap gap-3">
-        <Link className="bd-inline-link" href="/parent/students/new">
-          ＋ 创建学生账号
-        </Link>
-        <Link className="bd-inline-link" href="/parent/link">
-          关联已有学生 →
-        </Link>
+          <Link className="bd-inline-link" href="/parent/students/new">
+            ＋ 创建学生账号
+          </Link>
+          <Link className="bd-inline-link" href="/parent/link">
+            关联已有学生 →
+          </Link>
         </div>
       </div>
       {error ? <Alert tone="error">{error}</Alert> : null}
@@ -83,10 +82,7 @@ export default function ParentStudentsPage() {
       ) : (
         <ul className="bd-student-grid">
           {students.map((student) => (
-            <li
-              key={student.studentId}
-              className="bd-student-card"
-            >
+            <li key={student.studentId} className="bd-student-card">
               <p className="font-medium">{student.displayName}</p>
               <nav aria-label={`${student.displayName}的功能`}>
                 <Link

@@ -174,9 +174,7 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
           };
         }
         if (refreshed.revision !== current.revision) {
-          setError(
-            "服务端计划版本已更新，本地定义草稿仍保留。请先保存定义或刷新页面后再试。",
-          );
+          setError("服务端计划版本已更新，本地定义草稿仍保留。请先保存定义或刷新页面后再试。");
         }
         return next;
       });
@@ -328,7 +326,8 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
   }
 
   function cancel() {
-    if ((definitionDirty || bindingDirty) && !window.confirm("有未保存的修改，确定离开吗？")) return;
+    if ((definitionDirty || bindingDirty) && !window.confirm("有未保存的修改，确定离开吗？"))
+      return;
     router.push(scopeSelf ? "/parent/plans?scope=self" : "/parent/plans");
   }
 
@@ -337,7 +336,6 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       title="编辑计划"
       showLogout
       backHref={scopeSelf ? "/parent/plans?scope=self" : "/parent/plans"}
-      workspace="parent"
       onBeforeNavigate={async () => {
         if (!definitionDirty && !bindingDirty) return true;
         return window.confirm("有未保存的修改，确定离开吗？");

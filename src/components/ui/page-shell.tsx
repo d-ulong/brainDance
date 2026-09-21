@@ -35,8 +35,7 @@ function ShellShanghaiClock() {
       setClock(formatShanghaiClock(new Date()));
       const now = new Date();
       const shanghai = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-      const msUntilNextMinute =
-        (60 - shanghai.getSeconds()) * 1000 - shanghai.getMilliseconds();
+      const msUntilNextMinute = (60 - shanghai.getSeconds()) * 1000 - shanghai.getMilliseconds();
       timer = setTimeout(schedule, Math.max(msUntilNextMinute, 1_000));
     }
 
@@ -94,7 +93,6 @@ type PageShellProps = {
   hideHeading?: boolean;
   hideTabs?: boolean;
   showThemeToggle?: boolean;
-  workspace?: "default" | "parent";
   onBeforeNavigate?: () => boolean | Promise<boolean>;
 };
 
@@ -110,7 +108,6 @@ export function PageShell({
   hideHeading = false,
   hideTabs = false,
   showThemeToggle = false,
-  workspace = "default",
   onBeforeNavigate,
 }: PageShellProps) {
   const router = useRouter();
@@ -137,10 +134,7 @@ export function PageShell({
   }
 
   return (
-    <div
-      className={`bd-app ${workspace === "parent" ? "bd-app-parent" : ""}`}
-      data-workspace={workspace}
-    >
+    <div className="bd-app">
       <main className="bd-shell mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-8">
         <header className="bd-masthead flex items-center justify-between gap-3">
           <Link href="/" className="min-w-0 shrink" onClick={(event) => void navigate(event, "/")}>
@@ -154,9 +148,7 @@ export function PageShell({
                 <Link
                   href="/account"
                   className="bd-shell-avatar shrink-0"
-                  aria-label={
-                    session ? `账号：${shellDisplayName(session)}` : "我的账号"
-                  }
+                  aria-label={session ? `账号：${shellDisplayName(session)}` : "我的账号"}
                   data-testid="shell-account-link"
                   onClick={(event) => void navigate(event, "/account")}
                 >

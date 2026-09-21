@@ -65,3 +65,7 @@ docker compose up -d
 - `.trellis/` 保存项目工作流、规范和任务记录。
 - 本机 Codex 与共享代理运行配置位于用户级目录，不纳入仓库；`.agents/` 和 `.codex/` 已由 `.gitignore` 忽略。
 - 环境文件、依赖缓存和日志不纳入版本控制。
+
+## Windows 生产环境更新
+
+停止旧 Web 与 Worker、备份生产数据库并拉取代码后：若 `pnpm-lock.yaml` 有变化，先运行 `pnpm install --frozen-lockfile`；然后运行 `scripts\start-web-and-worker.bat start`。该脚本会按顺序执行数据库迁移、当前源码生产构建，再启动 Web 与生命周期 Worker；迁移或构建失败时不会启动服务。本次更新未修改依赖锁文件，因此已有依赖完整时，拉取后可直接运行该启动脚本。

@@ -89,7 +89,7 @@ export default function HomePage() {
     );
   if (session.role === "parent")
     return (
-      <PageShell title="今天" showLogout hideHeading workspace="parent">
+      <PageShell title="今天" showLogout hideHeading>
         <ParentHomeDashboard session={session} />
       </PageShell>
     );

@@ -91,7 +91,12 @@ function entryMaxPoints(entry: PlanDefinitionDto["entries"][number]) {
   );
 }
 
-function definition(title: string, description: string, startDate: string, items: Draft[]): PlanDefinitionDto {
+function definition(
+  title: string,
+  description: string,
+  startDate: string,
+  items: Draft[],
+): PlanDefinitionDto {
   return {
     title,
     description: description.trim() || undefined,
@@ -162,7 +167,13 @@ function drafts(plan: PlanDefinitionDto): Draft[] {
 
 export default function ParentPlansPage() {
   return (
-    <Suspense fallback={<PageShell title="计划"><LoadingState /></PageShell>}>
+    <Suspense
+      fallback={
+        <PageShell title="计划">
+          <LoadingState />
+        </PageShell>
+      }
+    >
       <ParentPlansPageContent />
     </Suspense>
   );
@@ -188,7 +199,11 @@ function ParentPlansPageContent() {
   const [rangeThrough, setRangeThrough] = useState(today());
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [removalTarget, setRemovalTarget] = useState<{ plan: PlanLibraryDto; studentId: string; studentName: string } | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<{
+    plan: PlanLibraryDto;
+    studentId: string;
+    studentName: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -209,7 +224,11 @@ function ParentPlansPageContent() {
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") return router.replace("/login");
-      setSelfOption({ studentId: session.userId, displayName: `${session.displayName || session.account || "我"}（我的个人计划）`, username: session.account ?? null });
+      setSelfOption({
+        studentId: session.userId,
+        displayName: `${session.displayName || session.account || "我"}（我的个人计划）`,
+        username: session.account ?? null,
+      });
       try {
         await load();
       } catch (cause) {
@@ -279,7 +298,10 @@ function ParentPlansPageContent() {
   }
   function openAction(plan: PlanLibraryDto, kind: "bind" | "generate") {
     setAction({ plan, kind });
-    const fixedStudentId = kind === "generate" ? contextStudentId ?? (selfOnly ? selfOption?.studentId : undefined) : undefined;
+    const fixedStudentId =
+      kind === "generate"
+        ? (contextStudentId ?? (selfOnly ? selfOption?.studentId : undefined))
+        : undefined;
     setActionStudents(fixedStudentId ? [fixedStudentId] : []);
     const day = today();
     setRangeFrom(day);
@@ -363,15 +385,27 @@ function ParentPlansPageContent() {
         );
   const generateDateMin = today();
   const scopedPlans = contextStudentId
-    ? plans.filter((plan) => plan.bindings.some((binding) => binding.studentId === contextStudentId))
+    ? plans.filter((plan) =>
+        plan.bindings.some((binding) => binding.studentId === contextStudentId),
+      )
     : selfOnly && selfOption
-      ? plans.filter((plan) => plan.bindings.some((binding) => binding.studentId === selfOption.studentId))
+      ? plans.filter((plan) =>
+          plan.bindings.some((binding) => binding.studentId === selfOption.studentId),
+        )
       : plans;
   const visiblePlans = scopedPlans.filter((plan) => {
     const query = planQuery.trim().toLocaleLowerCase("zh-CN");
-    const matchesQuery = !query || [plan.definition.title, ...plan.definition.entries.map((entry) => entry.title)].some((value) => value.toLocaleLowerCase("zh-CN").includes(query));
-    const matchesStudent = !planStudentFilter || plan.bindings.some((binding) => binding.studentId === planStudentFilter);
-    const matchesBinding = bindingFilter === "all" || (bindingFilter === "bound" ? plan.bindings.length > 0 : plan.bindings.length === 0);
+    const matchesQuery =
+      !query ||
+      [plan.definition.title, ...plan.definition.entries.map((entry) => entry.title)].some(
+        (value) => value.toLocaleLowerCase("zh-CN").includes(query),
+      );
+    const matchesStudent =
+      !planStudentFilter ||
+      plan.bindings.some((binding) => binding.studentId === planStudentFilter);
+    const matchesBinding =
+      bindingFilter === "all" ||
+      (bindingFilter === "bound" ? plan.bindings.length > 0 : plan.bindings.length === 0);
     return matchesQuery && matchesStudent && matchesBinding;
   });
   return (
@@ -381,24 +415,33 @@ function ParentPlansPageContent() {
       backHref={selfOnly ? "/account" : "/parent/students"}
       showLogout
       hideHeading
-      workspace="parent"
       secondaryNavigation={selfOnly ? undefined : <StudentManagementTabs />}
     >
       <ErrorDialog message={error} onClose={() => setError(null)} />
       <Toast message={message} onClose={() => setMessage(null)} />
-      {removalTarget ? <ConfirmDialog
-        title="移除计划绑定"
-        message={`确定移除“${removalTarget.studentName}”与“${removalTarget.plan.definition.title}”的绑定吗？该学生未来未开始的该计划日程会被取消，已开始和已完成记录会保留。`}
-        confirmLabel="确认移除"
-        tone="danger"
-        busy={removing === `${removalTarget.plan.id}:${removalTarget.studentId}`}
-        onClose={() => setRemovalTarget(null)}
-        onConfirm={() => void removeBinding(removalTarget.plan.id, removalTarget.studentId).then(() => setRemovalTarget(null))}
-      /> : null}
+      {removalTarget ? (
+        <ConfirmDialog
+          title="移除计划绑定"
+          message={`确定移除“${removalTarget.studentName}”与“${removalTarget.plan.definition.title}”的绑定吗？该学生未来未开始的该计划日程会被取消，已开始和已完成记录会保留。`}
+          confirmLabel="确认移除"
+          tone="danger"
+          busy={removing === `${removalTarget.plan.id}:${removalTarget.studentId}`}
+          onClose={() => setRemovalTarget(null)}
+          onConfirm={() =>
+            void removeBinding(removalTarget.plan.id, removalTarget.studentId).then(() =>
+              setRemovalTarget(null),
+            )
+          }
+        />
+      ) : null}
       <section className="bd-library-toolbar">
         <div className="bd-library-toolbar-copy">
           <h2>{selfOnly ? "我的个人计划" : "计划列表"}</h2>
-          <p>{selfOnly ? "个人计划可开始/完成并按规则记积分，仅用于个人记录，不进入学生兑换。" : "先查看与管理已有计划，再按需新增。"}</p>
+          <p>
+            {selfOnly
+              ? "个人计划可开始/完成并按规则记积分，仅用于个人记录，不进入学生兑换。"
+              : "先查看与管理已有计划，再按需新增。"}
+          </p>
         </div>
         <PrimaryButton
           type="button"
@@ -409,7 +452,9 @@ function ParentPlansPageContent() {
           新增计划
         </PrimaryButton>
       </section>
-      {contextStudentId ? <StudentContextBanner studentId={contextStudentId} label="正在管理计划的学生" /> : null}
+      {contextStudentId ? (
+        <StudentContextBanner studentId={contextStudentId} label="正在管理计划的学生" />
+      ) : null}
       {!selfOnly ? (
         <section className="bd-filter-panel" aria-label="计划查询">
           <TextInput
@@ -451,7 +496,9 @@ function ParentPlansPageContent() {
               ) : null}
               <select
                 value={bindingFilter}
-                onChange={(event) => setBindingFilter(event.target.value as "all" | "bound" | "unbound")}
+                onChange={(event) =>
+                  setBindingFilter(event.target.value as "all" | "bound" | "unbound")
+                }
                 aria-label="按绑定状态筛选"
               >
                 <option value="all">全部状态</option>
@@ -471,13 +518,19 @@ function ParentPlansPageContent() {
                 <span className="bd-library-count">{plan.definition.entries.length} 项内容</span>
               </div>
               <p className="bd-library-summary">
-                {plan.definition.description || plan.definition.entries.map((entry) => entry.title).join("、")}
+                {plan.definition.description ||
+                  plan.definition.entries.map((entry) => entry.title).join("、")}
               </p>
               <div className="mt-2 space-y-1 text-sm text-slate-600">
-                {(plan.bindings.length ? plan.bindings : [{ studentId: "__none__", displayName: "未绑定" }]).map((binding) => (
+                {(plan.bindings.length
+                  ? plan.bindings
+                  : [{ studentId: "__none__", displayName: "未绑定" }]
+                ).map((binding) => (
                   <div key={binding.studentId}>
                     <span className="font-medium">{binding.displayName}：</span>
-                    <CompactGeneratedDates dates={plan.generatedDatesByStudent?.[binding.studentId] ?? []} />
+                    <CompactGeneratedDates
+                      dates={plan.generatedDatesByStudent?.[binding.studentId] ?? []}
+                    />
                   </div>
                 ))}
               </div>
@@ -490,7 +543,13 @@ function ParentPlansPageContent() {
                         type="button"
                         className="bd-library-chip"
                         key={binding.studentId}
-                        onClick={() => setRemovalTarget({ plan, studentId: binding.studentId, studentName: binding.displayName || binding.username || "未命名学生" })}
+                        onClick={() =>
+                          setRemovalTarget({
+                            plan,
+                            studentId: binding.studentId,
+                            studentName: binding.displayName || binding.username || "未命名学生",
+                          })
+                        }
                         disabled={removing === `${plan.id}:${binding.studentId}`}
                       >
                         {binding.displayName || binding.username || "未命名学生"}{" "}
@@ -513,7 +572,9 @@ function ParentPlansPageContent() {
                 <SecondaryButton onClick={() => setPreviewPlan(plan)}>预览</SecondaryButton>
                 <SecondaryButton onClick={() => openEdit(plan, true)}>复制</SecondaryButton>
                 <SecondaryButton onClick={() => openAction(plan, "bind")}>添加学生</SecondaryButton>
-                <SecondaryButton onClick={() => openAction(plan, "generate")}>生成日程</SecondaryButton>
+                <SecondaryButton onClick={() => openAction(plan, "generate")}>
+                  生成日程
+                </SecondaryButton>
               </div>
             </article>
           ))}
@@ -567,7 +628,13 @@ function ParentPlansPageContent() {
               />
             </Field>
             <Field label="计划优先级（0–100，数字越大越优先）">
-              <TextInput type="number" min="0" max="100" value={priority} onChange={(event) => setPriority(event.target.value)} />
+              <TextInput
+                type="number"
+                min="0"
+                max="100"
+                value={priority}
+                onChange={(event) => setPriority(event.target.value)}
+              />
             </Field>
             {items.map((item, index) => (
               <fieldset className="space-y-2 rounded-2xl border p-3" key={index}>
@@ -666,7 +733,11 @@ function ParentPlansPageContent() {
               保存后会进入编辑页，可在「适用对象」中单独保存绑定变更。
             </p>
             <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <SecondaryButton type="button" onClick={() => setFormOpen(false)} className="w-full min-h-11">
+              <SecondaryButton
+                type="button"
+                onClick={() => setFormOpen(false)}
+                className="w-full min-h-11"
+              >
                 取消
               </SecondaryButton>
               <PrimaryButton type="submit" disabled={saving} data-testid="plan-library-save">
@@ -686,12 +757,21 @@ function ParentPlansPageContent() {
           onClose={() => setAction(null)}
         >
           <form className="space-y-4" onSubmit={executeAction}>
-            {action.kind === "generate" && (contextStudentId || selfOnly) ? <p className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-sm text-slate-700">生成对象：{assignmentOptions.find((student) => student.studentId === actionStudents[0])?.displayName || "当前对象"}。此处只会生成该对象的日程。</p> : <StudentMultiSelect
-              students={actionCandidates}
-              selectedIds={actionStudents}
-              onChange={(studentIds) => setActionStudents(studentIds)}
-              emptyLabel={action.kind === "bind" ? "没有可添加学生" : "没有已绑定学生"}
-            />}
+            {action.kind === "generate" && (contextStudentId || selfOnly) ? (
+              <p className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-sm text-slate-700">
+                生成对象：
+                {assignmentOptions.find((student) => student.studentId === actionStudents[0])
+                  ?.displayName || "当前对象"}
+                。此处只会生成该对象的日程。
+              </p>
+            ) : (
+              <StudentMultiSelect
+                students={actionCandidates}
+                selectedIds={actionStudents}
+                onChange={(studentIds) => setActionStudents(studentIds)}
+                emptyLabel={action.kind === "bind" ? "没有可添加学生" : "没有已绑定学生"}
+              />
+            )}
             {action.kind === "generate" ? (
               <div className="grid grid-cols-2 gap-2">
                 <p className="col-span-2 text-xs text-[var(--bd-muted)]">

@@ -24,6 +24,7 @@ These guidelines describe **current** patterns in the codebase. Match them when 
 | [Family Content Contracts](./family-content-contracts.md) | Shared push threads, reference visibility, and DTO rules |
 | [Schedule Execution Contracts](./schedule-execution-contracts.md) | Started-state projection, direct completion, and safe schedule clearing |
 | [Dependency Recovery](./dependency-recovery.md) | Atomic Windows dependency repair and real startup verification |
+| [Production Startup](./production-startup.md) | Windows production migration, build, and launch ordering |
 | [Goal and Manual Points Contracts](./goal-and-manual-points-contracts.md) | Goal responsibility, rewards, penalties, reversals, and period summaries |
 
 ---

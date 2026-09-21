@@ -47,28 +47,34 @@ echo Close each window to stop that process.
 echo.
 
 if /I "%MODE%"=="start" (
-  if not exist "%ROOT%\.next\BUILD_ID" (
-    echo [INFO] No production build found. Running pnpm build first...
+  echo [INFO] Applying database migrations...
+  echo.
+  call pnpm db:migrate
+  if errorlevel 1 (
     echo.
-    call pnpm build
-    if errorlevel 1 (
-      echo.
-      echo [ERROR] pnpm build failed. Fix the errors above, then rerun this script.
-      pause
-      exit /b 1
-    )
-    if not exist "%ROOT%\.next\BUILD_ID" (
-      echo [ERROR] Build finished but .next\BUILD_ID is still missing.
-      pause
-      exit /b 1
-    )
-    echo.
-    echo [INFO] Build OK. Starting web + worker...
-    echo.
-  ) else (
-    echo [INFO] Found existing production build ^(.next\BUILD_ID^).
-    echo.
+    echo [ERROR] Database migration failed. Web and worker were not started.
+    pause
+    exit /b 1
   )
+
+  echo.
+  echo [INFO] Building the current checkout...
+  echo.
+  call pnpm build
+  if errorlevel 1 (
+    echo.
+    echo [ERROR] pnpm build failed. Web and worker were not started.
+    pause
+    exit /b 1
+  )
+  if not exist "%ROOT%\.next\BUILD_ID" (
+    echo [ERROR] Build finished but .next\BUILD_ID is missing.
+    pause
+    exit /b 1
+  )
+  echo.
+  echo [INFO] Migration and build OK. Starting web + worker...
+  echo.
 )
 
 start "BrainDance Web" /D "%ROOT%" cmd /k "chcp 65001 >nul && set PORT=%PORT%&& set HOSTNAME=%HOSTNAME%&& %WEB_CMD%"
