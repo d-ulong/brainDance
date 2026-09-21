@@ -34,6 +34,7 @@ test("role tabs stay visible and fit the mobile viewport", async ({ page }) => {
   await loginViaUi(page, fixture.studentUsername, fixture.studentPassword);
   await expect(page.getByTestId("top-tabs")).toBeVisible();
   await expect(page.getByTestId("top-tab-student-training")).toBeVisible();
+  await expect(page.getByTestId("top-tab-student-pushes")).toContainText("家庭推送");
   await expect(page.getByTestId("top-tab-student-home")).toHaveAttribute("aria-current", "page");
   await expectNoHorizontalScroll(page);
 });

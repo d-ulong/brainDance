@@ -170,7 +170,7 @@ async function assertShellIdentity(page: Page) {
 
   const clockText = await page.getByTestId("shell-shanghai-clock").innerText();
   expect(clockText.trim().length).toBeGreaterThan(0);
-  const clockMatch = clockText.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  const clockMatch = clockText.match(/\d{4}年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/);
   expect(clockMatch).not.toBeNull();
   const displayed = {
     month: Number(clockMatch![1]),

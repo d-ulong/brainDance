@@ -14,15 +14,18 @@ function formatShanghaiClock(date: Date) {
     timeZone: "Asia/Shanghai",
     weekday: "short",
   }).format(date);
-  const rest = new Intl.DateTimeFormat("zh-CN", {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
+    year: "numeric",
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(date);
-  return `${rest} ${weekday}`;
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}年${part("month")}月${part("day")}日 ${part("hour")}:${part("minute")} ${weekday}`;
 }
 
 function ShellShanghaiClock() {
@@ -66,17 +69,9 @@ function shellDisplayName(session: SessionInfo) {
 function ShellIdentityCluster({ session }: { session: SessionInfo | null }) {
   if (!session) return null;
 
-  const name = shellDisplayName(session);
-
   return (
-    <div className="bd-shell-identity flex max-w-[min(16rem,52vw)] items-center justify-end gap-2">
+    <div className="bd-shell-identity flex min-w-0 items-center justify-end">
       <ShellShanghaiClock />
-      <span
-        className="truncate text-sm font-semibold text-[var(--bd-text)]"
-        data-testid="shell-display-name"
-      >
-        {name}
-      </span>
     </div>
   );
 }
@@ -152,8 +147,8 @@ export function PageShell({
                   data-testid="shell-account-link"
                   onClick={(event) => void navigate(event, "/account")}
                 >
-                  <span aria-hidden="true">
-                    {session ? shellDisplayName(session).slice(0, 1) : "…"}
+                  <span data-testid="shell-display-name">
+                    {session ? shellDisplayName(session) : "…"}
                   </span>
                 </Link>
                 <button

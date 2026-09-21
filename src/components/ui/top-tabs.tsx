@@ -31,7 +31,7 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
     {
       id: "pushes",
       href: "/student/pushes",
-      label: "家庭消息",
+      label: "家庭推送",
       icon: "💌",
       matches: (path) => path.startsWith("/student/pushes"),
     },

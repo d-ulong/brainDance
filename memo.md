@@ -6,6 +6,8 @@
 
 2026-09-21 目标页 500 与太空主题排查：运行库 `goal_assignments` 缺少 0045 的 `completed_by/completed_at`，最小 SQL 稳定报 42703；隔离库显式运行 `pnpm db:migrate` 后，目标 route 回归 3/3 通过，浏览器 `/api/goals` 返回 200。`scripts/start-web-and-worker.bat start` 原来只在 `.next\BUILD_ID` 缺失时构建且完全不迁移，现固定为迁移→构建→启动。弹窗由 portal 挂到 `body`，因此 `.bd-shell .bg-white` 不生效，`StudentMultiSelect` 的白底与太空浅字叠加；日程说明又被 Tailwind `text-slate-*` 的 `oklch` 覆盖。修复后用 Playwright 读取 computed color/background，要求 4.5:1，同时断言家长桌面一级导航 `flex-direction: row`。同目录残留监听进程会争用 `.next`；验收前须按 PID 核对端口，只保留一个服务。
 
+2026-09-21 家庭推送与家长首页配色复查：`.bd-push-library-card` 及 `.bd-panel .bd-panel` 在太空主题下仍以硬编码白色参与渐变，形成浅灰底配浅色字。改为以主题 surface token 混色，并为太空主题的统计色块提供深色语义配色。Chrome 对 `color-mix()` 的计算色可能返回 `color(srgb ...)`，对比度测试需同时解析该格式与传统 `rgb()`，否则测试会在读取颜色阶段误报而没有执行 WCAG 断言。
+
 2026-09-19 UI 审查：报告与44张截图位于 `docs/ui-audit/2026-09-18/`。3张为未登录实拍，41张使用浏览器内示例数据；已有E2E账号一次登录返回401，未完成真实家庭流程验证。`capture.cjs --sample` 拦截全部API，训练创建/事件也只返回本地示例响应。证据最初直接写入项目目录导致Next开发服务频繁热重载；改写到系统临时目录 `braindance-ui-audit-20260918` 后重新完整采集，再复制回报告目录。不要把中途热重载/截图夹具异常登记为产品缺陷。稳定证据包含日历内部滚动尺寸和 `modal-keyboard.json`；后者复现弹窗初始焦点未进入、Tab离开及Escape未关闭。本轮未实施UI修改。
 
 2026-09-10 奖扣上限核查：`point_rule_templates.limits` 和 `negative_effect_schema` 虽在 `src/db/schema/points.ts` 中存在，0011/0015 模板种子均为 NULL。`point-rule.service.ts` 仅拷贝 effect，现有结算代码未读取 limits；家长页只有固定 +10 开关，未提供上限配置入口。上限目前是规格规划，不是已实现能力；后续须同时验证配置页、API、版本和结算应用，不能仅填字段就宣称完成。

@@ -2,17 +2,23 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fillField, loadE2eFixture } from "./ui-helpers";
 
-function channel(value: string) {
-  return Number(value.trim());
-}
-
-function relativeLuminance(rgb: string) {
-  const match = rgb.match(/rgba?\(([^)]+)\)/);
-  if (!match) throw new Error(`Unsupported color: ${rgb}`);
-  const values = match[1].split(",").slice(0, 3).map(channel);
+function relativeLuminance(color: string) {
+  const rgb = color.match(/rgba?\(([^)]+)\)/);
+  const srgb = color.match(/color\(srgb\s+([^)]+)\)/);
+  const values = rgb
+    ? rgb[1]
+        .split(",")
+        .slice(0, 3)
+        .map((value) => Number(value.trim()) / 255)
+    : srgb
+      ? srgb[1]
+          .split(/[\s/]+/)
+          .slice(0, 3)
+          .map(Number)
+      : null;
+  if (!values) throw new Error(`Unsupported color: ${color}`);
   const linear = values.map((value) => {
-    const normalized = value / 255;
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
   });
   return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
 }
@@ -58,6 +64,30 @@ async function loginAsParentInSpaceTheme(page: Page) {
 test("space theme keeps parent navigation and explanatory text readable", async ({ page }) => {
   await loginAsParentInSpaceTheme(page);
   await page.setViewportSize({ width: 1440, height: 900 });
+
+  const accountName = page.getByTestId("shell-display-name");
+  await expect(accountName).toHaveText("Test Parent");
+  await expect(page.getByTestId("shell-account-link")).toContainText("Test Parent");
+  const clock = page.getByTestId("shell-shanghai-clock");
+  await expect(clock).toHaveText(/\d{4}年\d{1,2}月\d{1,2}日/);
+
+  await expect(page.getByRole("heading", { name: "学生今日概览" })).toBeVisible();
+  const studentOverview = page.getByTestId(/points-today-card-/).first();
+  await expect(studentOverview).toBeVisible();
+  await expectReadableContrast(studentOverview.getByRole("heading"));
+  await expectReadableContrast(studentOverview.getByText("积分余额"));
+
+  await page.goto("/parent/pushes");
+  await page.locator(".bd-content").evaluate((content) => {
+    const card = document.createElement("article");
+    card.className = "bd-push-library-card";
+    card.innerHTML =
+      '<p class="bd-library-card-title">测试家庭推送</p><p class="bd-library-summary">已发布 · 未作答</p>';
+    content.append(card);
+  });
+  const pushCard = page.locator(".bd-push-library-card").last();
+  await expectReadableContrast(pushCard.getByText("测试家庭推送"));
+  await expectReadableContrast(pushCard.getByText("已发布 · 未作答"));
 
   await page.goto("/parent/plans");
   const topTabs = page.getByTestId("top-tabs");
