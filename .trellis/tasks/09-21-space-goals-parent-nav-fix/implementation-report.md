@@ -1,5 +1,7 @@
 # Implementation report
 
+Business implementation SHA: `5226a7c43b1cba7819d8f03776fb09530c2148af`
+
 ## Root cause and changes
 
 - Space theme: portaled dialogs were outside `.bd-shell`, leaving `StudentMultiSelect` with a literal white surface and light inherited text; Tailwind `text-slate-*` also overrode schedule explanatory text. The selector now uses theme tokens directly, slate gray utilities map to the theme muted token, and the space muted color is brighter.
