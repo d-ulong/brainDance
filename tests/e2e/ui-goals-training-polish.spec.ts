@@ -170,22 +170,19 @@ async function assertShellIdentity(page: Page) {
 
   const clockText = await page.getByTestId("shell-shanghai-clock").innerText();
   expect(clockText.trim().length).toBeGreaterThan(0);
-  const expected = shanghaiClockExpectation();
-  expect(clockText).toContain(String(expected.month));
-  expect(clockText).toContain(String(expected.day));
-  const clockMatch = clockText.match(/(\d{1,2}):(\d{2})/);
+  const clockMatch = clockText.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
   expect(clockMatch).not.toBeNull();
-  const clockHour = Number(clockMatch![1]);
-  const clockMinute = Number(clockMatch![2]);
-  expect(Number.isFinite(clockHour)).toBe(true);
-  expect(Number.isFinite(clockMinute)).toBe(true);
-  const expectedMinutes = expected.hour * 60 + expected.minute;
-  const clockMinutes = clockHour * 60 + clockMinute;
-  const minuteDelta = Math.min(
-    Math.abs(clockMinutes - expectedMinutes),
-    24 * 60 - Math.abs(clockMinutes - expectedMinutes),
+  const displayed = {
+    month: Number(clockMatch![1]),
+    day: Number(clockMatch![2]),
+    hour: Number(clockMatch![3]),
+    minute: Number(clockMatch![4]),
+  };
+  const now = Date.now();
+  const acceptedShanghaiMinutes = [-1, 0, 1].map((offsetMinutes) =>
+    shanghaiClockExpectation(new Date(now + offsetMinutes * 60_000)),
   );
-  expect(minuteDelta).toBeLessThanOrEqual(1);
+  expect(acceptedShanghaiMinutes).toContainEqual(displayed);
 }
 
 async function assertGoalState(card: Locator, className: RegExp, exactLabel: string) {
@@ -621,7 +618,7 @@ test.describe("ui goals training polish remediation", () => {
     await page.reload();
     await assertTheme(page, "candy");
     await openGoalsWorkspace();
-    await expect(goalCard().getByText("已完成 · 待评定", { exact: true })).toBeVisible();
+    await assertGoalState(goalCard(), /bd-goal-card-completed/, "已完成 · 待评定");
 
     await page.context().clearCookies();
     await page.goto("/login");
@@ -631,6 +628,7 @@ test.describe("ui goals training polish remediation", () => {
     await assertTheme(page, "space");
     const parentGoal = page.locator("article").filter({ hasText: seed.goalContent });
     await expect(parentGoal).toBeVisible({ timeout: 20_000 });
+    await assertGoalState(parentGoal, /bd-goal-card-completed/, "已完成 · 待评定");
     await expect(parentGoal.getByRole("button", { name: "评定目标" })).toBeVisible();
     await parentGoal.getByRole("button", { name: "评定目标" }).click();
     const evaluateResponse = page.waitForResponse(
@@ -642,17 +640,13 @@ test.describe("ui goals training polish remediation", () => {
     );
     await page.getByRole("button", { name: "确认评定" }).click();
     await evaluateResponse;
-    await expect(parentGoal.getByText("已评定 · 达成", { exact: true })).toBeVisible({
-      timeout: 20_000,
-    });
+    await assertGoalState(parentGoal, /bd-goal-card-succeeded/, "已评定 · 达成");
 
     await page.reload();
     await assertTheme(page, "space");
-    await expect(
-      page.locator("article").filter({ hasText: seed.goalContent }).getByText("已评定 · 达成", {
-        exact: true,
-      }),
-    ).toBeVisible();
+    const refreshedParentGoal = page.locator("article").filter({ hasText: seed.goalContent });
+    await expect(refreshedParentGoal).toBeVisible({ timeout: 20_000 });
+    await assertGoalState(refreshedParentGoal, /bd-goal-card-succeeded/, "已评定 · 达成");
 
     await page.context().clearCookies();
     await loginWithTheme(page, fixture.studentUsername, fixture.studentPassword, "candy");

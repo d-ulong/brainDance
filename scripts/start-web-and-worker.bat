@@ -46,6 +46,31 @@ echo Note: port 80 on Windows usually needs "Run as administrator".
 echo Close each window to stop that process.
 echo.
 
+if /I "%MODE%"=="start" (
+  if not exist "%ROOT%\.next\BUILD_ID" (
+    echo [INFO] No production build found. Running pnpm build first...
+    echo.
+    call pnpm build
+    if errorlevel 1 (
+      echo.
+      echo [ERROR] pnpm build failed. Fix the errors above, then rerun this script.
+      pause
+      exit /b 1
+    )
+    if not exist "%ROOT%\.next\BUILD_ID" (
+      echo [ERROR] Build finished but .next\BUILD_ID is still missing.
+      pause
+      exit /b 1
+    )
+    echo.
+    echo [INFO] Build OK. Starting web + worker...
+    echo.
+  ) else (
+    echo [INFO] Found existing production build ^(.next\BUILD_ID^).
+    echo.
+  )
+)
+
 start "BrainDance Web" /D "%ROOT%" cmd /k "chcp 65001 >nul && set PORT=%PORT%&& set HOSTNAME=%HOSTNAME%&& %WEB_CMD%"
 start "BrainDance Worker" /D "%ROOT%" cmd /k "chcp 65001 >nul && pnpm worker:lifecycle"
 
