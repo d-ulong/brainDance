@@ -147,20 +147,7 @@ function shanghaiClockExpectation(now = new Date()) {
   const day = Number(
     new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", day: "numeric" }).format(now),
   );
-  const hour = Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Shanghai",
-      hour: "numeric",
-      hour12: false,
-    }).format(now),
-  );
-  const minute = Number(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Shanghai",
-      minute: "numeric",
-    }).format(now),
-  );
-  return { month, day, hour, minute };
+  return { month, day };
 }
 
 async function assertShellIdentity(page: Page) {
@@ -170,13 +157,11 @@ async function assertShellIdentity(page: Page) {
 
   const clockText = await page.getByTestId("shell-shanghai-clock").innerText();
   expect(clockText.trim().length).toBeGreaterThan(0);
-  const clockMatch = clockText.match(/\d{4}年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/);
+  const clockMatch = clockText.match(/\d{4}年(\d{1,2})月(\d{1,2})日\s+周./);
   expect(clockMatch).not.toBeNull();
   const displayed = {
     month: Number(clockMatch![1]),
     day: Number(clockMatch![2]),
-    hour: Number(clockMatch![3]),
-    minute: Number(clockMatch![4]),
   };
   const now = Date.now();
   const acceptedShanghaiMinutes = [-1, 0, 1].map((offsetMinutes) =>
@@ -261,6 +246,12 @@ async function assertCalendarViewDocumentAndScroll(
     return getComputedStyle(element).overflowX;
   });
   expect(calendarOverflowX).toBe("hidden");
+
+  const firstMonthEvent = page.locator(".bd-calendar-month .bd-calendar-event").first();
+  await expect(firstMonthEvent).toBeVisible();
+  const monthDay = firstMonthEvent.locator("xpath=ancestor::section[1]");
+  await monthDay.hover();
+  await expect(monthDay.locator(".bd-calendar-month-popover")).toBeVisible();
 }
 
 async function assertModalContrastRatios(page: Page) {

@@ -53,18 +53,13 @@ export default function ParentStudentsPage() {
   }
 
   return (
-    <PageShell
-      title="学生"
-      backHref="/"
-      showLogout
-      hideHeading
-      secondaryNavigation={<StudentManagementTabs />}
-    >
-      <div className="bd-library-toolbar">
+    <PageShell title="学生" showLogout hideHeading>
+      <div className="bd-library-toolbar bd-students-toolbar">
         <div className="bd-library-toolbar-copy">
           <h2>家庭学生</h2>
           <p>在一个地方查看每个孩子的计划、训练与家庭内容。</p>
         </div>
+        <StudentManagementTabs />
         <div className="flex flex-wrap gap-3">
           <Link className="bd-inline-link" href="/parent/students/new">
             ＋ 创建学生账号

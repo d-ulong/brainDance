@@ -230,7 +230,9 @@ export function ScheduleCalendar({
               aria-pressed={date === selectedDate}
               onClick={() => onDateChange(date)}
             >
-              <span>{["日", "一", "二", "三", "四", "五", "六"][parseFamilyDate(date).getUTCDay()]}</span>
+              <span>
+                {["日", "一", "二", "三", "四", "五", "六"][parseFamilyDate(date).getUTCDay()]}
+              </span>
               <strong>{Number(date.slice(8))}</strong>
               <small>{count} 项</small>
             </button>
@@ -328,22 +330,40 @@ export function ScheduleCalendar({
               {day}
             </strong>
           ))}
-          {datesBetween(range.from, 42).map((date) => (
-            <section
-              className={`${date.slice(0, 7) !== selectedDate.slice(0, 7) ? "is-outside" : ""} ${date === today ? "is-today" : ""}`}
-              key={date}
-            >
-              <time>{Number(date.slice(8))}</time>
-              <div>
-                {(byDate.get(date) ?? []).slice(0, 5).map((item) => (
-                  <EventCard key={item.id} item={item} compact />
-                ))}
-                {(byDate.get(date)?.length ?? 0) > 5 ? (
-                  <small>另有 {(byDate.get(date)?.length ?? 0) - 5} 项</small>
+          {datesBetween(range.from, 42).map((date) => {
+            const monthItems = byDate.get(date) ?? [];
+            return (
+              <section
+                className={`${date.slice(0, 7) !== selectedDate.slice(0, 7) ? "is-outside" : ""} ${date === today ? "is-today" : ""}`}
+                key={date}
+                data-testid={`schedule-month-day-${date}`}
+                tabIndex={monthItems.length ? 0 : undefined}
+                aria-label={
+                  monthItems.length
+                    ? `${Number(date.slice(5, 7))}月${Number(date.slice(8))}日，共 ${monthItems.length} 项日程；悬停或聚焦可查看全部任务。`
+                    : undefined
+                }
+              >
+                <time>{Number(date.slice(8))}</time>
+                <div>
+                  {monthItems.slice(0, 4).map((item) => (
+                    <EventCard key={item.id} item={item} compact />
+                  ))}
+                  {monthItems.length > 4 ? <small>另有 {monthItems.length - 4} 项</small> : null}
+                </div>
+                {monthItems.length ? (
+                  <div className="bd-calendar-month-popover" role="tooltip">
+                    <strong>
+                      {Number(date.slice(5, 7))}月{Number(date.slice(8))}日 · 全部日程
+                    </strong>
+                    {monthItems.map((item) => (
+                      <EventCard key={item.id} item={item} compact />
+                    ))}
+                  </div>
                 ) : null}
-              </div>
-            </section>
-          ))}
+              </section>
+            );
+          })}
         </div>
       )}
     </section>

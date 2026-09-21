@@ -19,13 +19,10 @@ function formatShanghaiClock(date: Date) {
     year: "numeric",
     month: "numeric",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}年${part("month")}月${part("day")}日 ${part("hour")}:${part("minute")} ${weekday}`;
+  return `${part("year")}年${part("month")}月${part("day")}日 ${weekday}`;
 }
 
 function ShellShanghaiClock() {
@@ -38,8 +35,12 @@ function ShellShanghaiClock() {
       setClock(formatShanghaiClock(new Date()));
       const now = new Date();
       const shanghai = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-      const msUntilNextMinute = (60 - shanghai.getSeconds()) * 1000 - shanghai.getMilliseconds();
-      timer = setTimeout(schedule, Math.max(msUntilNextMinute, 1_000));
+      const msUntilNextDay =
+        (24 * 60 * 60 -
+          (shanghai.getHours() * 60 * 60 + shanghai.getMinutes() * 60 + shanghai.getSeconds())) *
+          1_000 -
+        shanghai.getMilliseconds();
+      timer = setTimeout(schedule, Math.max(msUntilNextDay, 1_000));
     }
 
     schedule();

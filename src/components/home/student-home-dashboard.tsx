@@ -205,7 +205,10 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
 
       <div className="bd-home-columns">
         <div className="bd-home-primary">
-          <section className="bd-next-task bd-panel bd-next-task-with-art" data-testid="student-next-task">
+          <section
+            className="bd-next-task bd-panel bd-next-task-with-art"
+            data-testid="student-next-task"
+          >
             {nextItem ? (
               <>
                 <HomeTaskIllustration />
@@ -303,14 +306,7 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
             </div>
             <div className="bd-points-bottom">
               <span>
-                今日{" "}
-                <b>
-                  {todayNet === null
-                    ? "—"
-                    : todayNet > 0
-                      ? `+${todayNet}`
-                      : todayNet}
-                </b>
+                今日 <b>{todayNet === null ? "—" : todayNet > 0 ? `+${todayNet}` : todayNet}</b>
               </span>
               <Link className="bd-text-button" href="/student/redemption">
                 查看记录 ↗
@@ -318,6 +314,9 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
             </div>
           </section>
 
+          <p className="bd-gentle-note">
+            <span aria-hidden="true">✦</span> 不和别人比，记录自己的每一步。
+          </p>
           <section className="bd-training-panel bd-panel">
             <div className="bd-section-heading">
               <h2>换个方式，动动脑</h2>
@@ -350,9 +349,6 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
               </div>
             )}
           </section>
-          <p className="bd-gentle-note">
-            <span aria-hidden="true">✦</span> 不和别人比，记录自己的每一步。
-          </p>
         </aside>
       </div>
     </div>

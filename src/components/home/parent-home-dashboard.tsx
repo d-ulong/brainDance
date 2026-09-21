@@ -152,36 +152,22 @@ export function ParentHomeDashboard({ session }: { session: SessionInfo }) {
               </div>
             )}
           </section>
-
-          <section className="bd-panel">
-            <div className="bd-section-heading">
-              <h2>陪伴入口</h2>
-            </div>
-            <div className="bd-action-grid">
-              <Link href="/parent/students" className="bd-action-card">
-                <span className="bd-action-icon" aria-hidden="true">
-                  🌱
-                </span>
-                <strong>
-                  学生管理
-                  <span aria-hidden="true">↗</span>
-                </strong>
-                <span>计划、训练、推送与兑换</span>
-              </Link>
-              <Link href="/parent/plans?scope=self" className="bd-action-card">
-                <span className="bd-action-icon" aria-hidden="true">
-                  🗓️
-                </span>
-                <strong>
-                  我的计划
-                  <span aria-hidden="true">↗</span>
-                </strong>
-                <span>家长本人的计划与日程</span>
-              </Link>
-            </div>
-          </section>
         </div>
         <aside className="bd-home-secondary">
+          <Link
+            href="/parent/plans?scope=self"
+            className="bd-parent-schedule-card"
+            data-testid="parent-schedule-card"
+          >
+            <span className="bd-action-icon" aria-hidden="true">
+              🗓️
+            </span>
+            <span>
+              <strong>计划日程</strong>
+              <small>安排并查看自己的计划与日程</small>
+            </span>
+            <span aria-hidden="true">↗</span>
+          </Link>
           <TrainingOverview />
         </aside>
       </div>

@@ -70,12 +70,24 @@ test("space theme keeps parent navigation and explanatory text readable", async 
   await expect(page.getByTestId("shell-account-link")).toContainText("Test Parent");
   const clock = page.getByTestId("shell-shanghai-clock");
   await expect(clock).toHaveText(/\d{4}年\d{1,2}月\d{1,2}日/);
+  await expect(clock).not.toContainText(":");
 
   await expect(page.getByRole("heading", { name: "学生今日概览" })).toBeVisible();
   const studentOverview = page.getByTestId(/points-today-card-/).first();
   await expect(studentOverview).toBeVisible();
   await expectReadableContrast(studentOverview.getByRole("heading"));
   await expectReadableContrast(studentOverview.getByText("积分余额"));
+  const scheduleCard = page.getByTestId("parent-schedule-card");
+  await expect(scheduleCard).toBeVisible();
+  await expect(scheduleCard).toHaveText(/计划日程/);
+  const trainingCard = page.getByRole("heading", { name: "家长训练近况" }).locator("..");
+  expect((await scheduleCard.boundingBox())!.y).toBeLessThan((await trainingCard.boundingBox())!.y);
+
+  await page.goto("/parent/students");
+  await expect(page.getByTestId("page-back-link")).toHaveCount(0);
+  const studentsToolbar = page.locator(".bd-students-toolbar");
+  await expect(studentsToolbar.getByRole("heading", { name: "家庭学生" })).toBeVisible();
+  await expect(studentsToolbar.getByRole("navigation", { name: "学生管理" })).toBeVisible();
 
   await page.goto("/parent/pushes");
   await page.locator(".bd-content").evaluate((content) => {
