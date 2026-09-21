@@ -29,78 +29,17 @@ import {
   fetchPointsPeriodSummary,
   fetchScheduleItems,
   generatePlanLibraryRange,
-  savePlanLibrary,
   scheduleStatusLabel,
   todayFamilyDate,
   updateGoal,
-  updatePlanLibrary,
   type GoalDto,
-  type PlanDefinitionDto,
   type PlanLibraryDto,
   type ScheduleItemDto,
 } from "@/lib/client/m2-api";
 
-type DraftEntry = {
-  title: string;
-  description: string;
-  expectedTime: string;
-  repeat: "once" | "daily" | "weekly" | "monthly";
-  repeatValue: string;
-};
-
 type WorkspaceView = "plans" | "schedule" | "goals";
 
 const horizonLabel = { short: "近期", medium: "中期", long: "远期" } as const;
-
-const blankEntry = (): DraftEntry => ({
-  title: "",
-  description: "",
-  expectedTime: "19:00",
-  repeat: "daily",
-  repeatValue: "",
-});
-
-function toDefinition(
-  title: string,
-  description: string,
-  startDate: string,
-  entries: DraftEntry[],
-): PlanDefinitionDto {
-  return {
-    title,
-    description: description.trim() || undefined,
-    startDate,
-    entries: entries.map((entry, index) => ({
-      key: `item-${index + 1}`,
-      title: entry.title,
-      description: entry.description.trim() || undefined,
-      expectedTime: entry.expectedTime,
-      latestStartTime: null,
-      durationMinutes: null,
-      repeat:
-        entry.repeat === "once"
-          ? { kind: "once", date: entry.repeatValue || startDate }
-          : entry.repeat === "weekly"
-            ? {
-                kind: "weekly",
-                weekdays: entry.repeatValue
-                  .split(",")
-                  .map(Number)
-                  .filter((value) => value >= 1 && value <= 7),
-              }
-            : entry.repeat === "monthly"
-              ? {
-                  kind: "monthly",
-                  days: entry.repeatValue
-                    .split(",")
-                    .map(Number)
-                    .filter((value) => value >= 1 && value <= 31),
-                }
-              : { kind: "daily" },
-      points: { onTimeWithin: 0, onTimeOver: 0, lateWithin: 0, lateOver: 0, incomplete: 0 },
-    })),
-  };
-}
 
 export default function StudentPlansPage() {
   const router = useRouter();
@@ -121,12 +60,6 @@ export default function StudentPlansPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const editing: PlanLibraryDto | null = null;
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState("0");
-  const [entries, setEntries] = useState<DraftEntry[]>([blankEntry()]);
   const [generating, setGenerating] = useState<PlanLibraryDto | null>(null);
   const [rangeFrom, setRangeFrom] = useState(todayFamilyDate());
   const [rangeThrough, setRangeThrough] = useState(todayFamilyDate());
@@ -134,7 +67,9 @@ export default function StudentPlansPage() {
   const [goalContent, setGoalContent] = useState("");
   const [goalDueDate, setGoalDueDate] = useState(todayFamilyDate());
   const [goalHorizon, setGoalHorizon] = useState<"short" | "medium" | "long">("medium");
-  const [goalHorizonFilter, setGoalHorizonFilter] = useState<"all" | "short" | "medium" | "long">("all");
+  const [goalHorizonFilter, setGoalHorizonFilter] = useState<"all" | "short" | "medium" | "long">(
+    "all",
+  );
   const [goalPoints, setGoalPoints] = useState("");
   const [goalGift, setGoalGift] = useState("");
   const [goalNotes, setGoalNotes] = useState("");
@@ -169,7 +104,9 @@ export default function StudentPlansPage() {
     else {
       setBalance(null);
       failures.push(
-        balanceResult.reason instanceof ApiError ? balanceResult.reason.message : "积分余额加载失败",
+        balanceResult.reason instanceof ApiError
+          ? balanceResult.reason.message
+          : "积分余额加载失败",
       );
     }
     if (scheduleResult.status === "fulfilled") {
@@ -289,49 +226,6 @@ export default function StudentPlansPage() {
     router.push(`/student/plans/${plan.id}/edit`);
   }
 
-  function changeEntry<K extends keyof DraftEntry>(index: number, key: K, value: DraftEntry[K]) {
-    setEntries((current) =>
-      current.map((entry, entryIndex) => (entryIndex === index ? { ...entry, [key]: value } : entry)),
-    );
-  }
-
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
-    if (!studentId) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const planStart = editing ? editing.definition.startDate : todayFamilyDate();
-      const planDefinition = toDefinition(title, description, planStart, entries);
-      if (editing) {
-        await updatePlanLibrary(editing.id, editing.revision, planDefinition, Number(priority));
-        setMessage("计划已更新，已有日程保持不变");
-      } else {
-        const result = await savePlanLibrary(planDefinition, Number(priority));
-        const activation = await activatePlanLibrary(result.plan.id, studentId, planStart);
-        if (activation.itemsCreated > 0) {
-          setMessage(
-            `计划已启用，并生成 ${activation.itemsCreated} 项日程（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
-          );
-        } else if (activation.matchedOccurrences === 0) {
-          setMessage(
-            `计划已启用，未新增日程：该重复规则在 ${activation.generatedFrom} 至 ${activation.generatedThrough} 范围内没有匹配日期`,
-          );
-        } else {
-          setMessage(
-            `计划已启用，未新增日程：幂等回放（实际日期 ${activation.generatedFrom} 至 ${activation.generatedThrough}）`,
-          );
-        }
-      }
-      setFormOpen(false);
-      await load(studentId);
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "保存计划失败");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   function openGenerate(plan: PlanLibraryDto) {
     const day = todayFamilyDate();
     setRangeFrom(day);
@@ -391,12 +285,17 @@ export default function StudentPlansPage() {
               <h2>我的成长工作台</h2>
               <p>在这里查看积分和今日进度。</p>
             </div>
-            <nav className="flex shrink-0 gap-1 rounded-lg bg-[var(--bd-surface-soft)] p-1" aria-label="我的成长工作台">
-              {([
-                ["plans", "计划"],
-                ["schedule", "日程"],
-                ["goals", "目标"],
-              ] as const).map(([view, label]) => (
+            <nav
+              className="flex shrink-0 gap-1 rounded-lg bg-[var(--bd-surface-soft)] p-1"
+              aria-label="我的成长工作台"
+            >
+              {(
+                [
+                  ["plans", "计划"],
+                  ["schedule", "日程"],
+                  ["goals", "目标"],
+                ] as const
+              ).map(([view, label]) => (
                 <button
                   key={view}
                   type="button"
@@ -410,81 +309,82 @@ export default function StudentPlansPage() {
             </nav>
           </div>
           <div className="mt-4">
-              <dl className="grid gap-3 sm:grid-cols-2">
+            <dl className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
+                data-testid="points-balance-summary"
+                aria-expanded={false}
+                title="今日积分 / 积分余额"
+              >
+                <dt className="text-sm text-slate-600">积分余额</dt>
+                <dd className="text-xl font-bold" data-testid="points-balance">
+                  {todayPoints == null || balance == null ? "—" : `${todayPoints}/${balance}`}
+                </dd>
+                <p className="mt-1 text-xs text-slate-500">今日积分 / 积分余额</p>
+              </button>
+              <div className="relative">
                 <button
                   type="button"
-                  className="rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
-                  data-testid="points-balance-summary"
-                  aria-expanded={false}
-                  title="今日积分 / 积分余额"
+                  className="w-full rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
+                  data-testid="today-tasks-summary"
+                  aria-expanded={taskDetailOpen}
+                  onClick={() => setTaskDetailOpen((open) => !open)}
+                  onMouseEnter={() => setTaskDetailOpen(true)}
+                  onMouseLeave={() => setTaskDetailOpen(false)}
                 >
-                  <dt className="text-sm text-slate-600">积分余额</dt>
-                  <dd className="text-xl font-bold" data-testid="points-balance">
-                    {todayPoints == null || balance == null
-                      ? "—"
-                      : `${todayPoints}/${balance}`}
+                  <dt className="text-sm text-slate-600">今日任务</dt>
+                  <dd className="text-xl font-bold" data-testid="today-tasks-count">
+                    {`${completedCount}/${todayItems.length}`}
                   </dd>
-                  <p className="mt-1 text-xs text-slate-500">今日积分 / 积分余额</p>
+                  <p className="mt-1 text-xs text-slate-500">已完成 / 今日任务</p>
                 </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    className="w-full rounded-2xl bg-[var(--bd-surface-soft)] p-3 text-left"
-                    data-testid="today-tasks-summary"
-                    aria-expanded={taskDetailOpen}
-                    onClick={() => setTaskDetailOpen((open) => !open)}
-                    onMouseEnter={() => setTaskDetailOpen(true)}
-                    onMouseLeave={() => setTaskDetailOpen(false)}
+                {taskDetailOpen ? (
+                  <div
+                    className="absolute left-0 right-0 z-20 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[var(--bd-border)] bg-white p-3 shadow-lg"
+                    data-testid="today-tasks-detail"
                   >
-                    <dt className="text-sm text-slate-600">今日任务</dt>
-                    <dd className="text-xl font-bold" data-testid="today-tasks-count">
-                      {`${completedCount}/${todayItems.length}`}
-                    </dd>
-                    <p className="mt-1 text-xs text-slate-500">已完成 / 今日任务</p>
-                  </button>
-                  {taskDetailOpen ? (
-                    <div
-                      className="absolute left-0 right-0 z-20 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[var(--bd-border)] bg-white p-3 shadow-lg"
-                      data-testid="today-tasks-detail"
-                    >
-                      {todayItems.length === 0 ? (
-                        <p className="text-sm text-slate-500">今日暂无任务</p>
-                      ) : (
-                        <ul className="space-y-2">
-                          {todayItems.map((item) => (
-                            <li key={item.id} className="text-sm text-slate-700">
-                              <p className="font-semibold">
-                                {item.title || item.planTitle || "计划任务"} ·{" "}
-                                {scheduleStatusLabel(item.effectiveStatus)}
-                              </p>
-                              <p className="text-slate-500">
-                                时间{" "}
-                                {item.scheduledAt
-                                  ? new Date(item.scheduledAt).toLocaleTimeString("zh-CN", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                      hour12: false,
-                                      timeZone: "Asia/Shanghai",
-                                    })
-                                  : "待定"}
-                                {" · "}
-                                时长{" "}
-                                {typeof item.durationMinutes === "number"
-                                  ? `${item.durationMinutes} 分钟`
-                                  : "未设定"}
-                              </p>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              </dl>
+                    {todayItems.length === 0 ? (
+                      <p className="text-sm text-slate-500">今日暂无任务</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {todayItems.map((item) => (
+                          <li key={item.id} className="text-sm text-slate-700">
+                            <p className="font-semibold">
+                              {item.title || item.planTitle || "计划任务"} ·{" "}
+                              {scheduleStatusLabel(item.effectiveStatus)}
+                            </p>
+                            <p className="text-slate-500">
+                              时间{" "}
+                              {item.scheduledAt
+                                ? new Date(item.scheduledAt).toLocaleTimeString("zh-CN", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    hour12: false,
+                                    timeZone: "Asia/Shanghai",
+                                  })
+                                : "待定"}
+                              {" · "}
+                              时长{" "}
+                              {typeof item.durationMinutes === "number"
+                                ? `${item.durationMinutes} 分钟`
+                                : "未设定"}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </dl>
           </div>
         </section>
 
-        <section className={workspaceView === "schedule" ? "bd-panel" : "hidden"} id="workbench-schedule">
+        <section
+          className={workspaceView === "schedule" ? "bd-panel" : "hidden"}
+          id="workbench-schedule"
+        >
           <button
             type="button"
             className="flex min-h-12 w-full items-center justify-between gap-3 text-left"
@@ -533,7 +433,9 @@ export default function StudentPlansPage() {
                     <article className="bd-library-card" key={plan.id}>
                       <div className="bd-library-card-head">
                         <h3 className="bd-library-card-title">{plan.definition.title}</h3>
-                        <span className="bd-library-count">{plan.definition.entries.length} 项</span>
+                        <span className="bd-library-count">
+                          {plan.definition.entries.length} 项
+                        </span>
                       </div>
                       <p className="bd-library-summary">
                         {plan.definition.description ||
@@ -546,7 +448,7 @@ export default function StudentPlansPage() {
                       <p className="mt-1 text-sm">
                         已生成日期：
                         <CompactGeneratedDates
-                          dates={studentId ? plan.generatedDatesByStudent?.[studentId] ?? [] : []}
+                          dates={studentId ? (plan.generatedDatesByStudent?.[studentId] ?? []) : []}
                         />
                       </p>
                       <p className="text-sm font-semibold text-[var(--bd-primary)]">
@@ -574,9 +476,7 @@ export default function StudentPlansPage() {
                               void activatePlanLibrary(plan.id, studentId)
                                 .then(() => load(studentId))
                                 .catch((cause) =>
-                                  setError(
-                                    cause instanceof ApiError ? cause.message : "启用失败",
-                                  ),
+                                  setError(cause instanceof ApiError ? cause.message : "启用失败"),
                                 )
                             }
                           >
@@ -610,12 +510,14 @@ export default function StudentPlansPage() {
             <div className="mt-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="目标期限">
-                  {([
-                    ["all", "全部"],
-                    ["short", "近期"],
-                    ["medium", "中期"],
-                    ["long", "远期"],
-                  ] as const).map(([value, label]) => (
+                  {(
+                    [
+                      ["all", "全部"],
+                      ["short", "近期"],
+                      ["medium", "中期"],
+                      ["long", "远期"],
+                    ] as const
+                  ).map(([value, label]) => (
                     <button
                       key={value}
                       type="button"
@@ -637,59 +539,59 @@ export default function StudentPlansPage() {
                   ? goals
                   : goals.filter((goal) => goal.horizon === goalHorizonFilter)
                 ).map((goal) => (
-                        <article key={goal.assignmentId} className={goalCardTone(goal.status)}>
-                          <div className="flex justify-between gap-2">
-                            <strong>{goal.content}</strong>
-                            <span className="bd-goal-status-chip">{goalStatusLabel[goal.status]}</span>
-                          </div>
-                          <p className="mt-2 text-xs text-slate-500">
-                            {horizonLabel[goal.horizon]} · 截止 {goal.dueDate}
-                            {goal.expectedPoints ? ` · 期望 ${goal.expectedPoints} 分` : ""}
-                          </p>
-                          {goal.giftRedeemedAt ? (
-                            <p className="mt-1 text-xs text-emerald-700">
-                              礼物已兑现：{new Date(goal.giftRedeemedAt).toLocaleString("zh-CN")}
-                            </p>
-                          ) : goal.actualGift ? (
-                            <p className="mt-1 text-xs text-amber-700">礼物尚未兑现</p>
-                          ) : null}
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {goal.canEdit ? (
-                              <button
-                                type="button"
-                                className="text-sm font-semibold text-[var(--bd-primary)]"
-                                onClick={() => openGoalForm(goal)}
-                              >
-                                编辑提案
-                              </button>
-                            ) : null}
-                            {goal.canComplete ? (
-                              <PrimaryButton
-                                fullWidth={false}
-                                disabled={saving}
-                                onClick={() =>
-                                  void (async () => {
-                                    setSaving(true);
-                                    setError(null);
-                                    try {
-                                      await completeGoal(goal.assignmentId);
-                                      setMessage("已标记完成，等待家长评定");
-                                      if (studentId) await load(studentId);
-                                    } catch (cause) {
-                                      setError(
-                                        cause instanceof ApiError ? cause.message : "标记完成失败",
-                                      );
-                                    } finally {
-                                      setSaving(false);
-                                    }
-                                  })()
-                                }
-                              >
-                                完成目标
-                              </PrimaryButton>
-                            ) : null}
-                          </div>
-                        </article>
+                  <article key={goal.assignmentId} className={goalCardTone(goal.status)}>
+                    <div className="flex justify-between gap-2">
+                      <strong>{goal.content}</strong>
+                      <span className="bd-goal-status-chip">{goalStatusLabel[goal.status]}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {horizonLabel[goal.horizon]} · 截止 {goal.dueDate}
+                      {goal.expectedPoints ? ` · 期望 ${goal.expectedPoints} 分` : ""}
+                    </p>
+                    {goal.giftRedeemedAt ? (
+                      <p className="mt-1 text-xs text-emerald-700">
+                        礼物已兑现：{new Date(goal.giftRedeemedAt).toLocaleString("zh-CN")}
+                      </p>
+                    ) : goal.actualGift ? (
+                      <p className="mt-1 text-xs text-amber-700">礼物尚未兑现</p>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {goal.canEdit ? (
+                        <button
+                          type="button"
+                          className="text-sm font-semibold text-[var(--bd-primary)]"
+                          onClick={() => openGoalForm(goal)}
+                        >
+                          编辑提案
+                        </button>
+                      ) : null}
+                      {goal.canComplete ? (
+                        <PrimaryButton
+                          fullWidth={false}
+                          disabled={saving}
+                          onClick={() =>
+                            void (async () => {
+                              setSaving(true);
+                              setError(null);
+                              try {
+                                await completeGoal(goal.assignmentId);
+                                setMessage("已标记完成，等待家长评定");
+                                if (studentId) await load(studentId);
+                              } catch (cause) {
+                                setError(
+                                  cause instanceof ApiError ? cause.message : "标记完成失败",
+                                );
+                              } finally {
+                                setSaving(false);
+                              }
+                            })()
+                          }
+                        >
+                          完成目标
+                        </PrimaryButton>
+                      ) : null}
+                    </div>
+                  </article>
                 ))}
               </div>
               {!goals.length ? (
@@ -702,114 +604,6 @@ export default function StudentPlansPage() {
           ) : null}
         </section>
       </div>
-
-      {formOpen ? (
-        <Modal title={editing ? "编辑我的计划" : "制定新计划"} onClose={() => setFormOpen(false)}>
-          <form className="space-y-4" onSubmit={save}>
-            <Field label="计划名称">
-              <TextInput required value={title} onChange={(event) => setTitle(event.target.value)} />
-            </Field>
-            <Field label="计划说明（可选）">
-              <textarea
-                maxLength={4000}
-                className="min-h-24 w-full rounded-2xl border border-neutral-300 bg-white p-3"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="写下计划想达成什么"
-              />
-            </Field>
-            <Field label="优先级">
-              <TextInput
-                required
-                type="number"
-                min="0"
-                max="100"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-              />
-            </Field>
-            {entries.map((entry, index) => (
-              <fieldset
-                className="space-y-3 rounded-2xl border border-[var(--bd-border)] p-3"
-                key={index}
-              >
-                <legend className="font-bold">内容 {index + 1}</legend>
-                <Field label="内容名称">
-                  <TextInput
-                    required
-                    value={entry.title}
-                    onChange={(event) => changeEntry(index, "title", event.target.value)}
-                  />
-                </Field>
-                <Field label="内容说明（可选）">
-                  <textarea
-                    maxLength={500}
-                    className="min-h-20 w-full rounded-2xl border p-3"
-                    value={entry.description}
-                    onChange={(event) => changeEntry(index, "description", event.target.value)}
-                  />
-                </Field>
-                <Field label="执行时间">
-                  <TextInput
-                    required
-                    type="time"
-                    value={entry.expectedTime}
-                    onChange={(event) => changeEntry(index, "expectedTime", event.target.value)}
-                  />
-                </Field>
-                <p className="text-xs text-neutral-500">
-                  自主计划记录完成情况，但不会由学生自行设置或获得积分。
-                </p>
-                <Field label="重复方式">
-                  <select
-                    className="min-h-11 rounded-2xl border p-2"
-                    value={entry.repeat}
-                    onChange={(event) =>
-                      changeEntry(index, "repeat", event.target.value as DraftEntry["repeat"])
-                    }
-                  >
-                    <option value="once">某天</option>
-                    <option value="daily">每天</option>
-                    <option value="weekly">每周星期几</option>
-                    <option value="monthly">每月几号</option>
-                  </select>
-                </Field>
-                {entry.repeat !== "daily" ? (
-                  <Field label={entry.repeat === "once" ? "日期" : "多个值用逗号分隔"}>
-                    <TextInput
-                      required
-                      value={entry.repeatValue}
-                      onChange={(event) => changeEntry(index, "repeatValue", event.target.value)}
-                    />
-                  </Field>
-                ) : null}
-                {entries.length > 1 ? (
-                  <SecondaryButton
-                    onClick={() =>
-                      setEntries((current) =>
-                        current.filter((_, entryIndex) => entryIndex !== index),
-                      )
-                    }
-                  >
-                    删除内容
-                  </SecondaryButton>
-                ) : null}
-              </fieldset>
-            ))}
-            <SecondaryButton onClick={() => setEntries((current) => [...current, blankEntry()])}>
-              添加内容
-            </SecondaryButton>
-            <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <SecondaryButton type="button" onClick={() => setFormOpen(false)} className="w-full min-h-11">
-                取消
-              </SecondaryButton>
-              <PrimaryButton type="submit" disabled={saving} data-testid="student-plan-save">
-                {saving ? "保存中…" : editing ? "保存修改" : "保存并启用"}
-              </PrimaryButton>
-            </div>
-          </form>
-        </Modal>
-      ) : null}
 
       {generating ? (
         <Modal
@@ -850,7 +644,11 @@ export default function StudentPlansPage() {
               若早于计划生效日，服务器会返回明确错误。
             </p>
             <div className="bd-plan-edit-footer grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <SecondaryButton type="button" onClick={() => setGenerating(null)} className="w-full min-h-11">
+              <SecondaryButton
+                type="button"
+                onClick={() => setGenerating(null)}
+                className="w-full min-h-11"
+              >
                 取消
               </SecondaryButton>
               <PrimaryButton type="submit" disabled={saving}>

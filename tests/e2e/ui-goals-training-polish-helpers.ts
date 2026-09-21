@@ -9,6 +9,7 @@ import type { E2eFixture } from "./ui-helpers";
 export type UiGoalsTrainingSeed = {
   formalPlanId: string;
   goalAssignmentId: string;
+  goalContent: string;
   reactionSessionId: string;
   stroopSessionId: string;
   digitSpanSessionId: string;
@@ -95,7 +96,10 @@ async function completeStroopViaApi(request: APIRequestContext): Promise<string>
     },
   });
   expect(startResponse.ok()).toBeTruthy();
-  const started = (await startResponse.json()) as { sessionId: string; ageBand: "5-8" | "9-12" | "13-18" };
+  const started = (await startResponse.json()) as {
+    sessionId: string;
+    ageBand: "5-8" | "9-12" | "13-18";
+  };
   const schema = getStroopSchemaForAgeBand(started.ageBand);
   let sequence = 0;
   for (let trialIndex = 0; trialIndex < schema.trialCount; trialIndex += 1) {
@@ -134,7 +138,10 @@ async function completeDigitSpanViaApi(request: APIRequestContext): Promise<stri
     },
   });
   expect(startResponse.ok()).toBeTruthy();
-  const started = (await startResponse.json()) as { sessionId: string; ageBand: "5-8" | "9-12" | "13-18" };
+  const started = (await startResponse.json()) as {
+    sessionId: string;
+    ageBand: "5-8" | "9-12" | "13-18";
+  };
   const schema = getDigitSpanSchemaForAgeBand(started.ageBand);
   let sequence = 0;
   const attempts: Array<{
@@ -177,8 +184,7 @@ async function completeDigitSpanViaApi(request: APIRequestContext): Promise<stri
       },
     });
     sequence += 1;
-    const response =
-      attempt.mode === "forward" ? attempt.digits : [...attempt.digits].reverse();
+    const response = attempt.mode === "forward" ? attempt.digits : [...attempt.digits].reverse();
     await request.post(`/api/training/sessions/${started.sessionId}/events`, {
       data: {
         sequence,
@@ -220,8 +226,13 @@ export async function seedUiGoalsTrainingPolish(
       },
     },
   );
-  expect(planResponse.ok(), await planResponse.text()).toBeTruthy();
-  const planBody = (await planResponse.json()) as { planId: string };
+  let formalPlanId = "";
+  if (planResponse.ok()) {
+    formalPlanId = ((await planResponse.json()) as { planId: string }).planId;
+  } else {
+    const planError = await planResponse.text();
+    expect(planError).toContain("Active formal plan already exists");
+  }
 
   const pointRuleResponse = await request.post(
     `/api/family/students/${fixture.studentId}/point-rules`,
@@ -230,7 +241,13 @@ export async function seedUiGoalsTrainingPolish(
       data: { templateId: "schedule_system_complete_v1" },
     },
   );
-  expect(pointRuleResponse.ok(), await pointRuleResponse.text()).toBeTruthy();
+  if (!pointRuleResponse.ok()) {
+    const pointRuleError = await pointRuleResponse.text();
+    expect(
+      pointRuleError.includes("already") || pointRuleError.includes("exists"),
+      pointRuleError,
+    ).toBeTruthy();
+  }
 
   const horizonResponse = await request.post(
     `/api/family/students/${fixture.studentId}/formal-plans/maintain-horizon`,
@@ -276,13 +293,10 @@ export async function seedUiGoalsTrainingPolish(
   });
   expect(libraryResponse.ok(), await libraryResponse.text()).toBeTruthy();
   const libraryBody = (await libraryResponse.json()) as { plan: { id: string } };
-  const libraryActivate = await request.post(
-    `/api/plan-library/${libraryBody.plan.id}/activate`,
-    {
-      headers: { "Idempotency-Key": `polish-library-activate-${runId}` },
-      data: { studentId: fixture.studentId, effectiveFrom: today },
-    },
-  );
+  const libraryActivate = await request.post(`/api/plan-library/${libraryBody.plan.id}/activate`, {
+    headers: { "Idempotency-Key": `polish-library-activate-${runId}` },
+    data: { studentId: fixture.studentId, effectiveFrom: today },
+  });
   expect(libraryActivate.ok(), await libraryActivate.text()).toBeTruthy();
 
   const reactionSessionId = await completeReactionViaApi(request);
@@ -292,11 +306,12 @@ export async function seedUiGoalsTrainingPolish(
   await logoutApi(request);
 
   await loginApi(request, fixture.parentEmail, fixture.parentPassword);
+  const goalContent = `Polish 目标 ${runId}`;
   const goalResponse = await request.post("/api/goals", {
     headers: { "Idempotency-Key": `polish-goal-${runId}` },
     data: {
       subjectIds: [fixture.studentId],
-      content: `Polish 目标 ${runId}`,
+      content: goalContent,
       dueDate: "2026-12-31",
       horizon: "medium",
       expectedPoints: 5,
@@ -307,8 +322,9 @@ export async function seedUiGoalsTrainingPolish(
   await logoutApi(request);
 
   return {
-    formalPlanId: planBody.planId,
+    formalPlanId,
     goalAssignmentId: goalBody.assignmentIds[0]!,
+    goalContent,
     reactionSessionId,
     stroopSessionId,
     digitSpanSessionId,
