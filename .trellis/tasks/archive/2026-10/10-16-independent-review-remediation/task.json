@@ -3,7 +3,7 @@
   "name": "independent-review-remediation",
   "title": "独立审核问题整体整改",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "wangyoulong",
   "assignee": "wangyoulong",
   "createdAt": "2026-10-16",
-  "completedAt": null,
+  "completedAt": "2026-10-17",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
-  "commit": null,
+  "commit": "28232f75bfe7177c52cd392f8c51e04a9985fdeb",
   "pr_url": null,
   "subtasks": [],
   "children": [
@@ -23,6 +23,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Implemented and verified; independent review GO; local Web/Worker updated without resetting existing credentials. User authorized commit and ordinary push on 2026-10-17.",
   "meta": {}
 }
