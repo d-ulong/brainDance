@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { Modal } from "@/components/ui/modal";
 import {
+  SessionLoadError,
   Field,
   LoadingState,
   PageShell,
@@ -42,6 +43,8 @@ const today = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
 
 function ParentGoalsPageContent() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const searchParams = useSearchParams();
   const selfOnly = searchParams.get("scope") === "self";
@@ -87,6 +90,8 @@ function ParentGoalsPageContent() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const current = await fetchSession();
       if (!current || current.role !== "parent") return router.replace("/login");
@@ -98,8 +103,11 @@ function ParentGoalsPageContent() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [load, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [load, router, sessionAttempt]);
 
   const selectOptions = session
     ? [
@@ -272,6 +280,18 @@ function ParentGoalsPageContent() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading)
     return (
       <PageShell title="目标">

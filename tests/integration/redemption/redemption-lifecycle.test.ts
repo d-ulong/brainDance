@@ -342,6 +342,7 @@ describe.skipIf(!hasDb)("redemption lifecycle", () => {
 
   it("AC-M6-01: concurrent create at monthly limit allows only one new request", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
+    await seedStudentBalance(db, studentId, 100);
     const { item } = await bootstrapCatalogItem(db, {
       parentId,
       studentId,

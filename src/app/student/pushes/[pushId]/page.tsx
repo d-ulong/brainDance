@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  SecondaryButton,
+} from "@/components/ui/page-shell";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { MediaPreviewList } from "@/components/family-content/media-preview";
 import { ThreadedComments } from "@/components/family-content/threaded-comments";
@@ -27,6 +33,8 @@ import {
 } from "@/lib/client/m7-api";
 
 export default function StudentPushDetailPage({ params }: { params: Promise<{ pushId: string }> }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [pushId, setPushId] = useState<string | null>(null);
@@ -61,6 +69,8 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       const session = await fetchSession();
@@ -77,12 +87,13 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadAll, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadAll, params, router, sessionAttempt]);
 
-  const ownAnswers = studentId
-    ? answers.filter((item) => item.studentId === studentId)
-    : [];
+  const ownAnswers = studentId ? answers.filter((item) => item.studentId === studentId) : [];
   const showAnswerForm = push?.status === "published";
 
   async function uploadOptionalImage(file: File | null, setStatus: (value: string | null) => void) {
@@ -161,6 +172,18 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="推送详情">
@@ -176,7 +199,10 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
 
         {push ? (
           <article className="bd-push-hero" data-testid="student-push-detail">
-            <div className="bd-push-hero-meta"><span>💌 家庭推送</span><span>{familyPushStatusLabel(push.status)}</span></div>
+            <div className="bd-push-hero-meta">
+              <span>💌 家庭推送</span>
+              <span>{familyPushStatusLabel(push.status)}</span>
+            </div>
             <p className="bd-push-hero-body" data-testid="student-push-body">
               {push.body || "(无正文)"}
             </p>
@@ -204,7 +230,9 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
         <section className="bd-push-section">
           <div className="bd-section-heading">
             <h2>✍️ 我的作答</h2>
-            <span className="bd-caption">可提交多次不同解法；每条作答创建后 10 天内可单独编辑，编辑后标识「已编辑」</span>
+            <span className="bd-caption">
+              可提交多次不同解法；每条作答创建后 10 天内可单独编辑，编辑后标识「已编辑」
+            </span>
           </div>
           {ownAnswers.length ? (
             <ol className="space-y-3" data-testid="student-answer-current">
@@ -222,11 +250,19 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
                         </span>
                       ) : null}
                     </div>
-                    <time>{new Date(item.updatedAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</time>
+                    <time>
+                      {new Date(item.updatedAt).toLocaleString("zh-CN", {
+                        timeZone: "Asia/Shanghai",
+                      })}
+                    </time>
                   </div>
                   <p className="whitespace-pre-wrap text-sm">{item.body || "(图片作答)"}</p>
                   {studentId && item.media?.length ? (
-                    <MediaPreviewList studentId={studentId} media={item.media} testIdPrefix={`student-answer-media-${item.answerId}`} />
+                    <MediaPreviewList
+                      studentId={studentId}
+                      media={item.media}
+                      testIdPrefix={`student-answer-media-${item.answerId}`}
+                    />
                   ) : null}
                   {item.canEdit ? (
                     <button
@@ -305,38 +341,90 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
 
         {answers.some((item) => item.studentId !== studentId) ? (
           <section className="bd-push-section" data-testid="student-peer-answers">
-            <div className="bd-section-heading"><h2>🌱 伙伴作答</h2><span className="bd-caption">公开后可以相互交流</span></div>
+            <div className="bd-section-heading">
+              <h2>🌱 伙伴作答</h2>
+              <span className="bd-caption">公开后可以相互交流</span>
+            </div>
             <ul className="flex flex-col gap-2">
-              {answers.filter((item) => item.studentId !== studentId).map((item) => (
-                <li key={item.answerId} className="rounded-xl border border-neutral-200 p-3 text-sm">
-                  <p className="font-semibold">
-                    {item.authorName}
-                    {item.edited ? (
-                      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
-                        已编辑
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="mt-1 whitespace-pre-wrap">{item.body || "(图片作答)"}</p>
-                  <button type="button" className="mt-2 min-h-9 font-bold text-[var(--bd-primary)]" onClick={() => { setQuoteAnswerId(item.answerId); setReplyTo(null); }}>引用作答</button>
-                </li>
-              ))}
+              {answers
+                .filter((item) => item.studentId !== studentId)
+                .map((item) => (
+                  <li
+                    key={item.answerId}
+                    className="rounded-xl border border-neutral-200 p-3 text-sm"
+                  >
+                    <p className="font-semibold">
+                      {item.authorName}
+                      {item.edited ? (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                          已编辑
+                        </span>
+                      ) : null}
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap">{item.body || "(图片作答)"}</p>
+                    <button
+                      type="button"
+                      className="mt-2 min-h-9 font-bold text-[var(--bd-primary)]"
+                      onClick={() => {
+                        setQuoteAnswerId(item.answerId);
+                        setReplyTo(null);
+                      }}
+                    >
+                      引用作答
+                    </button>
+                  </li>
+                ))}
             </ul>
           </section>
         ) : null}
 
         <section className="bd-push-section">
-          <div className="bd-section-heading"><h2>💬 讨论区</h2><span className="bd-caption">{comments.length} 条评论</span></div>
-          <div data-testid="student-comment-list"><ThreadedComments comments={comments} answers={answers} onReply={(comment) => { setReplyTo(comment.commentId); setQuoteAnswerId(null); }} onEdit={(comment) => { setEditingComment(comment); setEditBody(comment.body ?? ""); }} onDelete={setDeletingComment} /></div>
+          <div className="bd-section-heading">
+            <h2>💬 讨论区</h2>
+            <span className="bd-caption">{comments.length} 条评论</span>
+          </div>
+          <div data-testid="student-comment-list">
+            <ThreadedComments
+              comments={comments}
+              answers={answers}
+              onReply={(comment) => {
+                setReplyTo(comment.commentId);
+                setQuoteAnswerId(null);
+              }}
+              onEdit={(comment) => {
+                setEditingComment(comment);
+                setEditBody(comment.body ?? "");
+              }}
+              onDelete={setDeletingComment}
+            />
+          </div>
           {push?.status === "published" ? (
             <div className="flex flex-col gap-2">
               {replyTo ? (
                 <div className="bd-comment-reference" data-testid="student-reply-target">
-                  <span>正在回复 · {comments.find((item) => item.commentId === replyTo)?.authorName ?? "成员"}</span>
+                  <span>
+                    正在回复 ·{" "}
+                    {comments.find((item) => item.commentId === replyTo)?.authorName ?? "成员"}
+                  </span>
                   <p>{comments.find((item) => item.commentId === replyTo)?.body ?? "原评论"}</p>
-                  <button type="button" onClick={() => setReplyTo(null)}>取消回复</button>
+                  <button type="button" onClick={() => setReplyTo(null)}>
+                    取消回复
+                  </button>
                 </div>
-              ) : quoteAnswerId ? <div className="bd-comment-reference" data-testid="student-reply-target"><span>正在引用作答 · {answers.find((item) => item.answerId === quoteAnswerId)?.authorName ?? "成员"}</span><p>{answers.find((item) => item.answerId === quoteAnswerId)?.body || "图片作答"}</p><button type="button" onClick={() => setQuoteAnswerId(null)}>取消引用</button></div> : null}
+              ) : quoteAnswerId ? (
+                <div className="bd-comment-reference" data-testid="student-reply-target">
+                  <span>
+                    正在引用作答 ·{" "}
+                    {answers.find((item) => item.answerId === quoteAnswerId)?.authorName ?? "成员"}
+                  </span>
+                  <p>
+                    {answers.find((item) => item.answerId === quoteAnswerId)?.body || "图片作答"}
+                  </p>
+                  <button type="button" onClick={() => setQuoteAnswerId(null)}>
+                    取消引用
+                  </button>
+                </div>
+              ) : null}
               <textarea
                 data-testid="student-comment-input"
                 className="min-h-36 rounded-2xl border border-[var(--bd-border)] bg-white px-4 py-3 text-base leading-relaxed"
@@ -413,8 +501,48 @@ export default function StudentPushDetailPage({ params }: { params: Promise<{ pu
           </Modal>
         ) : null}
 
-        {editingComment && studentId && pushId ? <Modal title="编辑评论" onClose={() => setEditingComment(null)} layer="critical"><textarea className="min-h-36 w-full rounded-2xl border p-3" value={editBody} onChange={(event) => setEditBody(event.target.value)} /><div className="mt-4 flex justify-end gap-2"><SecondaryButton onClick={() => setEditingComment(null)}>取消</SecondaryButton><PrimaryButton disabled={!editBody.trim()} onClick={() => void editComment(studentId, pushId, editingComment.commentId, editBody.trim()).then(() => { setEditingComment(null); return loadAll(studentId, pushId); }).catch((err) => setError(err instanceof ApiError ? err.message : "编辑失败"))}>保存</PrimaryButton></div></Modal> : null}
-        {deletingComment && studentId && pushId ? <ConfirmDialog title="删除评论" message="确定删除这条评论吗？回复关系会保留，但正文将显示为已删除。" confirmLabel="删除" tone="danger" onClose={() => setDeletingComment(null)} onConfirm={() => void deleteComment(studentId, pushId, deletingComment.commentId).then(() => { setDeletingComment(null); return loadAll(studentId, pushId); }).catch((err) => setError(err instanceof ApiError ? err.message : "删除失败"))} /> : null}
+        {editingComment && studentId && pushId ? (
+          <Modal title="编辑评论" onClose={() => setEditingComment(null)} layer="critical">
+            <textarea
+              className="min-h-36 w-full rounded-2xl border p-3"
+              value={editBody}
+              onChange={(event) => setEditBody(event.target.value)}
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <SecondaryButton onClick={() => setEditingComment(null)}>取消</SecondaryButton>
+              <PrimaryButton
+                disabled={!editBody.trim()}
+                onClick={() =>
+                  void editComment(studentId, pushId, editingComment.commentId, editBody.trim())
+                    .then(() => {
+                      setEditingComment(null);
+                      return loadAll(studentId, pushId);
+                    })
+                    .catch((err) => setError(err instanceof ApiError ? err.message : "编辑失败"))
+                }
+              >
+                保存
+              </PrimaryButton>
+            </div>
+          </Modal>
+        ) : null}
+        {deletingComment && studentId && pushId ? (
+          <ConfirmDialog
+            title="删除评论"
+            message="确定删除这条评论吗？回复关系会保留，但正文将显示为已删除。"
+            confirmLabel="删除"
+            tone="danger"
+            onClose={() => setDeletingComment(null)}
+            onConfirm={() =>
+              void deleteComment(studentId, pushId, deletingComment.commentId)
+                .then(() => {
+                  setDeletingComment(null);
+                  return loadAll(studentId, pushId);
+                })
+                .catch((err) => setError(err instanceof ApiError ? err.message : "删除失败"))
+            }
+          />
+        ) : null}
       </div>
     </PageShell>
   );

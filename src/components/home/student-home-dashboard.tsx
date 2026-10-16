@@ -23,6 +23,8 @@ import {
   formatScheduleTimeRange,
   pickNextScheduleItem,
   sortScheduleForDay,
+  scheduleItemHref,
+  dayOutcomeLabel,
 } from "@/lib/schedule/home-schedule";
 
 function greetingForHour(hour: number): string {
@@ -36,7 +38,8 @@ function greetingForHour(hour: number): string {
 function TaskRow({ item, highlight }: { item: ScheduleItemDto; highlight?: boolean }) {
   const done = item.effectiveStatus === "completed";
   return (
-    <div
+    <Link
+      href={scheduleItemHref(item)}
       className={`bd-task-row ${done ? "is-done" : ""} ${highlight ? "is-current" : ""}`}
       data-testid={`home-task-row-${item.id}`}
     >
@@ -61,7 +64,7 @@ function TaskRow({ item, highlight }: { item: ScheduleItemDto; highlight?: boole
           →
         </span>
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -97,7 +100,11 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
     const schedulePromise = fetchScheduleItems(studentId, today, today)
       .then((schedule) => {
         if (id !== requestId.current) return;
-        setItems(schedule.items.filter((item) => item.familyDate === today));
+        setItems(
+          schedule.items.filter(
+            (item) => item.familyDate === today && !item.suppressedByScheduleItemId,
+          ),
+        );
         setStaleSchedule(false);
       })
       .catch(() => {
@@ -148,7 +155,10 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
   const sorted = useMemo(() => sortScheduleForDay(items), [items]);
   const nextItem = useMemo(() => pickNextScheduleItem(items), [items]);
   const completed = useMemo(
-    () => items.filter((item) => item.effectiveStatus === "completed").length,
+    () =>
+      items.filter(
+        (item) => item.effectiveStatus === "completed" && item.executionAllCompleted !== false,
+      ).length,
     [items],
   );
   const trainingOptions = buildTrainingOptions("/student/training");
@@ -232,21 +242,23 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
                 <PrimaryButton
                   type="button"
                   onClick={() => {
-                    window.location.assign("/student/plans?view=schedule");
+                    window.location.assign(scheduleItemHref(nextItem));
                   }}
                   data-testid="student-next-task-cta"
                 >
-                  查看日程 →
+                  {nextItem.effectiveStatus === "in_progress" ? "继续这项任务 →" : "打开这项任务 →"}
                 </PrimaryButton>
               </>
             ) : (
               <>
                 <span className="bd-next-tag">今日安排</span>
-                <h2>{items.length ? "今天的任务都完成啦" : "今天还没有日程"}</h2>
+                <h2>{dayOutcomeLabel(items, scheduleError)}</h2>
                 <p className="bd-task-description">
-                  {items.length
-                    ? "可以看看训练中心，或提前浏览明天的计划。"
-                    : "去计划日程看看，或请家长为你安排学习计划。"}
+                  {scheduleError
+                    ? "请先重试加载，确认今天的真实进展。"
+                    : items.length
+                      ? `已完成 ${completed} 项，跳过 ${items.filter((item) => item.effectiveStatus === "skipped").length} 项，过期 ${items.filter((item) => item.effectiveStatus === "expired").length} 项。`
+                      : "去计划日程看看，或请家长为你安排学习计划。"}
                 </p>
                 <Link className="bd-inline-link" href="/student/plans?view=schedule">
                   打开计划日程 →
@@ -276,7 +288,7 @@ export function StudentHomeDashboard({ session }: { session: SessionInfo }) {
               ) : (
                 <div className="bd-empty">
                   <span aria-hidden="true">📅</span>
-                  <h3>今天还没有安排</h3>
+                  <h3>{scheduleError ? "安排暂时加载失败" : "今天还没有安排"}</h3>
                   <p>制定或启用计划后，任务会出现在这里。</p>
                   <Link className="bd-inline-link" href="/student/plans">
                     去我的计划 →

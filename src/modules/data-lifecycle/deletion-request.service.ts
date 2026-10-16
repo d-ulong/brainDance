@@ -1,3 +1,4 @@
+import { purgeNewModuleBodiesForStudent } from "@/modules/data-lifecycle/module-data-manifest";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
@@ -168,6 +169,7 @@ export async function createDeletionRequest(
   });
 
   const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${studentId}::uuid FOR UPDATE`);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`deletion.create:${input.requestedBy}:${input.idempotencyKey}`}))`,
     );
@@ -329,6 +331,9 @@ export async function cancelDeletionRequest(
 ): Promise<{ requestId: string; status: string; idempotentReplay: boolean }> {
   return db.transaction(async (tx) => {
     await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM deletion_requests WHERE id = ${input.requestId}::uuid) FOR UPDATE`,
+    );
+    await tx.execute(
       sql`SELECT id FROM deletion_requests WHERE id = ${input.requestId}::uuid FOR UPDATE`,
     );
 
@@ -369,7 +374,7 @@ export async function cancelDeletionRequest(
       throw new DataLifecycleError("STATE_CONFLICT", "Deletion request is not cancellable");
     }
 
-    if (request.revocableUntil.getTime() < Date.now()) {
+    if (request.revocableUntil.getTime() <= Date.now()) {
       throw new DataLifecycleError("REVOCATION_EXPIRED", "Revocation window has expired");
     }
 
@@ -407,6 +412,9 @@ export async function confirmDeletionRequest(
   input: ConfirmDeletionRequestInput,
 ): Promise<{ requestId: string; studentConfirmedAt: Date; idempotentReplay: boolean }> {
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM deletion_requests WHERE id = ${input.requestId}::uuid) FOR UPDATE`,
+    );
     await tx.execute(
       sql`SELECT id FROM deletion_requests WHERE id = ${input.requestId}::uuid FOR UPDATE`,
     );
@@ -501,6 +509,9 @@ export async function adminForceDeletionExecution(
   }
 
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM deletion_requests WHERE id = ${input.requestId}::uuid) FOR UPDATE`,
+    );
     await tx.execute(
       sql`SELECT id FROM deletion_requests WHERE id = ${input.requestId}::uuid FOR UPDATE`,
     );
@@ -643,6 +654,9 @@ export async function processDeletionWorker(
 
   const result = await db.transaction(async (tx) => {
     await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM deletion_requests WHERE id = ${input.requestId}::uuid) FOR UPDATE`,
+    );
+    await tx.execute(
       sql`SELECT id FROM deletion_requests WHERE id = ${input.requestId}::uuid FOR UPDATE`,
     );
 
@@ -671,6 +685,9 @@ export async function processDeletionWorker(
       );
     }
 
+    if (!request.adminForceReason && now.getTime() < request.revocableUntil.getTime()) {
+      return { requestId: request.id, status: request.status, executed: false };
+    }
     const studentId = request.studentId;
 
     if (!(await isStepCompleted(tx, request.id, DELETION_STEP.REVOKE_SESSIONS_ARTIFACTS))) {
@@ -694,6 +711,7 @@ export async function processDeletionWorker(
         await purgeAllReflectionBodiesForStudent(tx, { studentId, now });
         await purgeTrainingPayloadsForStudent(tx, studentId);
         await purgeFamilyContentBodiesForStudent(tx, { studentId, now });
+        await purgeNewModuleBodiesForStudent(tx, studentId);
       } else {
         await purgeReflectionBodyById(tx, { reflectionId: request.targetId, now });
         await revokePrivateGrantsForReflection(tx, { reflectionId: request.targetId, now });
@@ -730,7 +748,10 @@ export async function processDeletionWorker(
           studentId,
           tombstoneVersion: 1,
           purgedAt: now,
-          payload: { requestId: request.id },
+          payload: {
+            requestId: request.id,
+            artifactPurgePendingKeys: JSON.stringify(artifactKeysToPurge),
+          },
           createdAt: now,
         })
         .onConflictDoNothing({
@@ -760,8 +781,30 @@ export async function processDeletionWorker(
     return { requestId: request.id, status: DELETION_STATUS.EXECUTED, executed: true };
   });
 
-  await purgeExportArtifactKeys(input.artifactStore, artifactKeysToPurge);
-
+  // Persist external purge intent before commit; a retry after a filesystem error
+  // must not lose keys merely because authoritative deletion is already executed.
+  const [tombstone] = await db
+    .select()
+    .from(deletionTombstones)
+    .where(eq(deletionTombstones.deletionRequestId, input.requestId))
+    .limit(1);
+  const pendingValue = tombstone?.payload?.artifactPurgePendingKeys;
+  const pending = typeof pendingValue === "string" ? (JSON.parse(pendingValue) as string[]) : [];
+  const keysToPurge = [...new Set([...artifactKeysToPurge, ...pending])];
+  if (keysToPurge.length > 0 && !input.artifactStore)
+    throw new DataLifecycleError(
+      "ARTIFACT_UNAVAILABLE",
+      "Artifact store required for pending deletion purge",
+    );
+  await purgeExportArtifactKeys(input.artifactStore, keysToPurge);
+  if (tombstone && pending.length > 0) {
+    const payload = { ...tombstone.payload };
+    delete payload.artifactPurgePendingKeys;
+    await db
+      .update(deletionTombstones)
+      .set({ payload })
+      .where(eq(deletionTombstones.id, tombstone.id));
+  }
   return result;
 }
 

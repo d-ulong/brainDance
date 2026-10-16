@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   deleteDailyReflection,
@@ -19,6 +25,8 @@ import {
 } from "@/lib/client/m4-api";
 
 export default function StudentReflectionPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,6 +83,8 @@ export default function StudentReflectionPage() {
   );
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -95,8 +105,11 @@ export default function StudentReflectionPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadGrants, loadReflection, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadGrants, loadReflection, router, sessionAttempt]);
 
   async function onSave() {
     if (!studentId) return;
@@ -170,6 +183,18 @@ export default function StudentReflectionPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="今日总结">

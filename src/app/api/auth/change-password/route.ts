@@ -1,9 +1,8 @@
-import { z } from "zod";
+import { z, ZodError } from "zod";
 
 import { jsonWithSessionCookie, requireAuthenticatedSession } from "@/lib/auth-request";
 import { toErrorResponse } from "@/lib/http-errors";
 import { changePassword } from "@/modules/identity/change-password.service";
-import { IdentityError } from "@/modules/identity/errors";
 import { PRODUCT_PASSWORD_MAX_LENGTH } from "@/modules/identity/password-policy";
 
 const bodySchema = z.object({
@@ -14,13 +13,9 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const { db, dbUser, session } = await requireAuthenticatedSession();
-    if (dbUser.role !== "student" && dbUser.role !== "parent") {
-      throw new IdentityError(
-        "FORBIDDEN",
-        "Only students or parents can change their own password",
-      );
-    }
+    const { db, dbUser, session } = await requireAuthenticatedSession({
+      allowPasswordChangeRequired: true,
+    });
     const body = bodySchema.parse(await request.json());
 
     const result = await changePassword(db, {
@@ -39,9 +34,16 @@ export async function POST(request: Request) {
         idempotentReplay: result.idempotentReplay,
       },
       result.sessionCookie,
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
+    if (error instanceof ZodError || error instanceof SyntaxError) {
+      return Response.json(
+        { error: "改密参数不正确", code: "VALIDATION_ERROR" },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const { status, body } = toErrorResponse(error);
-    return Response.json(body, { status });
+    return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
   }
 }

@@ -54,7 +54,7 @@ async function startReactionSessionReadyToSubmit(
   });
 
   let sequence = 0;
-  for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+  for (let trialIndex = 0; trialIndex < started.expectedTrialCount; trialIndex += 1) {
     await appendTrainingEvent(db, {
       studentId,
       sessionId: started.sessionId,

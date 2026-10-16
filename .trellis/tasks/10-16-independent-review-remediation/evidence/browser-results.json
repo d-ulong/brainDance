@@ -1,0 +1,47 @@
+{
+  "fixtureUI": true,
+  "results": [
+    {
+      "theme": "space",
+      "width": 1280,
+      "correction": true,
+      "shanghaiInput": true,
+      "monthSummary": true,
+      "noHorizontalOverflow": true,
+      "actionContrastMinimum": 9.680302965929378
+    },
+    {
+      "theme": "space",
+      "width": 360,
+      "correction": true,
+      "shanghaiInput": true,
+      "monthSummary": true,
+      "noHorizontalOverflow": true,
+      "actionContrastMinimum": 9.680302965929378
+    },
+    {
+      "theme": "candy",
+      "width": 1280,
+      "correction": true,
+      "shanghaiInput": true,
+      "monthSummary": true,
+      "noHorizontalOverflow": true,
+      "actionContrastMinimum": 5.011785523015319
+    },
+    {
+      "theme": "candy",
+      "width": 360,
+      "correction": true,
+      "shanghaiInput": true,
+      "monthSummary": true,
+      "noHorizontalOverflow": true,
+      "actionContrastMinimum": 5.011785523015319
+    },
+    {
+      "parentSelfRedemption": true,
+      "formSubmission": true,
+      "confirmedDebitDisplay": true
+    }
+  ],
+  "errors": []
+}

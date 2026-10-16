@@ -1,3 +1,4 @@
+import { purgeNewModuleBodiesForStudent } from "@/modules/data-lifecycle/module-data-manifest";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
@@ -234,6 +235,7 @@ export async function applyTombstonesBeforeProjectionRebuild(
         });
 
         count += await replayTrainingPayloadTombstoneForStudent(tx, tombstone.studentId);
+        await purgeNewModuleBodiesForStudent(tx, tombstone.studentId);
 
         count += await replayFamilyContentTombstoneForStudent(tx, {
           studentId: tombstone.studentId,

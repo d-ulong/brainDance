@@ -1,0 +1,229 @@
+{
+  "note": "Latest passing evidence per file; not a single final full-suite run. Later focused reruns replace prior failures.",
+  "files": {
+    "tests/integration/family-content/family-media.test.ts": {
+      "tests": 12,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/family-content/family-content.test.ts": {
+      "tests": 11,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/settlement/settlement-ledger.test.ts": {
+      "tests": 28,
+      "latestPassingLog": "final-blockers.log"
+    },
+    "tests/integration/data-lifecycle/p2-remediation.test.ts": {
+      "tests": 20,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/family-access/multi-parent-authorization.test.ts": {
+      "tests": 12,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/reflection-privacy/reflection-privacy.test.ts": {
+      "tests": 13,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/formal-plan.test.ts": {
+      "tests": 18,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/outbox/outbox-worker.test.ts": {
+      "tests": 14,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/data-lifecycle/review-remediation.test.ts": {
+      "tests": 10,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/schedule/review-remediation.test.ts": {
+      "tests": 13,
+      "latestPassingLog": "final-blockers.log"
+    },
+    "tests/integration/data-lifecycle/freeze-matrix.test.ts": {
+      "tests": 19,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/data-lifecycle/e01-tombstone-artifact-purge.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/training/m5-protocols.test.ts": {
+      "tests": 10,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/data-lifecycle/deletion-lifecycle.test.ts": {
+      "tests": 8,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/family-access/family-access.test.ts": {
+      "tests": 9,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/data-lifecycle/export-lifecycle.test.ts": {
+      "tests": 8,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/data-lifecycle/f01-token-issuance.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/identity/controlled-student.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/training/training.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/outbox/outbox-transaction.test.ts": {
+      "tests": 8,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-complete.test.ts": {
+      "tests": 8,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/training/training-session-review-matrix.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/identity/review-remediation.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/family-access/end-relationship.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/maintain-horizon.test.ts": {
+      "tests": 4,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/plan-end-date.test.ts": {
+      "tests": 6,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/identity/account-experience.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/training/idempotency-scope.test.ts": {
+      "tests": 3,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/data-lifecycle/f02-deletion-capability.test.ts": {
+      "tests": 6,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-auth.test.ts": {
+      "tests": 6,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/command-idempotency.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/outbox/outbox-claim-by-id.test.ts": {
+      "tests": 3,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/family-content/media-upload-idempotency-lock.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-skip.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-outbox.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-terminal-concurrency.test.ts": {
+      "tests": 3,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/family-content/push-library.test.ts": {
+      "tests": 2,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-generation.test.ts": {
+      "tests": 3,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/schedule/schedule-query.test.ts": {
+      "tests": 2,
+      "latestPassingLog": "integration-final.log"
+    },
+    "tests/integration/training/m5-concurrency.test.ts": {
+      "tests": 18,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/redemption/redemption-lifecycle.test.ts": {
+      "tests": 20,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/schedule/plan-library.test.ts": {
+      "tests": 13,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/training/m5-trends.test.ts": {
+      "tests": 11,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/training/p2-training-subject.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/projection/rebuild-training-projection.test.ts": {
+      "tests": 5,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/schedule/persist-expired.test.ts": {
+      "tests": 3,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/identity/identity.test.ts": {
+      "tests": 6,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/goals/goal-horizon-and-gift-redemption.test.ts": {
+      "tests": 2,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/projection/rebuild-projection.test.ts": {
+      "tests": 7,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/goals/goal-complete.test.ts": {
+      "tests": 6,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/settlement/goals-and-manual-penalties.test.ts": {
+      "tests": 2,
+      "latestPassingLog": "integration-recheck.log"
+    },
+    "tests/integration/facts/facts-flow.test.ts": {
+      "tests": 13,
+      "latestPassingLog": "final-blockers.log"
+    }
+  },
+  "filesWithPassingEvidence": 52,
+  "testsAcrossLatestPassingFiles": 440,
+  "rawLogSha256": {
+    "browser.log": "fb9514702fb3ead2f0d3374895acb27a0523d74b9815bf5a6ffb9d85470d679b",
+    "dev.log": "8bc6612735391851d54e431c50f9575b03c6fe1075ee3f3ce79611ffd78e643f",
+    "final-blockers.log": "7caf3dffa7ab297266f9e5406fef91d40b9b4368637abc1bc7f04e328ee1ff6b",
+    "integration-final.log": "bfea522931ee39b7cf21da942e094b4c7d0ae3a7ac13fd67b857a1f5349ae2ee",
+    "integration-recheck.log": "abc480ce9ca1785fe3dc0a21dcb1824985e92d9deef4613c26003977232633c9",
+    "integration.log": "521f7fe50cce4e84888234d0dc334fa200158dd596ee21b805d0f8bd9415d32b",
+    "lint-final.log": "27b291f49c92046bbd39e07726641d05483ffcf8b7300ed64ec6ef520e14b328",
+    "lint.log": "50a4400f0ba48a1fa3d6587da3476ea231865cfba8a6c3832fccaa51f41cbe69",
+    "review-integration.log": "2a05e2733c61d31eca9bdb7a028775122f1d39336be102b8421a3633f7c8da8c",
+    "session-browser-recheck.log": "78f386cd4d00318015c62722be0957e6d611b23c893a8e94d4883df46ad228b1",
+    "session-browser.log": "c1bed9ee7a0b7be0a17378311a332b1cc86bbf40763565519e71e7e4f6aeeea4",
+    "unit.log": "425e8ee544c3d45164fbde3a262cdde2ad9132c3362c0005dd44220e2f0443ae"
+  }
+}

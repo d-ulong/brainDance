@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { StudentManagementTabs } from "@/components/ui/student-management-tabs";
 import { apiFetch, fetchSession } from "@/lib/client/api";
 
@@ -16,12 +16,16 @@ type LinkedStudent = {
 };
 
 export default function ParentStudentsPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [students, setStudents] = useState<LinkedStudent[]>([]);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") {
@@ -41,9 +45,24 @@ export default function ParentStudentsPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [router, sessionAttempt]);
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="已关联学生">

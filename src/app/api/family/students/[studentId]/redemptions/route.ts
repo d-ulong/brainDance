@@ -5,7 +5,7 @@ import { createRedemptionBodySchema } from "@/app/api/_lib/m6-schemas";
 import { requireIdempotencyKey } from "@/app/api/_lib/require-idempotency-key";
 import { toRouteErrorResponse } from "@/app/api/_lib/to-route-error-response";
 import { requireStudentReadAccess } from "@/app/api/_lib/student-read-access";
-import { requireAuthenticatedSession, requireStudentSessionForWrites } from "@/lib/auth-request";
+import { requireAuthenticatedSession, requireTraineeSessionForWrites } from "@/lib/auth-request";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { createRedemptionRequest, listRedemptions } from "@/modules/redemption/redemption.service";
 
@@ -18,7 +18,8 @@ export async function GET(_request: Request, context: RouteContext) {
     const { db, dbUser } = await requireAuthenticatedSession();
     const { studentId: rawStudentId } = await context.params;
     const studentId = m2UuidParamSchema.parse(rawStudentId);
-    await requireStudentReadAccess(db, dbUser, studentId);
+    if (!(dbUser.role === "parent" && dbUser.id === studentId))
+      await requireStudentReadAccess(db, dbUser, studentId);
 
     const redemptions = await listRedemptions(db, studentId);
     return NextResponse.json({ redemptions });
@@ -35,12 +36,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    const { db, dbUser } = await requireStudentSessionForWrites();
+    const { db, dbUser } = await requireTraineeSessionForWrites();
     const { studentId: rawStudentId } = await context.params;
     const studentId = m2UuidParamSchema.parse(rawStudentId);
     const body = createRedemptionBodySchema.parse(await request.json());
 
-    if (dbUser.role !== "student" || dbUser.id !== studentId) {
+    if ((dbUser.role !== "student" && dbUser.role !== "parent") || dbUser.id !== studentId) {
       throw new FamilyAccessError("FORBIDDEN", "Student access denied");
     }
 

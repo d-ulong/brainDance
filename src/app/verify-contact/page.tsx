@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -14,6 +15,8 @@ import {
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 
 export default function VerifyContactPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [otp, setOtp] = useState("");
   const [devOtp, setDevOtp] = useState<string | null>(null);
@@ -22,10 +25,16 @@ export default function VerifyContactPage() {
   const [issuing, setIssuing] = useState(true);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setIssuing(true);
     void (async () => {
       const session = await fetchSession();
       if (!session) {
         router.replace("/login");
+        return;
+      }
+      if (session.mustChangePassword) {
+        router.replace("/change-password");
         return;
       }
       if (session.contactVerified) {
@@ -46,8 +55,11 @@ export default function VerifyContactPage() {
       } finally {
         setIssuing(false);
       }
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setIssuing(false);
+    });
+  }, [router, sessionAttempt]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -69,6 +81,18 @@ export default function VerifyContactPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setIssuing(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (issuing) {
     return (
       <PageShell title="验证联系方式">

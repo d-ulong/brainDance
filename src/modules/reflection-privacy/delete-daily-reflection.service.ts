@@ -1,3 +1,4 @@
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
@@ -30,6 +31,7 @@ export async function deleteDailyReflection(
   input: DeleteDailyReflectionInput,
 ): Promise<DeleteDailyReflectionResult> {
   assertEditableFamilyDate(input.familyDate);
+  await assertSubjectAccess(db, input.studentId, "read");
 
   const replayId = await findReflectionReplayByAudit(db, input.idempotencyKey, "reflection.delete");
   if (replayId) {
@@ -47,6 +49,7 @@ export async function deleteDailyReflection(
     }
 
     await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId} FOR UPDATE`);
+    await assertSubjectAccess(tx, input.studentId, "read");
 
     const existing = await findReflectionByStudentDate(tx, input.studentId, input.familyDate);
     if (!existing) {

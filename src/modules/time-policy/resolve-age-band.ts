@@ -3,7 +3,10 @@ import { familyTimezone } from "@/modules/time-policy/to-family-date";
 export type AgeBand = "5-8" | "9-12" | "13-18";
 
 export function resolveAgeBand(birthDate: Date, referenceDate: Date = new Date()): AgeBand {
-  const ageYears = ageInYearsAt(birthDate, referenceDate);
+  // Training bands change on the family day after a birthday. Eligibility at 19
+  // deliberately uses ageInYearsAt(now), so it closes on the birthday itself.
+  const previousFamilyDay = new Date(referenceDate.getTime() - 24 * 60 * 60 * 1000);
+  const ageYears = ageInYearsAt(birthDate, previousFamilyDay);
   if (ageYears <= 8) {
     return "5-8";
   }

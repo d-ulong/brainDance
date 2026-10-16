@@ -4,6 +4,7 @@ import path from "node:path";
 import { config } from "dotenv";
 
 import { assertPortFree, killProcessTree, logPortStatus } from "./e2e-port.mts";
+import { isolatedE2eTotpConfig } from "../tests/helpers/e2e-auth-config";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -22,7 +23,12 @@ const sharedEnv = {
   ...processEnv,
   SESSION_SECRET: sessionSecret,
   SESSION_COOKIE_SECURE: "false",
+  ADMIN_TOTP_SECRETS: isolatedE2eTotpConfig(),
   EXPOSE_DEV_OTP: "true",
+  BRAIN_DANCE_MEDIA_ROOT:
+    process.env.BRAIN_DANCE_MEDIA_ROOT ?? path.join(process.cwd(), ".braindance-media", "e2e"),
+  BRAIN_DANCE_MEDIA_SCANNER: "test-clean",
+  BRAIN_DANCE_ALLOW_TEST_MEDIA_SCANNER: "true",
   BRAIN_DANCE_ARTIFACT_ROOT: artifactRoot,
 } satisfies Record<string, string | undefined>;
 
@@ -48,7 +54,7 @@ async function waitForServer(url: string, timeoutMs = 180_000): Promise<void> {
 function startServer(): ChildProcess {
   assertPortFree(port);
 
-  const child = spawn(process.execPath, [nextBin, "start", "-p", port], {
+  const child = spawn(process.execPath, [nextBin, "dev", "-p", port], {
     stdio: "inherit",
     env: sharedEnv as NodeJS.ProcessEnv,
     detached: process.platform !== "win32",

@@ -8,6 +8,7 @@ import { MediaPreviewList } from "@/components/family-content/media-preview";
 import { VideoLinkPreview } from "@/components/family-content/video-link-preview";
 import { Modal } from "@/components/ui/modal";
 import {
+  SessionLoadError,
   Field,
   LoadingState,
   PageShell,
@@ -31,6 +32,8 @@ import { editPush, getPush, uploadMedia, type FamilyPushDto } from "@/lib/client
 import { MAX_PUSH_IMAGES } from "@/modules/family-content/constants";
 
 export default function ParentPushLibraryPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [entries, setEntries] = useState<PushLibraryEntryDto[]>([]);
   const [students, setStudents] = useState<LinkedStudentDto[]>([]);
@@ -63,6 +66,8 @@ export default function ParentPushLibraryPage() {
     setStudents(response.students);
   }, []);
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") return router.replace("/login");
@@ -88,8 +93,11 @@ export default function ParentPushLibraryPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [router, sessionAttempt]);
   useEffect(() => {
     let active = true;
     setDetailPush(null);
@@ -273,6 +281,18 @@ export default function ParentPushLibraryPage() {
       setSaving(false);
     }
   }
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading)
     return (
       <PageShell title="家长推送">

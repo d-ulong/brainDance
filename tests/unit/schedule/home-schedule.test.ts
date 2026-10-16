@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { ScheduleItemDto } from "@/lib/client/m2-api";
-import { pickNextScheduleItem, sortScheduleForDay } from "@/lib/schedule/home-schedule";
+import {
+  pickNextScheduleItem,
+  sortScheduleForDay,
+  dayOutcomeLabel,
+  scheduleItemHref,
+} from "@/lib/schedule/home-schedule";
 
 function item(
   partial: Partial<ScheduleItemDto> & Pick<ScheduleItemDto, "id" | "scheduledAt">,
@@ -26,6 +31,26 @@ function item(
 }
 
 describe("home schedule helpers", () => {
+  it("does not call skipped tasks completed or suppressed tasks actionable", () => {
+    const skipped = item({
+      id: "skipped",
+      scheduledAt: "2026-09-19T08:00:00+08:00",
+      effectiveStatus: "skipped",
+    });
+    expect(dayOutcomeLabel([skipped], false)).not.toContain("都完成");
+    expect(dayOutcomeLabel([], true)).toBe("今日安排暂时无法确认");
+    expect(
+      pickNextScheduleItem([
+        item({
+          id: "covered",
+          scheduledAt: skipped.scheduledAt,
+          suppressedByScheduleItemId: "other",
+        }),
+      ]),
+    ).toBeNull();
+    expect(scheduleItemHref(skipped)).toContain("item=skipped");
+    expect(scheduleItemHref(skipped)).toContain("date=2026-09-19");
+  });
   it("sorts by scheduled time", () => {
     const sorted = sortScheduleForDay([
       item({ id: "b", scheduledAt: "2026-09-19T18:00:00+08:00" }),

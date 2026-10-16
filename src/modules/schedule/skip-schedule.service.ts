@@ -10,7 +10,7 @@ import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency
 import { persistExpiredPastWindow } from "@/modules/schedule/persist-expired.service";
 import { ScheduleError } from "@/modules/schedule/errors";
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 
 export type SkipScheduleInput = {
   actorId: string;
@@ -128,12 +128,14 @@ export async function skipScheduleItem(
   }
 
   await assertSkipAuthorization(db, input.actorId, preflightItem);
-  await assertStudentAccountNotFrozen(db, preflightItem.studentId, "write");
+  await assertSubjectAccess(db, preflightItem.studentId, "write", now);
 
   let expiredStudentId: string | null = null;
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectAccess(tx, preflightItem.studentId, "write", now);
+      await assertSkipAuthorization(tx, input.actorId, preflightItem);
       const item = await lockScheduleItem(tx, input.scheduleItemId);
 
       const [existingEvent] = await tx
@@ -155,6 +157,8 @@ export async function skipScheduleItem(
         return loadSkipReplay(tx, input.scheduleItemId, input.idempotencyKey);
       }
 
+      if (item.suppressedByScheduleItemId)
+        throw new ScheduleError("STATE_CONFLICT", "该日程已被更高优先级计划覆盖");
       if (item.status !== "pending") {
         throw new ScheduleError("STATE_CONFLICT", "Schedule item is not pending");
       }

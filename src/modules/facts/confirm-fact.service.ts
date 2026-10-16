@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import { factVersions } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { FactsError } from "@/modules/facts/errors";
@@ -51,9 +52,18 @@ export async function confirmFact(
   input: ConfirmFactInput,
 ): Promise<ConfirmFactResult> {
   const now = input.now ?? new Date();
+  const [subject] = await db
+    .select({ studentId: factVersions.studentId })
+    .from(factVersions)
+    .where(eq(factVersions.id, input.factId))
+    .limit(1);
+  if (!subject) throw new FactsError("NOT_FOUND", "Fact not found");
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, subject.studentId, "write", now);
     const fact = await lockFact(tx, input.factId);
+    if (fact.studentId !== subject.studentId)
+      throw new FactsError("STATE_CONFLICT", "Fact subject changed");
 
     if (fact.factKey !== "schedule.error_count" || fact.sourceKind !== "manual") {
       throw new FactsError("VALIDATION_ERROR", "Only manual error_count facts can be confirmed");

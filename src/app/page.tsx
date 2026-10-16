@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ParentHomeDashboard } from "@/components/home/parent-home-dashboard";
 import { StudentHomeDashboard } from "@/components/home/student-home-dashboard";
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession, type SessionInfo } from "@/lib/client/api";
 
 function PublicWelcome() {
@@ -31,14 +31,32 @@ function PublicWelcome() {
 }
 
 export default function HomePage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
   useEffect(() => {
-    void fetchSession().then((value) => {
-      if (value?.mustChangePassword) router.replace("/student/change-password");
-      setSession(value);
-    });
-  }, [router]);
+    setSessionFailed(false);
+    void fetchSession()
+      .then((value) => {
+        if (value?.mustChangePassword) router.replace("/change-password");
+        setSession(value);
+      })
+      .catch(() => {
+        setSessionFailed(true);
+      });
+  }, [router, sessionAttempt]);
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (session === undefined || session?.mustChangePassword)
     return (
       <PageShell title="今天" hideHeading>
@@ -96,6 +114,15 @@ export default function HomePage() {
   if (session.role === "admin")
     return (
       <PageShell title="管理概览" showLogout>
+        <section className="bd-panel">
+          <h2 className="text-lg font-bold">账号管理</h2>
+          <p className="bd-caption my-3">
+            查看所有成员账号，重置临时密码。成员登录后自行设置新密码。
+          </p>
+          <Link className="bd-inline-link" href="/admin/accounts">
+            查看账号 →
+          </Link>
+        </section>
         <section className="bd-panel">
           <h2 className="text-lg font-bold">邀请制家庭空间</h2>
           <p className="bd-caption my-3">

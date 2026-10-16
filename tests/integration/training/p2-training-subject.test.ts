@@ -25,10 +25,7 @@ import {
   submitTrainingSessionForSubject,
 } from "@/modules/training/session.service";
 import { rebuildTrainingProfileProjectionForTrainee } from "@/modules/training/trends.service";
-import {
-  resolveTrainingSubject,
-  type TrainingSubject,
-} from "@/modules/training/training-subject";
+import { resolveTrainingSubject, type TrainingSubject } from "@/modules/training/training-subject";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -55,9 +52,10 @@ describe.skipIf(!hasDb)("P2 training subject isolation", () => {
   async function appendMinimalReactionEvents(
     subject: Awaited<ReturnType<typeof resolveTrainingSubject>>,
     sessionId: string,
+    trialCount: number,
   ) {
     let sequence = 0;
-    for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+    for (let trialIndex = 0; trialIndex < trialCount; trialIndex += 1) {
       await appendTrainingEventForSubject(db, {
         subject,
         sessionId,
@@ -105,7 +103,7 @@ describe.skipIf(!hasDb)("P2 training subject isolation", () => {
     expect(row?.studentId).toBeNull();
     expect(row?.ageBand).toBe("adult");
 
-    await appendMinimalReactionEvents(subject, started.sessionId);
+    await appendMinimalReactionEvents(subject, started.sessionId, started.expectedTrialCount);
     const submitted = await submitTrainingSessionForSubject(db, {
       subject,
       sessionId: started.sessionId,
@@ -208,7 +206,11 @@ describe.skipIf(!hasDb)("P2 training subject isolation", () => {
       trainingKey: REACTION_TRAINING_KEY,
       idempotencyKey: "side-parent-start",
     });
-    await appendMinimalReactionEvents(parentSubject, parentStarted.sessionId);
+    await appendMinimalReactionEvents(
+      parentSubject,
+      parentStarted.sessionId,
+      parentStarted.expectedTrialCount,
+    );
     const parentSubmitted = await submitTrainingSessionForSubject(db, {
       subject: parentSubject,
       sessionId: parentStarted.sessionId,

@@ -1,6 +1,7 @@
 import { isPastCompletionWindow } from "@/modules/time-policy/completion-window";
 
-export type ScheduleItemStatus = "pending" | "in_progress" | "completed" | "skipped" | "expired" | "cancelled";
+export type ScheduleItemStatus =
+  "pending" | "in_progress" | "completed" | "skipped" | "expired" | "cancelled";
 
 /**
  * Read-only effective status for schedule items (GET paths).
@@ -13,12 +14,12 @@ export function effectiveStatus(
     return item.status as ScheduleItemStatus;
   }
 
-  if (item.startedAt) {
-    return "in_progress";
-  }
-
   if (isPastCompletionWindow(item.familyDate, now)) {
     return "expired";
+  }
+
+  if (item.startedAt) {
+    return "in_progress";
   }
 
   return "pending";

@@ -21,7 +21,7 @@ import { nextFamilyDate } from "@/modules/time-policy/next-family-date";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { users } from "@/db/schema";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 
 export type CreateFormalPlanBody = {
   title: string;
@@ -249,7 +249,7 @@ export async function createFormalPlan(
     throw error;
   }
 
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write", now);
 
   const bodyHash = hashIdempotencyPayload(input.body);
 
@@ -290,6 +290,8 @@ export async function createFormalPlan(
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectAccess(tx, input.studentId, "write", now);
+      await requireActiveRelationship(tx, input.ownerId, input.studentId);
       const createdAt = now;
       const [plan] = await tx
         .insert(plans)
@@ -429,6 +431,14 @@ export async function editFormalPlan(
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.ownerId);
   await assertPlanOwner(db, input.planId, input.ownerId);
+  const [subjectPlan] = await db
+    .select({ studentId: plans.studentId })
+    .from(plans)
+    .where(eq(plans.id, input.planId))
+    .limit(1);
+  if (!subjectPlan) throw new ScheduleError("NOT_FOUND", "Plan not found");
+  await assertSubjectAccess(db, subjectPlan.studentId, "write", now);
+  await requireActiveRelationship(db, input.ownerId, subjectPlan.studentId);
 
   const bodyHash = hashIdempotencyPayload(input.body);
 
@@ -441,6 +451,8 @@ export async function editFormalPlan(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, subjectPlan.studentId, "write", now);
+    await requireActiveRelationship(tx, input.ownerId, subjectPlan.studentId);
     await tx.execute(sql`SELECT id FROM plans WHERE id = ${input.planId} FOR UPDATE`);
 
     const lockedReplay = await findEditVersionReplay(
@@ -616,6 +628,14 @@ export async function deactivateFormalPlan(
   const now = input.now ?? new Date();
   await requireVerifiedParent(db, input.ownerId);
   await assertPlanOwner(db, input.planId, input.ownerId);
+  const [subjectPlan] = await db
+    .select({ studentId: plans.studentId })
+    .from(plans)
+    .where(eq(plans.id, input.planId))
+    .limit(1);
+  if (!subjectPlan) throw new ScheduleError("NOT_FOUND", "Plan not found");
+  await assertSubjectAccess(db, subjectPlan.studentId, "write", now);
+  await requireActiveRelationship(db, input.ownerId, subjectPlan.studentId);
 
   const bodyHash = hashIdempotencyPayload({});
 
@@ -633,6 +653,8 @@ export async function deactivateFormalPlan(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, subjectPlan.studentId, "write", now);
+    await requireActiveRelationship(tx, input.ownerId, subjectPlan.studentId);
     await tx.execute(sql`SELECT id FROM plans WHERE id = ${input.planId} FOR UPDATE`);
 
     const [plan] = await tx.select().from(plans).where(eq(plans.id, input.planId)).limit(1);

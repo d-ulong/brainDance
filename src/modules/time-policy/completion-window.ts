@@ -2,28 +2,27 @@ import { addFamilyDays } from "@/modules/time-policy/add-family-days";
 import { familyLocalInstant } from "@/modules/time-policy/family-local-instant";
 
 /**
- * Returns the inclusive end of the completion window in UTC.
- * Window ends at familyDate + 1 family day 23:59:59.999 in the family timezone.
+ * Exclusive ordinary completion cutoff: next family day at 22:00.
  */
 export function completionWindowEnd(familyDate: string): Date {
   const lastFamilyDate = addFamilyDays(familyDate, 1);
-  return familyLocalInstant(lastFamilyDate, "23:59:59.999");
+  return familyLocalInstant(lastFamilyDate, "22:00:00.000");
 }
 
 /**
- * True when `now` is within the inclusive completion window for `familyDate`.
+ * True from task-day midnight up to, but excluding, the next-day cutoff.
  */
 export function isWithinCompletionWindow(familyDate: string, now: Date): boolean {
   const start = familyLocalInstant(familyDate, "00:00:00.000");
   const end = completionWindowEnd(familyDate);
   const timestamp = now.getTime();
 
-  return timestamp >= start.getTime() && timestamp <= end.getTime();
+  return timestamp >= start.getTime() && timestamp < end.getTime();
 }
 
 /**
- * True when `now` is strictly after the completion window end.
+ * True when the ordinary completion window has closed, including the boundary.
  */
 export function isPastCompletionWindow(familyDate: string, now: Date): boolean {
-  return now.getTime() > completionWindowEnd(familyDate).getTime();
+  return now.getTime() >= completionWindowEnd(familyDate).getTime();
 }

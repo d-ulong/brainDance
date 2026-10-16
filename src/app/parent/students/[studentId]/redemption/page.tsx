@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -32,6 +33,8 @@ export default function ParentRedemptionPage({
 }: {
   params: Promise<{ studentId: string }>;
 }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +74,8 @@ export default function ParentRedemptionPage({
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       const sid = resolved.studentId;
@@ -93,8 +98,11 @@ export default function ParentRedemptionPage({
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadData, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadData, params, router, sessionAttempt]);
 
   function resetCatalogForm() {
     setEditingItem(null);
@@ -188,6 +196,18 @@ export default function ParentRedemptionPage({
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="兑换项目">
@@ -207,13 +227,13 @@ export default function ParentRedemptionPage({
   }
 
   return (
-      <PageShell
+    <PageShell
       title="兑换项目"
       subtitle="管理目录与审批申请"
       backHref="/parent/students"
       showLogout
-      >
-        {studentId ? <StudentContextBanner studentId={studentId} label="正在管理兑换的学生" /> : null}
+    >
+      {studentId ? <StudentContextBanner studentId={studentId} label="正在管理兑换的学生" /> : null}
       <ErrorDialog message={error} onClose={() => setError(null)} />
       {studentId ? <PointsTodayCard studentId={studentId} /> : null}
 
@@ -225,7 +245,11 @@ export default function ParentRedemptionPage({
       <section className="rounded-xl border border-neutral-300 bg-white p-4">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold">{editingItem ? "编辑兑换项目" : "创建兑换项目"}</h2>
-          {editingItem ? <button type="button" className="min-h-11 text-sm underline" onClick={resetCatalogForm}>取消编辑</button> : null}
+          {editingItem ? (
+            <button type="button" className="min-h-11 text-sm underline" onClick={resetCatalogForm}>
+              取消编辑
+            </button>
+          ) : null}
         </div>
         <form className="mt-3 flex flex-col gap-4" onSubmit={onSaveCatalog}>
           <Field label="名称">

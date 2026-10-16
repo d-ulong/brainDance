@@ -188,10 +188,10 @@ function boundedRaceOptions(
 async function prepareReactionSessionForSubmit(
   db: TestDb,
   studentId: string,
-  input: { sessionId: string; startIdempotencyKey: string },
+  input: { sessionId: string; expectedTrialCount: number; startIdempotencyKey: string },
 ) {
   let sequence = 0;
-  for (let trialIndex = 0; trialIndex < 5; trialIndex += 1) {
+  for (let trialIndex = 0; trialIndex < input.expectedTrialCount; trialIndex += 1) {
     await appendTrainingEvent(db, {
       studentId,
       sessionId: input.sessionId,
@@ -249,16 +249,17 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
 
     await prepareReactionSessionForSubmit(db, student.studentId, {
       sessionId: startedA.sessionId,
+      expectedTrialCount: startedA.expectedTrialCount,
       startIdempotencyKey: "concurrent-dual-start-a",
     });
     await prepareReactionSessionForSubmit(db, student.studentId, {
       sessionId: startedB.sessionId,
+      expectedTrialCount: startedB.expectedTrialCount,
       startIdempotencyKey: "concurrent-dual-start-b",
     });
 
-    // Gate the first lock in production submit order (full-rebuild), not the
-    // per-student competition lock — the global exclusive lock serializes runners
-    // before they can both wait on competition.
+    // The subject row precedes the global projection lock. Observe both direct
+    // advisory waits and transitive subject-row waits against the gate.
     const results = await runConcurrentSubmitsWithContentionEvidence(
       buildFullRebuildProjectionLockKey(),
       [
@@ -275,6 +276,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
             idempotencyKey: "concurrent-dual-submit-b",
           }),
       ],
+      { includeDependentLocks: true },
     );
 
     expect(results.every((result) => result.status === "completed")).toBe(true);
@@ -336,6 +338,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
 
     await prepareReactionSessionForSubmit(db, student.studentId, {
       sessionId: started.sessionId,
+      expectedTrialCount: started.expectedTrialCount,
       startIdempotencyKey: "concurrent-idem-start",
     });
 
@@ -355,6 +358,7 @@ describe.skipIf(!hasDb)("M5 training concurrency", () => {
             idempotencyKey: "concurrent-idem-submit",
           }),
       ],
+      { includeDependentLocks: true },
     );
 
     expect(results).toHaveLength(2);

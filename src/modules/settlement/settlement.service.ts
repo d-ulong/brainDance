@@ -1,15 +1,24 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions, planItemRules, scheduleItems, settlements } from "@/db/schema";
+import {
+  factVersions,
+  planItemRules,
+  pointRules,
+  pointRuleVersions,
+  scheduleItems,
+  settlements,
+} from "@/db/schema";
 import type { SettleForFactInput } from "@/modules/schedule/complete-schedule.service";
 import {
   appendLedgerForSettlement,
   loadExistingLedgerForSettlement,
+  lockLedgerSubject,
 } from "@/modules/settlement/ledger.service";
 import {
   loadActivePointRuleForStudent,
   SCHEDULE_SYSTEM_COMPLETE_V1,
+  type ActivePointRuleContext,
 } from "@/modules/settlement/point-rule.service";
 import { SettlementError } from "@/modules/settlement/errors";
 import { scorePlanEntry, type PlanEntry } from "@/modules/schedule/plan-definition";
@@ -28,6 +37,8 @@ type FactSettlementContext = {
   idempotencyKey: string;
   factKey: string;
   occurredAt: Date;
+  value: Record<string, unknown>;
+  supersedesFactVersionId: string | null;
 };
 
 function resolveRewardAmount(
@@ -92,18 +103,124 @@ async function loadFactSettlementContext(
     idempotencyKey: fact.idempotencyKey,
     factKey: fact.factKey,
     occurredAt: fact.occurredAt,
+    value: fact.value,
+    supersedesFactVersionId: fact.supersedesFactVersionId,
   };
 }
 
-async function settlePlanEntryFact(tx: Database, ctx: FactSettlementContext): Promise<SettleForFactResult | null> {
-  const [rule] = await tx.select().from(planItemRules).where(eq(planItemRules.scheduleItemId, ctx.scheduleItemId)).limit(1);
+/** Corrections inherit the predecessor's settled rule, including superseded versions. */
+async function loadCompletionRuleForFact(
+  tx: Database,
+  ctx: FactSettlementContext,
+): Promise<ActivePointRuleContext | null> {
+  if (!ctx.supersedesFactVersionId)
+    return loadActivePointRuleForStudent(tx, ctx.studentId, SCHEDULE_SYSTEM_COMPLETE_V1);
+  const previous = await tx
+    .select({
+      settlement: settlements,
+      fact: factVersions,
+      version: pointRuleVersions,
+      rule: pointRules,
+    })
+    .from(settlements)
+    .innerJoin(factVersions, eq(factVersions.id, settlements.factVersionId))
+    .innerJoin(pointRuleVersions, eq(pointRuleVersions.id, settlements.ruleVersionId))
+    .innerJoin(pointRules, eq(pointRules.id, pointRuleVersions.pointRuleId))
+    .where(
+      and(
+        eq(settlements.factVersionId, ctx.supersedesFactVersionId),
+        eq(settlements.result, "reward"),
+      ),
+    )
+    .limit(2);
+  const frozen = previous[0];
+  if (
+    previous.length !== 1 ||
+    !frozen ||
+    frozen.settlement.studentId !== ctx.studentId ||
+    frozen.fact.studentId !== ctx.studentId ||
+    frozen.fact.scheduleItemId !== ctx.scheduleItemId ||
+    frozen.fact.factKey !== "schedule.completed" ||
+    frozen.rule.studentId !== ctx.studentId ||
+    frozen.rule.templateId !== SCHEDULE_SYSTEM_COMPLETE_V1
+  )
+    throw new SettlementError(
+      "STATE_CONFLICT",
+      "Correction is missing an unambiguous historical completion rule",
+    );
+  return {
+    ruleId: frozen.rule.id,
+    ruleVersionId: frozen.version.id,
+    templateId: frozen.rule.templateId,
+    parameters: frozen.version.parameters,
+    effect: frozen.version.effect as ActivePointRuleContext["effect"],
+  };
+}
+
+async function settlePlanEntryFact(
+  tx: Database,
+  ctx: FactSettlementContext,
+): Promise<SettleForFactResult | null> {
+  const [rule] = await tx
+    .select()
+    .from(planItemRules)
+    .where(eq(planItemRules.scheduleItemId, ctx.scheduleItemId))
+    .limit(1);
   if (!rule) return null;
-  if (ctx.factKey !== "schedule.completed" && ctx.factKey !== "schedule.incomplete") throw new SettlementError("STATE_CONFLICT", "计划事实不可结算");
-  const scored = scorePlanEntry(rule.entry as PlanEntry, { startedAt: rule.startedAt, completedAt: ctx.factKey === "schedule.completed" ? ctx.occurredAt : null, familyDate: ctx.familyDate });
+  if (ctx.factKey !== "schedule.completed" && ctx.factKey !== "schedule.incomplete")
+    throw new SettlementError("STATE_CONFLICT", "计划事实不可结算");
+  const execution = ctx.value.execution as { all_completed?: boolean } | undefined;
+  const completed = ctx.factKey === "schedule.completed" && execution?.all_completed !== false;
+  // New facts capture their own execution; legacy facts retain the frozen occurrence start.
+  const startedAt =
+    typeof ctx.value.started_at === "string" ? new Date(ctx.value.started_at) : rule.startedAt;
+  const completedAt =
+    typeof ctx.value.completed_at === "string" ? new Date(ctx.value.completed_at) : ctx.occurredAt;
+  const scored = scorePlanEntry(rule.entry as PlanEntry, {
+    startedAt,
+    completedAt: completed ? completedAt : null,
+    familyDate: ctx.familyDate,
+  });
   const explanation = `Plan item ${scored.condition}: ${scored.amount} points`;
-  const [inserted] = await tx.insert(settlements).values({ studentId: ctx.studentId, factVersionId: ctx.factVersionId, ruleVersionId: rule.ruleVersionId, settlementPeriod: ctx.familyDate, result: "reward", explanation, idempotencyKey: ctx.idempotencyKey }).onConflictDoNothing({ target: [settlements.factVersionId, settlements.ruleVersionId, settlements.settlementPeriod, settlements.result] }).returning({ id: settlements.id });
-  const settlement = inserted ?? await findExistingSettlement(tx, { factVersionId: ctx.factVersionId, ruleVersionId: rule.ruleVersionId, settlementPeriod: ctx.familyDate, result: "reward" });
-  const ledger = await appendLedgerForSettlement(tx, { studentId: ctx.studentId, settlementId: settlement.id, amount: scored.amount, completionKind: ctx.factKey === "schedule.completed" && ctx.completionKind === "late" ? "late" : "on_time", idempotencyKey: ctx.idempotencyKey, reason: "plan_entry", explanation });
+  await lockLedgerSubject(tx, ctx.studentId);
+  const [inserted] = await tx
+    .insert(settlements)
+    .values({
+      studentId: ctx.studentId,
+      factVersionId: ctx.factVersionId,
+      ruleVersionId: rule.ruleVersionId,
+      settlementPeriod: ctx.familyDate,
+      result: "reward",
+      explanation,
+      idempotencyKey: ctx.idempotencyKey,
+    })
+    .onConflictDoNothing({
+      target: [
+        settlements.factVersionId,
+        settlements.ruleVersionId,
+        settlements.settlementPeriod,
+        settlements.result,
+      ],
+    })
+    .returning({ id: settlements.id });
+  const settlement =
+    inserted ??
+    (await findExistingSettlement(tx, {
+      factVersionId: ctx.factVersionId,
+      ruleVersionId: rule.ruleVersionId,
+      settlementPeriod: ctx.familyDate,
+      result: "reward",
+    }));
+  const ledger = await appendLedgerForSettlement(tx, {
+    studentId: ctx.studentId,
+    settlementId: settlement.id,
+    amount: scored.amount,
+    completionKind:
+      ctx.factKey === "schedule.completed" && ctx.completionKind === "late" ? "late" : "on_time",
+    idempotencyKey: ctx.idempotencyKey,
+    reason: "plan_entry",
+    explanation,
+  });
   return { settlementId: settlement.id, ledgerEntryId: ledger.ledgerEntryId };
 }
 
@@ -150,11 +267,7 @@ export async function settleForFact(
     throw new SettlementError("STATE_CONFLICT", "Fact completion kind is invalid");
   }
 
-  const activeRule = await loadActivePointRuleForStudent(
-    tx,
-    ctx.studentId,
-    SCHEDULE_SYSTEM_COMPLETE_V1,
-  );
+  const activeRule = await loadCompletionRuleForFact(tx, ctx);
 
   if (!activeRule) {
     throw new SettlementError("NO_ACTIVE_RULE", "No active point rule for student");
@@ -164,13 +277,18 @@ export async function settleForFact(
     throw new SettlementError("VALIDATION_ERROR", "Unsupported active point rule template");
   }
 
-  const amount = resolveRewardAmount(ctx.completionKind, activeRule.effect);
+  const execution = ctx.value.execution as { all_completed?: boolean } | undefined;
+  const amount =
+    execution?.all_completed === false
+      ? 0
+      : resolveRewardAmount(ctx.completionKind, activeRule.effect);
   const explanation = buildSettlementExplanation(ctx.completionKind);
 
   if (options?.testHooks?.beforeSettlementInsert) {
     await options.testHooks.beforeSettlementInsert();
   }
 
+  await lockLedgerSubject(tx, ctx.studentId);
   const [insertedSettlement] = await tx
     .insert(settlements)
     .values({
@@ -229,7 +347,7 @@ export async function loadSettlementReplayForFact(
   const [settlement] = await tx
     .select({ id: settlements.id })
     .from(settlements)
-    .where(eq(settlements.factVersionId, factVersionId))
+    .where(and(eq(settlements.factVersionId, factVersionId), eq(settlements.result, "reward")))
     .limit(1);
 
   if (!settlement) {

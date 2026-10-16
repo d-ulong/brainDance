@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import {
@@ -19,6 +25,8 @@ import {
 } from "@/lib/client/m6-api";
 
 export default function ParentExportPage({ params }: { params: Promise<{ studentId: string }> }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,6 +94,8 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
   );
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       const sid = resolved.studentId;
@@ -120,12 +130,15 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
       } finally {
         setLoading(false);
       }
-    })();
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
 
     return () => {
       clearPollTimer();
     };
-  }, [clearPollTimer, params, router, startPolling]);
+  }, [clearPollTimer, params, router, startPolling, sessionAttempt]);
 
   async function onCreateExport() {
     if (!studentId) return;
@@ -180,6 +193,18 @@ export default function ParentExportPage({ params }: { params: Promise<{ student
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="数据导出">

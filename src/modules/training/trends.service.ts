@@ -1,16 +1,16 @@
-import { and, asc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, notInArray, sql } from "drizzle-orm";
 
 import { buildFullRebuildProjectionLockKey } from "@/modules/training/submit-competition-lock-key";
 
 import type { Database } from "@/db";
 import {
   trainingEvents,
+  trainingDefinitions,
   trainingMetrics,
   trainingProfileProjection,
   trainingSessions,
 } from "@/db/schema";
 import { DIGIT_SPAN_TRAINING_KEY } from "@/modules/training/constants";
-import { getSessionTrainingDefinition } from "@/modules/training/definition.service";
 import {
   decodeDigitSpanMetricSchema,
   type DigitSpanAttemptRecord,
@@ -22,11 +22,7 @@ import {
   type ProjectionRowState,
 } from "@/modules/training/profile-projection-reducer";
 import type { TrainingEventRecord } from "@/modules/training/protocol";
-import {
-  isFamilyDateInTrendWindow,
-  resolveTrendWindowStart,
-  type TrendWindow,
-} from "@/modules/training/trend-window";
+import { resolveTrendWindowStart, type TrendWindow } from "@/modules/training/trend-window";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
@@ -95,6 +91,8 @@ async function loadEffectiveSessions(
   db: Database,
   traineeId: string,
   trainingKey: string,
+  start: string | null = null,
+  end?: string,
 ): Promise<EffectiveSessionRow[]> {
   return db
     .select()
@@ -105,40 +103,11 @@ async function loadEffectiveSessions(
         eq(trainingSessions.trainingKey, trainingKey),
         eq(trainingSessions.status, "completed"),
         eq(trainingSessions.sessionKind, "effective"),
+        start ? gte(trainingSessions.familyDate, start) : undefined,
+        end ? lte(trainingSessions.familyDate, end) : undefined,
       ),
     )
     .orderBy(asc(trainingSessions.familyDate), asc(trainingSessions.finishedAt));
-}
-
-async function loadSessionMetricsForTrend(
-  db: Database,
-  sessionId: string,
-): Promise<TrainingTrendMetric[]> {
-  const rows = await db
-    .select()
-    .from(trainingMetrics)
-    .where(and(eq(trainingMetrics.sessionId, sessionId), eq(trainingMetrics.isValid, 1)));
-
-  return rows.map((row) => ({
-    metricKey: row.metricKey,
-    value: Number(row.value),
-    unit: row.unit,
-  }));
-}
-
-async function loadSessionEvents(db: Database, sessionId: string): Promise<TrainingEventRecord[]> {
-  const rows = await db
-    .select({
-      sequence: trainingEvents.sequence,
-      eventType: trainingEvents.eventType,
-      payload: trainingEvents.payload,
-      occurredAt: trainingEvents.occurredAt,
-    })
-    .from(trainingEvents)
-    .where(eq(trainingEvents.sessionId, sessionId))
-    .orderBy(asc(trainingEvents.sequence));
-
-  return rows;
 }
 
 function toDigitSpanAttemptSummaries(
@@ -150,29 +119,6 @@ function toDigitSpanAttemptSummaries(
     attemptIndex: attempt.attemptIndex,
     correct: attempt.correct,
   }));
-}
-
-async function loadDigitSpanAttemptSummaries(
-  db: Database,
-  session: EffectiveSessionRow,
-): Promise<DigitSpanAttemptSummary[] | undefined> {
-  if (session.trainingKey !== DIGIT_SPAN_TRAINING_KEY) {
-    return undefined;
-  }
-
-  const definition = await getSessionTrainingDefinition(db, session);
-  const schema = decodeDigitSpanMetricSchema(definition.metricSchema ?? {});
-  if (!schema) {
-    return undefined;
-  }
-
-  const events = await loadSessionEvents(db, session.id);
-  const validation = validateDigitSpanEvents(events, schema);
-  if (!validation.valid) {
-    return undefined;
-  }
-
-  return toDigitSpanAttemptSummaries(validation.data.attempts);
 }
 
 function resolveSegmentReason(
@@ -204,18 +150,78 @@ export async function queryTrainingTrends(
 
   const referenceFamilyDate = input.referenceFamilyDate ?? toFamilyDate();
   const windowStartFamilyDate = resolveTrendWindowStart(input.window, referenceFamilyDate);
-  const allEffectiveSessions = await loadEffectiveSessions(db, input.studentId, input.trainingKey);
-
-  const hasHistoricalOutsideWindow =
-    input.window !== "all" &&
-    allEffectiveSessions.some(
-      (session) =>
-        !isFamilyDateInTrendWindow(session.familyDate, input.window, referenceFamilyDate),
-    );
-
-  const windowSessions = allEffectiveSessions.filter((session) =>
-    isFamilyDateInTrendWindow(session.familyDate, input.window, referenceFamilyDate),
+  const windowSessions = await loadEffectiveSessions(
+    db,
+    input.studentId,
+    input.trainingKey,
+    windowStartFamilyDate,
+    input.window === "all" ? undefined : referenceFamilyDate,
   );
+  const outside = windowStartFamilyDate
+    ? await db
+        .select({ id: trainingSessions.id })
+        .from(trainingSessions)
+        .where(
+          and(
+            eq(trainingSessions.traineeId, input.studentId),
+            eq(trainingSessions.trainingKey, input.trainingKey),
+            eq(trainingSessions.status, "completed"),
+            eq(trainingSessions.sessionKind, "effective"),
+            sql`(${trainingSessions.familyDate} < ${windowStartFamilyDate}::date OR ${trainingSessions.familyDate} > ${referenceFamilyDate}::date)`,
+          ),
+        )
+        .limit(1)
+    : [];
+  const hasHistoricalOutsideWindow = outside.length > 0;
+  const metricsBySession = new Map<string, TrainingTrendMetric[]>();
+  const eventsBySession = new Map<string, TrainingEventRecord[]>();
+  const definitionById = new Map<string, typeof trainingDefinitions.$inferSelect>();
+  // Bounded IN batches avoid both per-session N+1 and oversized query parameters.
+  for (let offset = 0; offset < windowSessions.length; offset += 200) {
+    const batch = windowSessions.slice(offset, offset + 200);
+    const metrics = await db
+      .select()
+      .from(trainingMetrics)
+      .where(
+        and(
+          inArray(
+            trainingMetrics.sessionId,
+            batch.map((row) => row.id),
+          ),
+          eq(trainingMetrics.isValid, 1),
+        ),
+      );
+    for (const row of metrics) {
+      const values = metricsBySession.get(row.sessionId) ?? [];
+      values.push({ metricKey: row.metricKey, value: Number(row.value), unit: row.unit });
+      metricsBySession.set(row.sessionId, values);
+    }
+    const digits = batch.filter((row) => row.trainingKey === DIGIT_SPAN_TRAINING_KEY);
+    if (digits.length) {
+      const events = await db
+        .select()
+        .from(trainingEvents)
+        .where(
+          inArray(
+            trainingEvents.sessionId,
+            digits.map((row) => row.id),
+          ),
+        )
+        .orderBy(asc(trainingEvents.sequence));
+      for (const row of events) {
+        const values = eventsBySession.get(row.sessionId) ?? [];
+        values.push(row);
+        eventsBySession.set(row.sessionId, values);
+      }
+      const definitions = await db
+        .select()
+        .from(trainingDefinitions)
+        .where(
+          inArray(trainingDefinitions.id, [...new Set(digits.map((row) => row.definitionId))]),
+        );
+      for (const row of definitions) definitionById.set(row.id, row);
+    }
+  }
 
   const segmentBuckets = new Map<
     string,
@@ -228,8 +234,22 @@ export async function queryTrainingTrends(
   >();
 
   for (const session of windowSessions) {
-    const metrics = await loadSessionMetricsForTrend(db, session.id);
-    const digitSpanAttempts = await loadDigitSpanAttemptSummaries(db, session);
+    const metrics = metricsBySession.get(session.id) ?? [];
+    let digitSpanAttempts: DigitSpanAttemptSummary[] | undefined;
+    const definition = definitionById.get(session.definitionId);
+    if (
+      definition &&
+      definition.trainingKey === session.trainingKey &&
+      definition.version === session.definitionVersion &&
+      definition.ageBand === session.ageBand
+    ) {
+      const schema = decodeDigitSpanMetricSchema(definition.metricSchema ?? {});
+      if (schema) {
+        const validated = validateDigitSpanEvents(eventsBySession.get(session.id) ?? [], schema);
+        if (validated.valid)
+          digitSpanAttempts = toDigitSpanAttemptSummaries(validated.data.attempts);
+      }
+    }
     const point: TrainingTrendPoint = {
       sessionId: session.id,
       familyDate: session.familyDate,

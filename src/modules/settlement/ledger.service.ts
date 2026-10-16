@@ -8,6 +8,65 @@ import { isLedgerEntryAfter } from "@/modules/settlement/ledger-order";
 import { SettlementError } from "@/modules/settlement/errors";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 
+/** Must precede ledger reads, inserts and resource locks in every money transaction. */
+export async function lockLedgerSubject(tx: Database, studentId: string): Promise<void> {
+  await tx.execute(sql`SELECT id FROM users WHERE id = ${studentId}::uuid FOR UPDATE`);
+}
+
+export async function appendDomainLedgerEntry(
+  tx: Database,
+  input: {
+    studentId: string;
+    amount: number;
+    reason: string;
+    sourceType: string;
+    sourceId: string;
+    explanation: string;
+    createdBy?: string;
+    reversesEntryId?: string;
+    idempotencyKey: string;
+    now?: Date;
+  },
+): Promise<AppendLedgerResult> {
+  if (!Number.isSafeInteger(input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Ledger amount exceeds integer capacity");
+  await lockLedgerSubject(tx, input.studentId);
+  const [existing] = await tx
+    .select()
+    .from(pointLedgerEntries)
+    .where(eq(pointLedgerEntries.idempotencyKey, input.idempotencyKey))
+    .limit(1);
+  if (existing) {
+    if (
+      existing.studentId !== input.studentId ||
+      existing.amount !== input.amount ||
+      existing.sourceId !== input.sourceId ||
+      existing.sourceType !== input.sourceType ||
+      existing.reason !== input.reason ||
+      existing.explanation !== input.explanation ||
+      existing.createdBy !== (input.createdBy ?? null) ||
+      existing.reversesEntryId !== (input.reversesEntryId ?? null)
+    ) {
+      throw new SettlementError("STATE_CONFLICT", "Ledger idempotency payload conflict");
+    }
+    return { ledgerEntryId: existing.id, created: false };
+  }
+  const now = input.now ?? new Date();
+  const [entry] = await tx
+    .insert(pointLedgerEntries)
+    .values({ ...input, createdAt: now })
+    .returning({ id: pointLedgerEntries.id });
+  if (!entry) throw new SettlementError("STATE_CONFLICT", "Ledger insert failed");
+  await upsertBalanceFromLedgerEntry(tx, {
+    studentId: input.studentId,
+    ledgerEntryId: entry.id,
+    amount: input.amount,
+    createdAt: now,
+    now,
+  });
+  return { ledgerEntryId: entry.id, created: true };
+}
+
 export type PointsBalanceDto = {
   balance: number;
   lastLedgerEntryId: string | null;
@@ -138,12 +197,16 @@ export async function appendLedgerForSettlement(
   input: AppendLedgerInput,
   options?: { testHooks?: AppendLedgerTestHooks },
 ): Promise<AppendLedgerResult> {
+  if (!Number.isSafeInteger(input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Ledger amount exceeds integer capacity");
   const explanation = input.explanation ?? buildLedgerExplanation(input.completionKind);
 
   if (options?.testHooks?.beforeLedgerInsert) {
     await options.testHooks.beforeLedgerInsert();
   }
 
+  // Test rendezvous must happen before the subject lock; no ledger read precedes it.
+  await lockLedgerSubject(tx, input.studentId);
   const now = input.now ?? new Date();
 
   const existingLedger = await findLedgerBySettlementId(tx, input.settlementId);
@@ -242,15 +305,21 @@ export async function upsertBalanceFromLedgerEntry(
     await options.testHooks.beforeProjectionUpsert();
   }
 
-  await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
+  if (!Number.isSafeInteger(input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Ledger amount exceeds integer capacity");
+  await lockLedgerSubject(tx, input.studentId);
 
   const [currentProjection] = await tx
     .select({
       lastLedgerEntryId: pointBalanceProjection.lastLedgerEntryId,
+      balance: pointBalanceProjection.balance,
     })
     .from(pointBalanceProjection)
     .where(eq(pointBalanceProjection.studentId, input.studentId))
     .limit(1);
+
+  if (!Number.isSafeInteger((currentProjection?.balance ?? 0) + input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Balance exceeds integer capacity");
 
   let currentLast: { createdAt: Date; id: string } | null = null;
   if (currentProjection?.lastLedgerEntryId) {
@@ -304,6 +373,9 @@ export async function appendLedgerForErrorCountSettlement(
   input: AppendErrorCountLedgerInput,
 ): Promise<AppendLedgerResult> {
   const now = input.now ?? new Date();
+  if (!Number.isSafeInteger(input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Ledger amount exceeds integer capacity");
+  await lockLedgerSubject(tx, input.studentId);
   const explanation = `+${input.amount} points for error_count=${input.errorCount}`;
 
   const existingLedger = await findLedgerBySettlementId(tx, input.settlementId);
@@ -389,6 +461,9 @@ export async function appendReversalLedgerEntry(
   tx: Database,
   input: AppendReversalLedgerInput,
 ): Promise<AppendLedgerResult> {
+  if (!Number.isSafeInteger(input.amount))
+    throw new SettlementError("VALIDATION_ERROR", "Ledger amount exceeds integer capacity");
+  await lockLedgerSubject(tx, input.studentId);
   const [existingReversal] = await tx
     .select({ id: pointLedgerEntries.id })
     .from(pointLedgerEntries)

@@ -1,14 +1,14 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions } from "@/db/schema";
+import { factVersions, scheduleItems } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { FactsError } from "@/modules/facts/errors";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { assertFormalScheduleItem } from "@/modules/settlement/error-count-settlement.service";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 
 export type SubmitErrorCountInput = {
   actorId: string;
@@ -76,16 +76,23 @@ export async function submitErrorCount(
   if (Number.isNaN(assertedAt.getTime())) {
     throw new FactsError("VALIDATION_ERROR", "assertedAt is invalid");
   }
+  const [subject] = await db
+    .select({ studentId: scheduleItems.studentId })
+    .from(scheduleItems)
+    .where(eq(scheduleItems.id, input.scheduleItemId))
+    .limit(1);
+  if (!subject) throw new FactsError("NOT_FOUND", "Schedule item not found");
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectAccess(tx, subject.studentId, "write", now);
       const item = await assertFormalScheduleItem(tx, input.scheduleItemId);
+      if (item.studentId !== subject.studentId)
+        throw new FactsError("STATE_CONFLICT", "Schedule subject changed");
 
       if (item.studentId !== input.actorId) {
         throw new FactsError("FORBIDDEN", "Only the student can submit error_count facts");
       }
-
-      await assertStudentAccountNotFrozen(tx, item.studentId, "write");
 
       const [existing] = await tx
         .select()
@@ -158,6 +165,10 @@ export async function submitErrorCount(
   } catch (error) {
     if (isPostgresUniqueViolation(error)) {
       const replay = await db.transaction(async (tx) => {
+        await assertSubjectAccess(tx, subject.studentId, "write", now);
+        const item = await assertFormalScheduleItem(tx, input.scheduleItemId);
+        if (item.studentId !== subject.studentId || item.studentId !== input.actorId)
+          throw new FactsError("FORBIDDEN", "Only the student can submit error_count facts");
         const [raced] = await tx
           .select()
           .from(factVersions)

@@ -1,6 +1,7 @@
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   boolean,
+  bigint,
   check,
   date,
   integer,
@@ -178,7 +179,7 @@ export const pointLedgerEntries = pgTable(
       .notNull()
       .references(() => users.id),
     settlementId: uuid("settlement_id").references(() => settlements.id),
-    amount: integer("amount").notNull(),
+    amount: bigint("amount", { mode: "number" }).notNull(),
     reason: text("reason").notNull(),
     sourceType: text("source_type").notNull(),
     explanation: text("explanation").notNull(),
@@ -193,8 +194,12 @@ export const pointLedgerEntries = pgTable(
       .on(table.settlementId)
       .where(sql`${table.settlementId} IS NOT NULL`),
     check(
+      "point_ledger_entries_safe_amount_check",
+      sql`${table.amount} BETWEEN -9007199254740991 AND 9007199254740991`,
+    ),
+    check(
       "point_ledger_entries_source_check",
-      sql`(${table.sourceType} = 'settlement' AND ${table.settlementId} IS NOT NULL AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'redemption' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'goal_reward' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} > 0) OR (${table.sourceType} = 'manual_penalty' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'manual_penalty_reversal' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} > 0)`,
+      sql`(${table.sourceType} = 'settlement' AND ${table.settlementId} IS NOT NULL AND ${table.sourceId} = ${table.settlementId} AND ${table.reversesEntryId} IS NULL) OR (${table.sourceType} = 'reversal' AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} <> 0) OR (${table.sourceType} = 'redemption' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'goal_reward' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} > 0) OR (${table.sourceType} = 'manual_penalty' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NULL AND ${table.amount} < 0) OR (${table.sourceType} = 'manual_penalty_reversal' AND ${table.settlementId} IS NULL AND ${table.reversesEntryId} IS NOT NULL AND ${table.amount} > 0)`,
     ),
     uniqueIndex("point_ledger_entries_reversal_unique")
       .on(table.reversesEntryId)
@@ -208,11 +213,20 @@ export const pointLedgerEntries = pgTable(
   ],
 );
 
-export const pointBalanceProjection = pgTable("point_balance_projection", {
-  studentId: uuid("student_id")
-    .primaryKey()
-    .references(() => users.id),
-  balance: integer("balance").notNull().default(0),
-  lastLedgerEntryId: uuid("last_ledger_entry_id").references(() => pointLedgerEntries.id),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+export const pointBalanceProjection = pgTable(
+  "point_balance_projection",
+  {
+    studentId: uuid("student_id")
+      .primaryKey()
+      .references(() => users.id),
+    balance: bigint("balance", { mode: "number" }).notNull().default(0),
+    lastLedgerEntryId: uuid("last_ledger_entry_id").references(() => pointLedgerEntries.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check(
+      "point_balance_projection_safe_balance_check",
+      sql`${table.balance} BETWEEN -9007199254740991 AND 9007199254740991`,
+    ),
+  ],
+);

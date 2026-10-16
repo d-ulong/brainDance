@@ -1,5 +1,4 @@
-import { and, eq, gte, lte, ne } from "drizzle-orm";
-
+import { and, eq, gte, lte, ne, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import {
   factVersions,
@@ -10,19 +9,33 @@ import {
   pointLedgerEntries,
   scheduleItems,
   settlements,
+  users,
 } from "@/db/schema";
 import { effectiveStatus } from "@/modules/schedule/effective-status";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
+import {
+  executionEditDeadline,
+  readChecklist,
+  readPomodoro,
+  type ChecklistTask,
+  type Pomodoro,
+} from "@/modules/schedule/execution-state";
+import {
+  completionWindowEnd,
+  isWithinCompletionWindow,
+} from "@/modules/time-policy/completion-window";
+import { ageInYearsAt } from "@/modules/time-policy/resolve-age-band";
 
 function maximumPointsFromEntry(entry: Record<string, unknown>) {
   const points = entry.points;
   if (!points || typeof points !== "object") return 0;
-  const values = Object.values(points as Record<string, unknown>).filter(
-    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  return Math.max(
+    0,
+    ...Object.values(points).filter(
+      (value): value is number => typeof value === "number" && Number.isFinite(value),
+    ),
   );
-  return Math.max(0, ...values);
 }
-
 export type CurrentFormalPlanDto = {
   planId: string;
   versionId: string;
@@ -33,16 +46,11 @@ export type CurrentFormalPlanDto = {
   status: string;
   localTime: string | null;
 };
-
-/**
- * Read-only current formal plan query. Never updates rows or calls maintain.
- */
 export async function queryCurrentFormalPlan(
   db: Database,
   studentId: string,
 ): Promise<CurrentFormalPlanDto | null> {
-  await assertStudentAccountNotFrozen(db, studentId, "read");
-
+  await assertSubjectAccess(db, studentId, "read");
   const [plan] = await db
     .select()
     .from(plans)
@@ -50,11 +58,7 @@ export async function queryCurrentFormalPlan(
       and(eq(plans.studentId, studentId), eq(plans.planKind, "formal"), eq(plans.status, "active")),
     )
     .limit(1);
-
-  if (!plan || !plan.currentVersion) {
-    return null;
-  }
-
+  if (!plan?.currentVersion) return null;
   const [slot] = await db
     .select({ localTime: planScheduleSlots.localTime })
     .from(planScheduleSlots)
@@ -65,7 +69,6 @@ export async function queryCurrentFormalPlan(
       ),
     )
     .limit(1);
-
   return {
     planId: plan.id,
     versionId: plan.currentVersion,
@@ -74,10 +77,9 @@ export async function queryCurrentFormalPlan(
     startDate: plan.startDate,
     endDate: plan.endDate,
     status: plan.status,
-    localTime: slot?.localTime ? slot.localTime.slice(0, 5) : null,
+    localTime: slot?.localTime?.slice(0, 5) ?? null,
   };
 }
-
 export type ScheduleItemDto = {
   id: string;
   planId: string;
@@ -95,6 +97,8 @@ export type ScheduleItemDto = {
   planTitle: string;
   priority: number;
   startedAt: Date | null;
+  completedAt: Date | null;
+  actualDurationMinutes: number | null;
   description: string | null;
   pointsEarned: number | null;
   pointsRuleLabel: string | null;
@@ -102,10 +106,18 @@ export type ScheduleItemDto = {
   durationMinutes: number | null;
   taskType: "normal" | "homework" | "exercise";
   completionStandard: string | null;
-  checklist: Array<{ id: string; title: string; completed: boolean }>;
-  pomodoro: { state?: "running" | "paused"; pauseCount?: number; pausedSeconds?: number };
+  checklist: ChecklistTask[];
+  pomodoro: Pomodoro;
+  executionRevision: number;
+  executionAllCompleted: boolean;
+  canStart: boolean;
+  canComplete: boolean;
+  canEditExecution: boolean;
+  canCorrect: boolean;
+  completionDeadline: Date;
+  editDeadline: Date;
+  suppressedByScheduleItemId: string | null;
 };
-
 const POINTS_RULE_LABELS: Record<string, string> = {
   onTimeWithin: "按时且时长内",
   onTimeOver: "按时但超时",
@@ -113,39 +125,44 @@ const POINTS_RULE_LABELS: Record<string, string> = {
   lateOver: "迟开始且超时",
   incomplete: "未完成",
 };
-
 function labelForPointsExplanation(explanation: string | null | undefined): string | null {
   if (!explanation) return null;
   const matched = explanation.match(/Plan item ([a-zA-Z]+):/);
-  if (!matched?.[1]) return explanation;
-  return POINTS_RULE_LABELS[matched[1]] ?? explanation;
+  return matched?.[1] ? (POINTS_RULE_LABELS[matched[1]] ?? explanation) : explanation;
 }
-
 export type QueryScheduleItemsInput = {
   studentId: string;
   from: string;
   to: string;
+  actorId?: string;
+  actorRole?: "parent" | "student";
   now?: Date;
 };
 
-/**
- * Read-only schedule query. Never updates rows or calls persist/maintain.
- * Cancelled items are omitted so regenerated pending work is not shown beside stale cancels.
- */
+/** Read-only: expired state is projected consistently; all writes belong to commands/Worker. */
 export async function queryScheduleItems(
   db: Database,
   input: QueryScheduleItemsInput,
 ): Promise<ScheduleItemDto[]> {
-  await assertStudentAccountNotFrozen(db, input.studentId, "read");
-
   const now = input.now ?? new Date();
-
+  await assertSubjectAccess(db, input.studentId, "read", now);
+  const [subject] = await db
+    .select({ role: users.role, birthDate: users.birthDate })
+    .from(users)
+    .where(eq(users.id, input.studentId))
+    .limit(1);
+  const subjectCanWrite =
+    subject?.role !== "student" ||
+    Boolean(
+      subject.birthDate && ageInYearsAt(new Date(`${subject.birthDate}T00:00:00+08:00`), now) < 19,
+    );
   const rows = await db
     .select({
       item: scheduleItems,
       planTitle: plans.title,
-      startedAt: planItemRules.startedAt,
+      rule: planItemRules,
       taskExecution: scheduleTaskExecutions,
+      completionFact: factVersions,
       pointsEarned: pointLedgerEntries.amount,
       pointsExplanation: pointLedgerEntries.explanation,
     })
@@ -158,9 +175,13 @@ export async function queryScheduleItems(
       and(
         eq(factVersions.scheduleItemId, scheduleItems.id),
         eq(factVersions.factKey, "schedule.completed"),
+        sql`NOT EXISTS (SELECT 1 FROM fact_versions successor WHERE successor.supersedes_fact_version_id = ${factVersions.id})`,
       ),
     )
-    .leftJoin(settlements, eq(settlements.factVersionId, factVersions.id))
+    .leftJoin(
+      settlements,
+      and(eq(settlements.factVersionId, factVersions.id), eq(settlements.result, "reward")),
+    )
     .leftJoin(pointLedgerEntries, eq(pointLedgerEntries.settlementId, settlements.id))
     .where(
       and(
@@ -170,74 +191,39 @@ export async function queryScheduleItems(
         ne(scheduleItems.status, "cancelled"),
       ),
     );
-
   return rows.map(
-    ({ item, planTitle, startedAt, taskExecution, pointsEarned, pointsExplanation }) => {
-      const entry = item.planSnapshot?.entry;
-      const title =
-        typeof entry === "object" &&
-        entry !== null &&
-        "title" in entry &&
-        typeof entry.title === "string"
-          ? entry.title
-          : planTitle;
-      const description =
-        typeof entry === "object" &&
-        entry !== null &&
-        "description" in entry &&
-        typeof (entry as { description?: unknown }).description === "string"
-          ? (entry as { description: string }).description
-          : null;
-      const maximumPoints =
-        typeof entry === "object" && entry !== null
-          ? maximumPointsFromEntry(entry as Record<string, unknown>)
-          : 0;
-      const durationMinutes =
-        typeof entry === "object" &&
-        entry !== null &&
-        "durationMinutes" in entry &&
-        typeof (entry as { durationMinutes?: unknown }).durationMinutes === "number"
-          ? (entry as { durationMinutes: number }).durationMinutes
-          : null;
+    ({ item, planTitle, rule, taskExecution, completionFact, pointsEarned, pointsExplanation }) => {
+      const rawEntry = item.planSnapshot?.entry ?? rule?.entry;
+      const entry =
+        rawEntry && typeof rawEntry === "object" ? (rawEntry as Record<string, unknown>) : {};
       const taskType =
-        typeof entry === "object" &&
-        entry !== null &&
-        (entry as { taskType?: unknown }).taskType === "homework"
-          ? "homework"
-          : typeof entry === "object" &&
-              entry !== null &&
-              (entry as { taskType?: unknown }).taskType === "exercise"
-            ? "exercise"
-            : "normal";
-      const configuredChecklist =
-        typeof entry === "object" &&
-        entry !== null &&
-        Array.isArray((entry as { checklist?: unknown }).checklist)
-          ? ((entry as { checklist: Array<{ id?: unknown; title?: unknown }> }).checklist ?? [])
-          : [];
-      const savedChecklist = Array.isArray(taskExecution?.checklist)
-        ? taskExecution.checklist
-        : configuredChecklist;
-      const checklist = savedChecklist.flatMap((candidate, index) => {
-        const task = candidate as Record<string, unknown>;
-        const id = typeof task.id === "string" ? task.id : `check-${index + 1}`;
-        const title = typeof task.title === "string" ? task.title : "";
-        return title ? [{ id, title, completed: task.completed === true }] : [];
-      });
-      const completionStandard =
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as { completionStandard?: unknown }).completionStandard === "string"
-          ? (entry as { completionStandard: string }).completionStandard
+        entry.taskType === "homework" || entry.taskType === "exercise" ? entry.taskType : "normal";
+      const factStart =
+        typeof completionFact?.value.started_at === "string"
+          ? new Date(completionFact.value.started_at)
           : null;
-      const pomodoro =
-        taskExecution?.pomodoro && typeof taskExecution.pomodoro === "object"
-          ? (taskExecution.pomodoro as {
-              state?: "running" | "paused";
-              pauseCount?: number;
-              pausedSeconds?: number;
-            })
-          : {};
+      const startedAt =
+        item.status === "completed"
+          ? (factStart ?? rule?.startedAt ?? null)
+          : (rule?.startedAt ?? null);
+      const completedAt = completionFact?.occurredAt ?? null;
+      const actualDurationMinutes =
+        typeof completionFact?.value.duration_minutes === "number"
+          ? completionFact.value.duration_minutes
+          : null;
+      const writable =
+        subjectCanWrite &&
+        !item.suppressedByScheduleItemId &&
+        (!input.actorId || input.actorId === item.studentId || input.actorRole === "parent");
+      const pendingWindow =
+        item.status === "pending" && isWithinCompletionWindow(item.familyDate, now);
+      const editDeadline = executionEditDeadline(item.familyDate, input.actorRole ?? "student");
+      const canCorrect = Boolean(writable && item.status === "completed" && now < editDeadline);
+      const savedSnapshot = completionFact?.value.execution;
+      const snapshot =
+        savedSnapshot && typeof savedSnapshot === "object"
+          ? (savedSnapshot as Record<string, unknown>)
+          : null;
       return {
         id: item.id,
         planId: item.planId,
@@ -254,19 +240,33 @@ export async function queryScheduleItems(
           { status: item.status, familyDate: item.familyDate, startedAt },
           now,
         ),
-        title,
+        title: typeof entry.title === "string" ? entry.title : planTitle,
         planTitle,
         priority: item.priority,
         startedAt,
-        description,
+        completedAt,
+        actualDurationMinutes,
+        description: typeof entry.description === "string" ? entry.description : null,
         pointsEarned: pointsEarned ?? null,
         pointsRuleLabel: labelForPointsExplanation(pointsExplanation),
-        maximumPoints,
-        durationMinutes,
+        maximumPoints: maximumPointsFromEntry(entry),
+        durationMinutes: typeof entry.durationMinutes === "number" ? entry.durationMinutes : null,
         taskType,
-        completionStandard,
-        checklist,
-        pomodoro,
+        completionStandard:
+          typeof entry.completionStandard === "string" ? entry.completionStandard : null,
+        checklist: readChecklist(
+          snapshot?.checklist ?? taskExecution?.checklist ?? entry.checklist,
+        ),
+        pomodoro: readPomodoro(snapshot?.pomodoro ?? taskExecution?.pomodoro),
+        executionRevision: taskExecution?.revision ?? 0,
+        executionAllCompleted: snapshot?.all_completed !== false,
+        canStart: Boolean(writable && pendingWindow && rule && !startedAt),
+        canComplete: Boolean(writable && pendingWindow),
+        canEditExecution: Boolean(writable && (pendingWindow || canCorrect)),
+        canCorrect,
+        completionDeadline: completionWindowEnd(item.familyDate),
+        editDeadline,
+        suppressedByScheduleItemId: item.suppressedByScheduleItemId,
       };
     },
   );

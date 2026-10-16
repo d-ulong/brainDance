@@ -12,7 +12,13 @@ import {
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import { TrendsPanel } from "@/components/training/trends-panel";
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 import {
   fetchTrainingSummary,
@@ -32,6 +38,8 @@ export default function ParentTrainingSummaryPage({
 }: {
   params: Promise<{ studentId: string }>;
 }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [relationshipId, setRelationshipId] = useState<string | null>(null);
@@ -79,6 +87,8 @@ export default function ParentTrainingSummaryPage({
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       const sid = resolved.studentId;
@@ -101,8 +111,11 @@ export default function ParentTrainingSummaryPage({
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadData, params, router, trainingKey]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadData, params, router, trainingKey, sessionAttempt]);
 
   async function endRelationshipAction() {
     if (!relationshipId) return;
@@ -123,6 +136,18 @@ export default function ParentTrainingSummaryPage({
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="训练汇总">

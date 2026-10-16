@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -20,6 +21,8 @@ import {
 } from "@/modules/identity/password-policy";
 
 export default function RegisterPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [invitationCode, setInvitationCode] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -34,14 +37,21 @@ export default function RegisterPage() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    void fetchSession().then((session) => {
-      if (session) {
-        router.replace("/");
-      } else {
+    setSessionFailed(false);
+    setChecking(true);
+    void fetchSession()
+      .then((session) => {
+        if (session) {
+          router.replace("/");
+        } else {
+          setChecking(false);
+        }
+      })
+      .catch(() => {
+        setSessionFailed(true);
         setChecking(false);
-      }
-    });
-  }, [router]);
+      });
+  }, [router, sessionAttempt]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -71,6 +81,18 @@ export default function RegisterPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setChecking(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (checking) {
     return (
       <PageShell title="注册账号">

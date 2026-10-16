@@ -5,6 +5,8 @@
 
 # Next.js and test artifacts
 .next/
+.review-next/
+.review-runtime/
 out/
 playwright-report/
 test-results/
@@ -15,6 +17,7 @@ tests/e2e/.fixture.json
 
 # Dependency and runtime caches
 node_modules/
+.pnpm-store/
 __pycache__/
 *.py[cod]
 .pytest_cache/

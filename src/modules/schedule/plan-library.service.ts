@@ -10,11 +10,10 @@ import {
   planScheduleSlots,
   planVersions,
   plans,
-  pointRules,
-  pointRuleVersions,
   scheduleItems,
   users,
 } from "@/db/schema";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
@@ -28,6 +27,10 @@ import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency
 import { ScheduleError } from "@/modules/schedule/errors";
 import { reconcileSchedulePriority } from "@/modules/schedule/reconcile-schedule-priority.service";
 import { addFamilyDays } from "@/modules/time-policy/add-family-days";
+import {
+  createFrozenPlanEntryRules,
+  loadFrozenPlanEntryRuleVersions,
+} from "@/modules/settlement/point-rule.service";
 import { toFamilyDate } from "@/modules/time-policy/to-family-date";
 
 async function requireVerifiedParent(db: Database, parentId: string) {
@@ -36,27 +39,13 @@ async function requireVerifiedParent(db: Database, parentId: string) {
     throw new ScheduleError("FORBIDDEN", "已验证家长权限必需");
 }
 async function requirePlanCreator(db: Database, actorId: string) {
+  await assertSubjectAccess(db, actorId, "write");
   const [actor] = await db.select().from(users).where(eq(users.id, actorId)).limit(1);
   if (!actor || actor.status !== "active")
     throw new ScheduleError("FORBIDDEN", "账号当前不可管理计划");
   if (actor.role === "parent" && actor.contactVerifiedAt) return actor;
   if (actor.role === "student" && !actor.mustChangePassword) return actor;
   throw new ScheduleError("FORBIDDEN", "当前账号不可管理计划");
-}
-function withoutStudentAwardPoints(definition: PlanDefinition): PlanDefinition {
-  return {
-    ...definition,
-    entries: definition.entries.map((entry) => ({
-      ...entry,
-      points: {
-        onTimeWithin: 0,
-        onTimeOver: 0,
-        lateWithin: 0,
-        lateOver: 0,
-        incomplete: 0,
-      },
-    })),
-  };
 }
 async function requireLinked(db: Database, parentId: string, studentId: string) {
   try {
@@ -70,13 +59,15 @@ export async function createPlanLibrary(
   db: Database,
   input: { ownerId: string; definition: unknown; priority?: number; idempotencyKey: string },
 ) {
-  const actor = await requirePlanCreator(db, input.ownerId);
+  await requirePlanCreator(db, input.ownerId);
   const parsedDefinition = planDefinitionSchema.parse(input.definition) as PlanDefinition;
-  const definition = actor.role === "student" ? withoutStudentAwardPoints(parsedDefinition) : parsedDefinition;
+  const definition = parsedDefinition;
   const priority = input.priority ?? 0;
-  if (!Number.isInteger(priority) || priority < 0 || priority > 100) throw new ScheduleError("STATE_CONFLICT", "计划优先级必须为 0 到 100 的整数");
+  if (!Number.isInteger(priority) || priority < 0 || priority > 100)
+    throw new ScheduleError("STATE_CONFLICT", "计划优先级必须为 0 到 100 的整数");
   const hash = hashIdempotencyPayload({ definition, priority });
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.ownerId, "write");
     // library IDs are UUIDs, so use a dedicated advisory lock for create idempotency and only then create.
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-library:${input.ownerId}:${input.idempotencyKey}`}, 0))`,
@@ -110,14 +101,12 @@ export async function createPlanLibrary(
       .values({ ownerId: input.ownerId, definition, priority })
       .returning();
     if (!entry) throw new ScheduleError("STATE_CONFLICT", "计划内容保存失败");
-    await tx
-      .insert(planLibraryCommands)
-      .values({
-        actorId: input.ownerId,
-        key: input.idempotencyKey,
-        payloadHash: hash,
-        result: { libraryId: entry.id },
-      });
+    await tx.insert(planLibraryCommands).values({
+      actorId: input.ownerId,
+      key: input.idempotencyKey,
+      payloadHash: hash,
+      result: { libraryId: entry.id },
+    });
     await appendAuditEvent(tx, {
       actorId: input.ownerId,
       action: "plan_library.created",
@@ -239,10 +228,7 @@ export async function listStudentPlanLibrary(
     .from(planBindings)
     .innerJoin(planActivations, eq(planActivations.bindingId, planBindings.id))
     .where(
-      and(
-        eq(planBindings.studentId, studentId),
-        sql`${planActivations.effectiveUntil} IS NULL`,
-      ),
+      and(eq(planBindings.studentId, studentId), sql`${planActivations.effectiveUntil} IS NULL`),
     );
   const boundIds = [...new Set(activeBindings.map((binding) => binding.libraryId))];
   const libraries = await db
@@ -308,7 +294,8 @@ export async function removePlanLibraryBinding(
   });
 
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    if (input.ownerId !== input.studentId) await requireLinked(tx, input.ownerId, input.studentId);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-remove:${input.ownerId}:${input.idempotencyKey}`}, 0))`,
     );
@@ -374,7 +361,11 @@ export async function removePlanLibraryBinding(
           gte(scheduleItems.familyDate, today),
         ),
       )
-      .returning({ id: scheduleItems.id });
+      .returning({ id: scheduleItems.id, scheduledAt: scheduleItems.scheduledAt });
+    await reconcileSchedulePriority(tx, {
+      studentId: input.studentId,
+      scheduledAts: cancelled.map((item) => item.scheduledAt),
+    });
     await tx.insert(planLibraryCommands).values({
       actorId: input.ownerId,
       key: input.idempotencyKey,
@@ -422,11 +413,12 @@ export async function updatePlanLibrary(
     idempotencyKey: string;
   },
 ) {
-  const actor = await requirePlanCreator(db, input.ownerId);
+  await requirePlanCreator(db, input.ownerId);
   const parsedDefinition = planDefinitionSchema.parse(input.definition) as PlanDefinition;
-  const definition = actor.role === "student" ? withoutStudentAwardPoints(parsedDefinition) : parsedDefinition;
+  const definition = parsedDefinition;
   const priority = input.priority ?? 0;
-  if (!Number.isInteger(priority) || priority < 0 || priority > 100) throw new ScheduleError("STATE_CONFLICT", "计划优先级必须为 0 到 100 的整数");
+  if (!Number.isInteger(priority) || priority < 0 || priority > 100)
+    throw new ScheduleError("STATE_CONFLICT", "计划优先级必须为 0 到 100 的整数");
   const payloadHash = hashIdempotencyPayload({
     libraryId: input.libraryId,
     revision: input.revision,
@@ -434,6 +426,7 @@ export async function updatePlanLibrary(
     priority,
   });
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.ownerId, "write");
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-update:${input.ownerId}:${input.idempotencyKey}`}, 0))`,
     );
@@ -472,14 +465,12 @@ export async function updatePlanLibrary(
       .where(eq(planLibrary.id, current.id))
       .returning();
     if (!updated) throw new ScheduleError("STATE_CONFLICT", "计划编辑失败");
-    await tx
-      .insert(planLibraryCommands)
-      .values({
-        actorId: input.ownerId,
-        key: input.idempotencyKey,
-        payloadHash,
-        result: { operation: "update", libraryId: updated.id },
-      });
+    await tx.insert(planLibraryCommands).values({
+      actorId: input.ownerId,
+      key: input.idempotencyKey,
+      payloadHash,
+      result: { operation: "update", libraryId: updated.id },
+    });
     await appendAuditEvent(tx, {
       actorId: input.ownerId,
       action: "plan_library.updated",
@@ -520,7 +511,8 @@ export async function activatePlanLibrary(
   const requestedFrom = input.effectiveFrom ?? addFamilyDays(today, 1);
   if (requestedFrom < today) throw new ScheduleError("WINDOW_EXPIRED", "不能为过去日期切换计划");
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    if (input.ownerId !== input.studentId) await requireLinked(tx, input.ownerId, input.studentId);
     const [library] = await tx
       .select()
       .from(planLibrary)
@@ -528,20 +520,45 @@ export async function activatePlanLibrary(
       .limit(1);
     if (!library) throw new ScheduleError("NOT_FOUND", "计划内容不存在");
     const storedDefinition = planDefinitionSchema.parse(library.definition) as PlanDefinition;
-    const definition = input.ownerId === input.studentId
-      ? withoutStudentAwardPoints(storedDefinition)
-      : storedDefinition;
+    const definition = storedDefinition;
     // Default 15-day window must start where the plan can actually produce dates.
     const effectiveFrom =
       definition.startDate > requestedFrom ? definition.startDate : requestedFrom;
     const payloadHash = hashIdempotencyPayload({
+      operation: "activate",
       libraryId: input.libraryId,
       studentId: input.studentId,
-      effectiveFrom,
+      effectiveFrom: input.effectiveFrom ?? null,
     });
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-activate:${input.ownerId}:${input.idempotencyKey}`}, 0))`,
     );
+    const [command] = await tx
+      .select()
+      .from(planLibraryCommands)
+      .where(
+        and(
+          eq(planLibraryCommands.actorId, input.ownerId),
+          eq(planLibraryCommands.key, input.idempotencyKey),
+        ),
+      )
+      .limit(1);
+    if (command) {
+      if (command.payloadHash !== payloadHash)
+        throw new ScheduleError("IDEMPOTENCY_CONFLICT", "计划启用请求内容不一致");
+      return {
+        ...(command.result as {
+          activationId: string;
+          planId: string;
+          itemsCreated: number;
+          matchedOccurrences: number;
+          effectiveFrom: string;
+          generatedFrom: string;
+          generatedThrough: string;
+        }),
+        idempotentReplay: true,
+      };
+    }
     const [binding] = await tx
       .insert(planBindings)
       .values({ libraryId: library.id, studentId: input.studentId })
@@ -596,53 +613,28 @@ export async function activatePlanLibrary(
       .update(plans)
       .set({ currentVersion: version.id })
       .where(eq(plans.id, executionPlan.id));
-    const [rule] = await tx
-      .insert(pointRules)
-      .values({
-        studentId: input.studentId,
-        creatorParentId: input.ownerId,
-        templateId: "plan_entry_conditions_v1",
-        active: false,
-        createIdempotencyKey: `plan-activation:${executionPlan.id}`,
-        createIdempotencyPayloadHash: payloadHash,
-        createdAt: now,
-      })
-      .returning();
-    if (!rule) throw new ScheduleError("STATE_CONFLICT", "计划积分规则创建失败");
-    const ruleVersions = await tx
-      .insert(pointRuleVersions)
-      .values(
-        definition.entries.map((entry, index) => ({
-          pointRuleId: rule.id,
-          version: index + 1,
-          parameters: { entryKey: entry.key },
-          effect: entry.points,
-          effectiveAt: now,
-          status: "active",
-        })),
-      )
-      .returning({ id: pointRuleVersions.id, version: pointRuleVersions.version });
-    if (ruleVersions.length !== definition.entries.length)
-      throw new ScheduleError("STATE_CONFLICT", "计划积分规则版本创建失败");
-    const ruleVersionByEntryKey = new Map(
-      definition.entries.map((entry, index) => [entry.key, ruleVersions[index]!.id]),
+    const { ruleId, ruleVersionByEntryKey } = await createFrozenPlanEntryRules(tx, {
+      studentId: input.studentId,
+      creatorId: input.ownerId,
+      executionPlanId: executionPlan.id,
+      payloadHash,
+      entries: definition.entries,
+      now,
+    });
+    await tx.insert(planScheduleSlots).values(
+      definition.entries.map((entry) => ({
+        planVersionId: version.id,
+        slotKey: entry.key,
+        localTime: entry.expectedTime,
+      })),
     );
-    await tx
-      .insert(planScheduleSlots)
-      .values(
-        definition.entries.map((entry) => ({
-          planVersionId: version.id,
-          slotKey: entry.key,
-          localTime: entry.expectedTime,
-        })),
-      );
     const [activation] = await tx
       .insert(planActivations)
       .values({
         bindingId: activeBinding.id,
         studentId: input.studentId,
         executionPlanId: executionPlan.id,
-        ruleId: rule.id,
+        ruleId,
         effectiveFrom,
         definition,
         revision: library.revision,
@@ -678,15 +670,13 @@ export async function activatePlanLibrary(
         .onConflictDoNothing({ target: scheduleItems.occurrenceKey })
         .returning({ id: scheduleItems.id, slotKey: scheduleItems.slotKey });
       if (insertedItems.length)
-        await tx
-          .insert(planItemRules)
-          .values(
-            insertedItems.map((item) => ({
-              scheduleItemId: item.id,
-              ruleVersionId: ruleVersionByEntryKey.get(item.slotKey)!,
-              entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
-            })),
-          );
+        await tx.insert(planItemRules).values(
+          insertedItems.map((item) => ({
+            scheduleItemId: item.id,
+            ruleVersionId: ruleVersionByEntryKey.get(item.slotKey)!,
+            entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
+          })),
+        );
       revivedItems = await reviveCancelledOccurrences(
         tx,
         occurrenceKeys,
@@ -694,7 +684,10 @@ export async function activatePlanLibrary(
         definition,
       );
     }
-    await reconcileSchedulePriority(tx, { studentId: input.studentId, scheduledAts: occurrences.map((item) => item.scheduledAt) });
+    await reconcileSchedulePriority(tx, {
+      studentId: input.studentId,
+      scheduledAts: occurrences.map((item) => item.scheduledAt),
+    });
     await appendAuditEvent(tx, {
       actorId: input.ownerId,
       action: "plan_library.activated",
@@ -720,7 +713,7 @@ export async function activatePlanLibrary(
         effectiveFrom,
       },
     });
-    return {
+    const result = {
       activationId: activation!.id,
       planId: executionPlan.id,
       itemsCreated: insertedItems.length + revivedItems.length,
@@ -729,6 +722,10 @@ export async function activatePlanLibrary(
       generatedFrom,
       generatedThrough,
     };
+    await tx
+      .insert(planLibraryCommands)
+      .values({ actorId: input.ownerId, key: input.idempotencyKey, payloadHash, result });
+    return { ...result, idempotentReplay: false };
   });
 }
 
@@ -824,11 +821,11 @@ export async function generatePlanLibraryRange(
         ),
       )
       .limit(1);
-    if (!binding)
-      throw new ScheduleError("FORBIDDEN", "只能为当前已启用的计划生成日程");
+    if (!binding) throw new ScheduleError("FORBIDDEN", "只能为当前已启用的计划生成日程");
   }
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    if (input.ownerId !== input.studentId) await requireLinked(tx, input.ownerId, input.studentId);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${`plan-generate:${input.ownerId}:${input.idempotencyKey}`}, 0))`,
     );
@@ -864,22 +861,9 @@ export async function generatePlanLibraryRange(
       )
       .orderBy(desc(planActivations.effectiveFrom))
       .limit(1);
-    if (!activation)
-      throw new ScheduleError("NOT_FOUND", "所选日期内没有这套计划的生效区间");
+    if (!activation) throw new ScheduleError("NOT_FOUND", "所选日期内没有这套计划的生效区间");
     const effectiveFrom = activation.plan_activations.effectiveFrom;
-    if (input.from < effectiveFrom) {
-      throw new ScheduleError(
-        "VALIDATION_ERROR",
-        `计划从 ${effectiveFrom} 起生效，开始日期不能早于该日期`,
-      );
-    }
-    if (input.through < effectiveFrom) {
-      throw new ScheduleError(
-        "VALIDATION_ERROR",
-        `计划从 ${effectiveFrom} 起生效，结束日期不能早于该日期`,
-      );
-    }
-    const generatedFrom = input.from;
+    const generatedFrom = input.from < effectiveFrom ? effectiveFrom : input.from;
     const effectiveThrough = activation.plan_activations.effectiveUntil
       ? addFamilyDays(activation.plan_activations.effectiveUntil, -1)
       : input.through;
@@ -903,18 +887,11 @@ export async function generatePlanLibraryRange(
     if (!versionId) throw new ScheduleError("STATE_CONFLICT", "执行计划版本不存在");
     if (!activation.plan_activations.ruleId)
       throw new ScheduleError("STATE_CONFLICT", "计划积分规则不存在");
-    const ruleVersions = await tx
-      .select({ id: pointRuleVersions.id, version: pointRuleVersions.version })
-      .from(pointRuleVersions)
-      .where(eq(pointRuleVersions.pointRuleId, activation.plan_activations.ruleId));
-    const ruleVersionByEntryKey = new Map(
-      definition.entries.map((entry, index) => [
-        entry.key,
-        ruleVersions.find((row) => row.version === index + 1)?.id,
-      ]),
+    const ruleVersionByEntryKey = await loadFrozenPlanEntryRuleVersions(
+      tx,
+      activation.plan_activations.ruleId,
+      definition.entries.map((entry) => entry.key),
     );
-    if ([...ruleVersionByEntryKey.values()].some((value) => !value))
-      throw new ScheduleError("STATE_CONFLICT", "计划积分规则版本不存在");
     const inserted = occurrences.length
       ? await tx
           .insert(scheduleItems)
@@ -942,15 +919,13 @@ export async function generatePlanLibraryRange(
           .returning({ id: scheduleItems.id, slotKey: scheduleItems.slotKey })
       : [];
     if (inserted.length)
-      await tx
-        .insert(planItemRules)
-        .values(
-          inserted.map((item) => ({
-            scheduleItemId: item.id,
-            ruleVersionId: ruleVersionByEntryKey.get(item.slotKey)!,
-            entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
-          })),
-        );
+      await tx.insert(planItemRules).values(
+        inserted.map((item) => ({
+          scheduleItemId: item.id,
+          ruleVersionId: ruleVersionByEntryKey.get(item.slotKey)!,
+          entry: definition.entries.find((entry) => entry.key === item.slotKey)!,
+        })),
+      );
     const occurrenceKeys = occurrences.map(
       ({ entry, familyDate }) =>
         `library:${activation.plan_activations.id}:${entry.key}:${familyDate}`,
@@ -962,7 +937,10 @@ export async function generatePlanLibraryRange(
       definition,
     );
     const itemsCreated = inserted.length + revived.length;
-    await reconcileSchedulePriority(tx, { studentId: input.studentId, scheduledAts: occurrences.map((item) => item.scheduledAt) });
+    await reconcileSchedulePriority(tx, {
+      studentId: input.studentId,
+      scheduledAts: occurrences.map((item) => item.scheduledAt),
+    });
     const result = {
       operation: "generate",
       activationId: activation.plan_activations.id,

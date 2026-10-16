@@ -1,3 +1,4 @@
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
@@ -5,7 +6,6 @@ import { dailyReflectionVersions, dailyReflections } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import type { ReflectionVisibility } from "@/modules/reflection-privacy/constants";
 import { ReflectionPrivacyError } from "@/modules/reflection-privacy/errors";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import {
   assertEditableFamilyDate,
   findReflectionByStudentDate,
@@ -54,7 +54,7 @@ export async function upsertDailyReflection(
 
   assertEditableFamilyDate(input.familyDate);
 
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const replayId = await findReflectionReplayByAudit(db, input.idempotencyKey, "reflection.upsert");
   if (replayId) {
@@ -70,6 +70,7 @@ export async function upsertDailyReflection(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write");
     const replayInTx = await findReflectionReplayByAudit(
       tx,
       input.idempotencyKey,

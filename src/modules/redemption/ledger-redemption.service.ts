@@ -5,7 +5,7 @@ import { pointLedgerEntries } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { RedemptionError } from "@/modules/redemption/errors";
-import { upsertBalanceFromLedgerEntry } from "@/modules/settlement/ledger.service";
+import { appendDomainLedgerEntry, lockLedgerSubject } from "@/modules/settlement/ledger.service";
 
 export type AppendRedemptionLedgerInput = {
   studentId: string;
@@ -29,6 +29,7 @@ export async function appendLedgerForRedemption(
     throw new RedemptionError("STATE_CONFLICT", "Redemption ledger amount must be negative");
   }
 
+  await lockLedgerSubject(tx, input.studentId);
   const now = input.now ?? new Date();
   const explanation = `-${Math.abs(input.amount)} points for redemption ${input.redemptionId}`;
 
@@ -44,34 +45,18 @@ export async function appendLedgerForRedemption(
     return { ledgerEntryId: existing.id, created: false };
   }
 
-  const [inserted] = await tx
-    .insert(pointLedgerEntries)
-    .values({
-      studentId: input.studentId,
-      settlementId: null,
-      amount: input.amount,
-      reason: "redemption.approved",
-      sourceType: "redemption",
-      sourceId: input.redemptionId,
-      explanation,
-      reversesEntryId: null,
-      createdBy: input.actorId,
-      idempotencyKey: input.idempotencyKey,
-      createdAt: now,
-    })
-    .returning({ id: pointLedgerEntries.id });
-
-  if (!inserted) {
-    throw new RedemptionError("STATE_CONFLICT", "Failed to create redemption ledger entry");
-  }
-
-  await upsertBalanceFromLedgerEntry(tx, {
+  const ledger = await appendDomainLedgerEntry(tx, {
     studentId: input.studentId,
-    ledgerEntryId: inserted.id,
     amount: input.amount,
-    createdAt: now,
+    reason: "redemption.approved",
+    sourceType: "redemption",
+    sourceId: input.redemptionId,
+    explanation,
+    createdBy: input.actorId,
+    idempotencyKey: input.idempotencyKey,
     now,
   });
+  const inserted = { id: ledger.ledgerEntryId };
 
   await appendAuditEvent(tx, {
     actorId: input.actorId,

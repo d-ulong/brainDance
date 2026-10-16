@@ -7,6 +7,7 @@ import { SettlementError } from "@/modules/settlement/errors";
 import {
   appendLedgerForErrorCountSettlement,
   appendReversalLedgerEntry,
+  lockLedgerSubject,
 } from "@/modules/settlement/ledger.service";
 import {
   loadActivePointRuleForStudent,
@@ -121,6 +122,7 @@ export async function settleForErrorCountFact(
   input: { factVersionId: string },
 ): Promise<SettleErrorCountResult> {
   const ctx = await loadErrorCountSettlementContext(tx, input.factVersionId);
+  await lockLedgerSubject(tx, ctx.studentId);
 
   const activeRule = await loadActivePointRuleForStudent(
     tx,
@@ -211,7 +213,12 @@ export async function loadLedgerEntriesForFact(
     })
     .from(pointLedgerEntries)
     .innerJoin(settlements, eq(settlements.id, pointLedgerEntries.settlementId))
-    .where(eq(settlements.factVersionId, factVersionId));
+    .where(
+      and(
+        eq(settlements.factVersionId, factVersionId),
+        eq(pointLedgerEntries.sourceType, "settlement"),
+      ),
+    );
 
   return rows;
 }
@@ -225,11 +232,12 @@ export async function reverseLedgerEntriesForFact(
     idempotencyKey: string;
   },
 ): Promise<string[]> {
+  await lockLedgerSubject(tx, input.studentId);
   const entries = await loadLedgerEntriesForFact(tx, input.factVersionId);
   const reversalIds: string[] = [];
 
   for (const entry of entries) {
-    if (entry.amount <= 0 || !entry.settlementId) {
+    if (entry.amount === 0 || !entry.settlementId) {
       continue;
     }
 

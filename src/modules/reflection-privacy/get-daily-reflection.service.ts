@@ -74,6 +74,7 @@ export async function listReflectionGrants(
   db: Database,
   input: { studentId: string; familyDate: string },
 ): Promise<{ grants: ReflectionGrantDto[] }> {
+  await assertStudentAccountNotFrozen(db, input.studentId, "read");
   const [reflection] = await db
     .select()
     .from(dailyReflections)

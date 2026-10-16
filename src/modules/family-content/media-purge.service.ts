@@ -112,7 +112,8 @@ async function prepareMediaPurge(db: Database, mediaId: string, now: Date): Prom
       return {
         kind: "purge",
         mediaId: media.id,
-        safeObjectKey: media.safeObjectKey,
+        // Promotion can finish before ready finalization; that key must also be purged.
+        safeObjectKey: media.safeObjectKey ?? `safe/${media.studentId}/${media.id}`,
         stagingObjectKey: media.stagingObjectKey,
         ownedGeneration: intent.ownedGeneration,
       };
@@ -174,7 +175,7 @@ async function prepareMediaPurge(db: Database, mediaId: string, now: Date): Prom
     return {
       kind: "purge",
       mediaId: media.id,
-      safeObjectKey: media.safeObjectKey,
+      safeObjectKey: media.safeObjectKey ?? `safe/${media.studentId}/${media.id}`,
       stagingObjectKey: media.stagingObjectKey,
       ownedGeneration: nextGeneration,
     };

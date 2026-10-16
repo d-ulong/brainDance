@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { PointsTodayCard } from "@/components/m2/points-today-card";
 import { Alert, LoadingState } from "@/components/ui/page-shell";
 import { apiFetch, type SessionInfo } from "@/lib/client/api";
+import { fetchGoals } from "@/lib/client/m2-api";
+import { fetchRedemptions } from "@/lib/client/m6-api";
 import {
   buildTrainingOptions,
   fetchOwnTrainingSummary,
@@ -16,6 +18,90 @@ type LinkedStudent = {
   studentId: string;
   displayName: string;
 };
+
+function FamilyPendingActions({ students }: { students: LinkedStudent[] }) {
+  const [actions, setActions] = useState<Array<{ id: string; label: string; href: string }> | null>(
+    null,
+  );
+  const [error, setError] = useState(false);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setError(false);
+    void Promise.all([
+      fetchGoals(),
+      Promise.all(
+        students.map(async (student) => ({
+          student,
+          result: await fetchRedemptions(student.studentId),
+        })),
+      ),
+    ])
+      .then(([goals, redemptions]) => {
+        if (!alive) return;
+        setActions([
+          ...goals.goals
+            .filter((goal) => goal.canApprove || goal.canEvaluate)
+            .map((goal) => ({
+              id: goal.assignmentId,
+              label: `${goal.subjectName} · ${goal.canApprove ? "待审批目标" : "待评定目标"}：${goal.content}`,
+              href: `/parent/goals?studentId=${encodeURIComponent(goal.subjectId)}`,
+            })),
+          ...redemptions.flatMap(({ student, result }) =>
+            result.redemptions
+              .filter((item) => item.status === "pending")
+              .map((item) => ({
+                id: item.id,
+                label: `${student.displayName} · 待审批兑换 ${item.costSnapshot} 分`,
+                href: `/parent/students/${student.studentId}/redemption`,
+              })),
+          ),
+        ]);
+      })
+      .catch(() => {
+        if (alive) setError(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [students, reload]);
+
+  return (
+    <section className="bd-panel" data-testid="family-pending-actions">
+      <div className="bd-section-heading">
+        <h2>需要你处理</h2>
+        <Link href="/parent/goals">查看目标 →</Link>
+      </div>
+      {error ? (
+        <Alert tone="error">
+          待办暂时无法加载。
+          <button
+            type="button"
+            className="bd-inline-link"
+            onClick={() => setReload((value) => value + 1)}
+          >
+            重试
+          </button>
+        </Alert>
+      ) : actions === null ? (
+        <LoadingState label="加载家庭待办…" />
+      ) : actions.length ? (
+        <ul className="bd-pending-list">
+          {actions.map((action) => (
+            <li key={action.id}>
+              <Link className="bd-training-row" href={action.href}>
+                {action.label}
+                <span aria-hidden="true"> →</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="bd-caption">目前没有待审批的目标或兑换，可以看看孩子今天的进展。</p>
+      )}
+    </section>
+  );
+}
 
 function TrainingOverview() {
   const [summaries, setSummaries] = useState<SubjectTrainingSummary[] | null>(null);
@@ -106,12 +192,13 @@ export function ParentHomeDashboard({ session }: { session: SessionInfo }) {
         <div>
           <p className="bd-home-eyebrow">家庭空间 · 一起成长</p>
           <h1 className="bd-home-title">{name}，欢迎回来</h1>
-          <p className="bd-home-note">先看孩子今天的进展，再安排自己的练习。</p>
+          <p className="bd-home-note">先处理家庭待办，再看孩子今天的进展。</p>
         </div>
       </header>
 
       <div className="bd-home-columns">
         <div className="bd-home-primary flex flex-col gap-4">
+          {students?.length ? <FamilyPendingActions students={students} /> : null}
           <section className="bd-panel">
             <div className="bd-section-heading">
               <h2>学生今日概览</h2>

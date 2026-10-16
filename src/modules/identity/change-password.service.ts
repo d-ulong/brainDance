@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
-
+import { eq, sql } from "drizzle-orm";
 import type { Database } from "@/db";
-import { auditEvents, users } from "@/db/schema";
+import { auditEvents, sessions, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashPassword, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
+import { requireCredentialSession } from "@/modules/identity/credential-session";
 import { IdentityError } from "@/modules/identity/errors";
 import { assertProductPassword } from "@/modules/identity/password-policy";
 
@@ -16,7 +17,6 @@ export type ChangePasswordInput = {
   idempotencyKey: string;
   requestId?: string;
 };
-
 export type ChangePasswordResult = {
   userId: string;
   mustChangePassword: false;
@@ -33,116 +33,92 @@ export type ChangePasswordResult = {
   };
 };
 
-function auditKeyForChangePassword(userId: string, idempotencyKey: string) {
-  return `audit:change-password:${userId}:${idempotencyKey}`;
-}
-
-async function createFreshSessionCookie(db: Database, userId: string) {
-  const lucia = createLucia(db);
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) {
-    throw new IdentityError("USER_NOT_FOUND", "User not found");
-  }
-
-  await lucia.invalidateUserSessions(userId);
-  const session = await lucia.createSession(userId, {
-    authorizationEpoch: user.authorizationEpoch,
-  });
-  const sessionCookie = lucia.createSessionCookie(session.id);
-
-  return {
-    name: sessionCookie.name,
-    value: sessionCookie.value,
-    attributes: {
-      secure: sessionCookie.attributes.secure ?? false,
-      path: sessionCookie.attributes.path ?? "/",
-      httpOnly: sessionCookie.attributes.httpOnly ?? true,
-      sameSite: sessionCookie.attributes.sameSite ?? "lax",
-    },
-  };
-}
-
 export async function changePassword(
   db: Database,
   input: ChangePasswordInput,
 ): Promise<ChangePasswordResult> {
-  const auditKey = auditKeyForChangePassword(input.userId, input.idempotencyKey);
-  const [existingAudit] = await db
-    .select({ id: auditEvents.id })
-    .from(auditEvents)
-    .where(eq(auditEvents.idempotencyKey, auditKey))
-    .limit(1);
-
-  if (existingAudit) {
-    return {
-      userId: input.userId,
-      mustChangePassword: false,
-      idempotentReplay: true,
-      sessionCookie: await createFreshSessionCookie(db, input.userId),
-    };
-  }
-
   assertProductPassword(input.newPassword);
-
   if (input.currentPassword === input.newPassword) {
     throw new IdentityError("VALIDATION_ERROR", "新密码不能与当前密码相同");
   }
-
-  const [user] = await db.select().from(users).where(eq(users.id, input.userId)).limit(1);
-  if (!user) {
-    throw new IdentityError("USER_NOT_FOUND", "User not found");
-  }
-  if (user.role !== "student" && user.role !== "parent") {
-    throw new IdentityError("FORBIDDEN", "Only students or parents can change their own password");
-  }
-
-  const currentValid = await verifyPassword(input.currentPassword, user.passwordHash);
-  if (!currentValid) {
-    throw new IdentityError("INVALID_CREDENTIALS", "Current password is incorrect");
-  }
-
-  const passwordHash = await hashPassword(input.newPassword);
-  const changedAt = new Date();
-  let applied = false;
-
-  await db.transaction(async (tx) => {
-    const [auditInTx] = await tx
-      .select({ id: auditEvents.id })
+  const key = `audit:change-password:${input.userId}:${input.idempotencyKey}`;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.userId}::uuid FOR UPDATE`);
+    const { user, session } = await requireCredentialSession(
+      tx,
+      input.userId,
+      input.currentSessionId,
+    );
+    const lucia = createLucia(tx);
+    const [existing] = await tx
+      .select()
       .from(auditEvents)
-      .where(eq(auditEvents.idempotencyKey, auditKey))
+      .where(eq(auditEvents.idempotencyKey, key))
       .limit(1);
-
-    if (auditInTx) {
-      return;
+    let cookie;
+    if (existing) {
+      // Replays never revive revoked sessions or mint another session.
+      if (
+        existing.metadata?.resultEpoch !== user.authorizationEpoch ||
+        !(await verifyPassword(input.newPassword, user.passwordHash))
+      ) {
+        throw new IdentityError("IDEMPOTENCY_CONFLICT", "此改密操作已过期或参数不一致");
+      }
+      cookie = lucia.createSessionCookie(session.id);
+    } else {
+      if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+        throw new IdentityError("INVALID_CREDENTIALS", "当前密码不正确");
+      }
+      const now = new Date();
+      const epoch = user.authorizationEpoch + 1;
+      const passwordHash = await hashPassword(input.newPassword);
+      await tx
+        .update(users)
+        .set({
+          passwordHash,
+          mustChangePassword: false,
+          passwordChangedAt: now,
+          authorizationEpoch: epoch,
+          updatedAt: now,
+        })
+        .where(eq(users.id, user.id));
+      await tx.delete(sessions).where(eq(sessions.userId, user.id));
+      const renewed = await lucia.createSession(user.id, {
+        authorizationEpoch: epoch,
+        mfaVerifiedAt: session.mfaVerifiedAt,
+      });
+      cookie = lucia.createSessionCookie(renewed.id);
+      await appendAuditEvent(tx, {
+        actorId: user.id,
+        action: "auth.password_changed",
+        resourceType: "user",
+        resourceId: user.id,
+        requestId: input.requestId,
+        idempotencyKey: key,
+        metadata: { resultEpoch: epoch },
+      });
+      await appendOutboxEvent(tx, {
+        aggregateType: "user",
+        aggregateId: user.id,
+        eventType: "auth.password_changed",
+        dedupeKey: key,
+        payload: { userId: user.id, authorizationEpoch: epoch },
+      });
     }
-
-    await tx
-      .update(users)
-      .set({
-        passwordHash,
-        mustChangePassword: false,
-        passwordChangedAt: changedAt,
-        authorizationEpoch: user.authorizationEpoch + 1,
-        updatedAt: changedAt,
-      })
-      .where(eq(users.id, input.userId));
-
-    await appendAuditEvent(tx, {
-      actorId: input.userId,
-      action: "auth.password_changed",
-      resourceType: "user",
-      resourceId: input.userId,
-      requestId: input.requestId,
-      idempotencyKey: auditKey,
-    });
-
-    applied = true;
+    return {
+      userId: input.userId,
+      mustChangePassword: false,
+      idempotentReplay: Boolean(existing),
+      sessionCookie: {
+        name: cookie.name,
+        value: cookie.value,
+        attributes: {
+          secure: cookie.attributes.secure ?? false,
+          path: cookie.attributes.path ?? "/",
+          httpOnly: cookie.attributes.httpOnly ?? true,
+          sameSite: cookie.attributes.sameSite ?? "lax",
+        },
+      },
+    };
   });
-
-  return {
-    userId: input.userId,
-    mustChangePassword: false,
-    idempotentReplay: !applied,
-    sessionCookie: await createFreshSessionCookie(db, input.userId),
-  };
 }

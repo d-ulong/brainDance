@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -15,6 +16,8 @@ import {
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 
 export default function ParentLinkPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -23,18 +26,25 @@ export default function ParentLinkPage() {
   const [associationCode, setAssociationCode] = useState("");
 
   useEffect(() => {
-    void fetchSession().then((session) => {
-      if (!session || session.role !== "parent") {
-        router.replace("/login");
-        return;
-      }
-      if (!session.contactVerified) {
-        router.replace("/verify-contact");
-        return;
-      }
-      setLoading(false);
-    });
-  }, [router]);
+    setSessionFailed(false);
+    setLoading(true);
+    void fetchSession()
+      .then((session) => {
+        if (!session || session.role !== "parent") {
+          router.replace("/login");
+          return;
+        }
+        if (!session.contactVerified) {
+          router.replace("/verify-contact");
+          return;
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        setSessionFailed(true);
+        setLoading(false);
+      });
+  }, [router, sessionAttempt]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -56,6 +66,18 @@ export default function ParentLinkPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="关联学生">
@@ -65,7 +87,12 @@ export default function ParentLinkPage() {
   }
 
   return (
-    <PageShell title="关联学生" subtitle="输入学生提供的关联码" backHref="/parent/students" showLogout>
+    <PageShell
+      title="关联学生"
+      subtitle="输入学生提供的关联码"
+      backHref="/parent/students"
+      showLogout
+    >
       {success ? (
         <Alert tone="success">
           <p>关联申请已发送，请等待学生确认。</p>

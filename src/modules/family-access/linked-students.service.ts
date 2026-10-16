@@ -20,13 +20,13 @@ export async function listLinkedStudentsForParent(
       studentId: relationships.studentId,
       relationshipId: relationships.id,
       displayName: users.displayName,
-      username: users.username,
     })
     .from(relationships)
     .innerJoin(users, eq(users.id, relationships.studentId))
     .where(and(eq(relationships.parentId, parentId), eq(relationships.status, "active")));
 
-  return rows;
+  // A relationship grants accompaniment, never the student's login identifier.
+  return rows.map((row) => ({ ...row, username: null }));
 }
 
 export async function getActiveRelationshipForParent(

@@ -272,3 +272,19 @@
 1. 计划说明已被 `src/modules/schedule/plan-definition.ts` 支持为可选 `description`；补完页面状态、DTO 和卡片投影即可，不需新建 schema 或迁移。
 2. 家长学生日程页复用 `StudentScheduleWorkspace` 的 `actorMode="parent"`；不复制完成弹窗或积分摘要。后端变更在 `start-plan-item.service.ts` 和 `complete-schedule.service.ts`，route 需从 student-only session 切换为 trainee session 并显式传入 role。
 3. 回归时至少断言：有关联家长能开始/完成，代为完成的 `fact_versions.submitted_by` 是家长，学生积分 ledger 产生且金额正确；默认未指定 parent role 的旧学生调用仍只能操作自己。
+
+## 2026-10-16 独立审核整改
+
+公共首页配色漏检：`src/app/globals.css` 的 `.bd-action-card` 用 white 混色、偶数卡用 `#edf8f7`，却继承太空主题浅字。已改成 surface/text 成对token，入口标题18px、说明14px，360媒体规则保持18px。`tests/e2e/public-entry-theme.spec.ts` 使用canvas解析 computed `color(srgb ...)` 为像素颜色，真实匿名页面检查双主题×桌面/360共4项通过；最低卡片文字对比度太空10.65、糖果9.64。运行本地公共页时使用无数据库globalSetup的独立配置，不能让UI检查隐式重置正在供用户验收的库。管理员TOTP只在用户明确批准后配置，绑定材料与.env始终留在忽略目录，审计/任务记录不含密钥。
+
+主体访问门禁在 `data-lifecycle/subject-access.service.ts`；日程更正从独立 `/correct` API进入，执行revision与幂等命令表同步；计时状态以服务端running/paused/stopped为准。余额重建和实时append都先锁用户。常驻Worker先有限扫描再入既有outbox，普通删除确认后仍等30天。
+
+回归仅用显式 `DATABASE_URL` 指向 `braindance_review_test_20261016`（本地隔离PostgreSQL，127.0.0.1:55432），串行运行。纯单元用 `vitest.unit.config.ts`，不加载数据库globalSetup。安装依赖应遵守dependency-recovery规范，不用pnpm自动管理包版本覆盖用户全局目录。真实验证码/媒体扫描/TOTP配置见 `docs/identity-security-configuration.md`；代码通过并不表示真实服务已联调或试点已部署。
+
+## 2026-10-17 管理员重置与启动脚本
+
+排查入口：`admin-accounts.service.ts` / `credential-session.ts` / `change-password.service.ts` / `auth-request.ts`。旧本人改密在事务外验旧密码、重放创建新session，会与管理员重置交错覆盖凭据；现在同用户锁下复核并在单事务替换会话、审计与outbox，保留原MFA。UUID先小写规范化，避免本人重置绕过。临时密码只在首个响应出现，重放不补发，禁止日志及持久结果保存明文。
+
+隔离验证库为 `braindance_admin_reset_test_20261017`，Web独立3005。PG测试必须串行完成后才启动会写夹具的真实浏览器流程，否则TRUNCATE会抹去刚种的管理员。UI角色alert定位需避开Next route announcer。冻结学生原有删除窄能力按原契约保留。
+
+Windows启动入口委托 `scripts/start-web-and-worker.ps1`：先clean/upstream/ff-only pull，再验证PID+开始时间+完整launcher路径后终止自有树；安装锁定依赖、迁移、生产构建及启动。运行状态/日志在忽略目录 `.review-runtime/windows-launcher`。旧版无PID记录的服务手动关闭一次，不能按端口杀Docker或别的项目。工作区有未提交改动时主动退出，故本轮没有在真实仓库执行pull启动脚本。

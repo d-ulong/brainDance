@@ -68,6 +68,25 @@ export async function readSubmitAdvisoryLockState(
   return { waiting, holding };
 }
 
+/** Follow real lock dependencies when a subject row serializes commands before advisory locks. */
+async function backendIsBlockedBy(
+  monitor: postgres.Sql,
+  waitingPid: number,
+  blockerPid: number,
+): Promise<boolean> {
+  const rows = await monitor<{ blocked: boolean }[]>`
+    WITH RECURSIVE blockers(pid) AS (
+      SELECT unnest(pg_blocking_pids(${waitingPid}))
+      UNION
+      SELECT next.pid
+      FROM blockers b
+      CROSS JOIN LATERAL unnest(pg_blocking_pids(b.pid)) AS next(pid)
+    )
+    SELECT EXISTS(SELECT 1 FROM blockers WHERE pid = ${blockerPid}) AS blocked
+  `;
+  return rows[0]?.blocked === true;
+}
+
 async function waitForCondition(
   fn: () => Promise<boolean>,
   label: string,
@@ -286,6 +305,8 @@ async function unlockGateAfterObservation(
 
 export type ConcurrentSubmitRaceOptions = {
   observationTimeoutMs?: number;
+  /** Observe transitive subject-row waits in production commands; probes stay advisory-only. */
+  includeDependentLocks?: boolean;
   runnerSettleMs?: number;
   /** Test-only: force gate unlock failure after observation succeeds. */
   injectGateUnlockFailure?: GateUnlockInjection;
@@ -347,13 +368,17 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
       return promise;
     });
 
-    // Gate the first lock in the production submit chain (full-rebuild global lock for
-    // real submits; probe keys for helper isolation). Both runners can wait here before
-    // any one holds the exclusive first lock and proceeds to the competition lock.
+    // Real commands take the subject row before this advisory lock. With dependent-lock
+    // observation, every runner must be blocked directly or transitively by the gate;
+    // isolated probes retain the stricter direct advisory-lock assertions.
     await waitForCondition(
       async () => {
         const { waiting } = await readSubmitAdvisoryLockState(monitor, pids, lockKey);
-        return waiting.length >= runners.length;
+        if (!options.includeDependentLocks) return waiting.length >= runners.length;
+        const blocked = await Promise.all(
+          pids.map((pid) => backendIsBlockedBy(monitor, pid, cleanupTrace.gateBackendPid)),
+        );
+        return waiting.length >= 1 && blocked.every(Boolean);
       },
       "all submit backends waiting on gated advisory lock",
       observationTimeoutMs,
@@ -364,7 +389,13 @@ export async function runConcurrentSubmitsWithContentionEvidence<T>(
     await waitForCondition(
       async () => {
         const { waiting, holding } = await readSubmitAdvisoryLockState(monitor, pids, lockKey);
-        return holding.length >= 1 && waiting.length >= 1;
+        if (!options.includeDependentLocks) return holding.length >= 1 && waiting.length >= 1;
+        for (const holder of holding) {
+          for (const pid of pids) {
+            if (pid !== holder && (await backendIsBlockedBy(monitor, pid, holder))) return true;
+          }
+        }
+        return false;
       },
       "one submit backend holding and another waiting on gated advisory lock",
       observationTimeoutMs,

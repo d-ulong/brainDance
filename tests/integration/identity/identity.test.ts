@@ -230,7 +230,7 @@ describe.skipIf(!hasDb)("identity module", () => {
       idempotencyKey: "inv-lock",
     });
 
-    await registerParent(db, {
+    const registered = await registerParent(db, {
       invitationCode: invite.codePlaintext,
       displayName: "Parent",
       email: "lock-parent@test.local",
@@ -263,9 +263,9 @@ describe.skipIf(!hasDb)("identity module", () => {
     expect(audit.length).toBeGreaterThan(0);
 
     const securityEvents = await db.execute(sql`
-      SELECT event_type FROM login_security_events WHERE account_key = 'lock-parent@test.local'
+      SELECT event_type FROM login_security_events WHERE account_key = ${`user:${registered.userId}`} AND event_type = 'login_failed'
     `);
-    expect(securityEvents.length).toBeGreaterThanOrEqual(5);
+    expect(securityEvents).toHaveLength(5);
   });
 
   it("create invitation idempotency returns stable invitation without duplicate rows", async () => {

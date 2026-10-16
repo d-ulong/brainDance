@@ -13,6 +13,7 @@ declare module "lucia" {
     };
     DatabaseSessionAttributes: {
       authorizationEpoch: number;
+      mfaVerifiedAt?: Date | null;
     };
   }
 }
@@ -46,6 +47,7 @@ export function createLucia(db: Database) {
     }),
     getSessionAttributes: (attributes) => ({
       authorizationEpoch: attributes.authorizationEpoch,
+      mfaVerifiedAt: attributes.mfaVerifiedAt ?? null,
     }),
   });
 }

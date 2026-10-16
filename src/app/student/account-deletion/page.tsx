@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -40,6 +41,8 @@ function clearStoredDeletionRequestId(): void {
 }
 
 export default function StudentAccountDeletionPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,6 +65,8 @@ export default function StudentAccountDeletionPage() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const currentSession = await fetchSession();
       if (currentSession && currentSession.role === "student") {
@@ -93,8 +98,11 @@ export default function StudentAccountDeletionPage() {
       }
 
       router.replace("/login");
-    })();
-  }, [loadRequest, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadRequest, router, sessionAttempt]);
 
   async function onRequestDeletion() {
     if (!studentId || !acknowledged) {
@@ -219,6 +227,18 @@ export default function StudentAccountDeletionPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="账户删除">

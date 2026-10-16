@@ -1,8 +1,9 @@
 import { config } from "dotenv";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { factVersions, scheduleEvents, scheduleItems } from "@/db/schema";
+import type { Database } from "@/db";
 import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
 import { skipScheduleItem } from "@/modules/schedule/skip-schedule.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
@@ -32,6 +33,60 @@ function createGate<T>() {
     release = resolve;
   });
   return { opened, released, open, release };
+}
+
+/** Observe expiry waiting on an uncommitted terminal write, then let that write win. */
+async function raceTerminalBeforeExpiry(
+  db: Database,
+  studentId: string,
+  terminalWrite: (tx: Database) => Promise<unknown>,
+) {
+  const terminalReady = createGate<number>();
+  const persistReady = createGate<number>();
+  const releaseTerminal = createGate<void>();
+  const terminalPromise = db.transaction(async (tx) => {
+    await terminalWrite(tx);
+    const rows = await tx.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+    terminalReady.open(rows[0]!.pid);
+    await releaseTerminal.released;
+  });
+  const terminalPid = await Promise.race([
+    terminalReady.opened,
+    terminalPromise.then(() => {
+      throw new Error("Terminal transaction ended before its gate");
+    }),
+  ]);
+  const persistPromise = db.transaction(async (tx) => {
+    const rows = await tx.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+    persistReady.open(rows[0]!.pid);
+    return persistExpiredPastWindow(tx, studentId, FIXED_NOW);
+  });
+  try {
+    const persistPid = await Promise.race([
+      persistReady.opened,
+      persistPromise.then(() => {
+        throw new Error("Expiry transaction ended before its gate");
+      }),
+    ]);
+    const deadline = Date.now() + 5000;
+    let blocked = false;
+    while (Date.now() < deadline) {
+      const rows = await db.execute<{ blocked: boolean }>(sql`
+        SELECT ${terminalPid}::int = ANY(pg_blocking_pids(${persistPid}::int)) AS blocked
+      `);
+      if (rows[0]?.blocked) {
+        blocked = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(blocked).toBe(true);
+  } finally {
+    releaseTerminal.release();
+    await Promise.allSettled([terminalPromise, persistPromise]);
+  }
+  await terminalPromise;
+  expect(await persistPromise).toBe(0);
 }
 
 describe.skipIf(!hasDb)("persist expired past window", () => {
@@ -163,7 +218,7 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
     expect(otherStudentPending.every((item) => item.status === "pending")).toBe(true);
   });
 
-  it("does not overwrite item completed during persist SELECT→UPDATE race (P3-R2-01)", async () => {
+  it("waits for concurrent completion and does not overwrite its terminal status (P3-R2-01)", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
 
     const created = await createFormalPlan(db, {
@@ -190,35 +245,17 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
       .where(eq(scheduleItems.occurrenceKey, "persist-race-complete"))
       .limit(1);
 
-    const selectGate = createGate<string[]>();
-    const resumeGate = createGate<void>();
-
-    const persistPromise = db.transaction(async (tx) =>
-      persistExpiredPastWindow(tx, studentId, FIXED_NOW, {
-        testHooks: {
-          afterSelectCandidates: async (expiredIds) => {
-            selectGate.open(expiredIds);
-            await resumeGate.released;
-          },
-        },
-      }),
-    );
-
-    const selectedIds = await selectGate.opened;
-    expect(selectedIds).toContain(raceItem!.id);
-
     await enableSchedulePointRule(db, { parentId, studentId });
 
     const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
-    await completeScheduleItem(db, {
-      actorId: studentId,
-      scheduleItemId: raceItem!.id,
-      idempotencyKey: "persist-race-complete-cmd",
-      now: withinWindowNow,
-    });
-
-    resumeGate.release();
-    await persistPromise;
+    await raceTerminalBeforeExpiry(db, studentId, (tx) =>
+      completeScheduleItem(tx, {
+        actorId: studentId,
+        scheduleItemId: raceItem!.id,
+        idempotencyKey: "persist-race-complete-cmd",
+        now: withinWindowNow,
+      }),
+    );
 
     const [updated] = await db
       .select()
@@ -240,7 +277,7 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
     expect(facts).toHaveLength(1);
   });
 
-  it("does not overwrite item skipped during persist SELECT→UPDATE race (P3-R2-01)", async () => {
+  it("waits for concurrent skip and does not overwrite its terminal status (P3-R2-01)", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
 
     const created = await createFormalPlan(db, {
@@ -267,33 +304,15 @@ describe.skipIf(!hasDb)("persist expired past window", () => {
       .where(eq(scheduleItems.occurrenceKey, "persist-race-skip"))
       .limit(1);
 
-    const selectGate = createGate<string[]>();
-    const resumeGate = createGate<void>();
-
-    const persistPromise = db.transaction(async (tx) =>
-      persistExpiredPastWindow(tx, studentId, FIXED_NOW, {
-        testHooks: {
-          afterSelectCandidates: async (expiredIds) => {
-            selectGate.open(expiredIds);
-            await resumeGate.released;
-          },
-        },
+    const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
+    await raceTerminalBeforeExpiry(db, studentId, (tx) =>
+      skipScheduleItem(tx, {
+        actorId: studentId,
+        scheduleItemId: raceItem!.id,
+        idempotencyKey: "persist-race-skip-cmd",
+        now: withinWindowNow,
       }),
     );
-
-    const selectedIds = await selectGate.opened;
-    expect(selectedIds).toContain(raceItem!.id);
-
-    const withinWindowNow = new Date("2026-01-14T08:00:00.000Z");
-    await skipScheduleItem(db, {
-      actorId: studentId,
-      scheduleItemId: raceItem!.id,
-      idempotencyKey: "persist-race-skip-cmd",
-      now: withinWindowNow,
-    });
-
-    resumeGate.release();
-    await persistPromise;
 
     const [updated] = await db
       .select()

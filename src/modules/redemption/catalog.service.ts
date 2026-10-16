@@ -1,9 +1,9 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { auditEvents, redemptionCatalogItems, users } from "@/db/schema";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { RedemptionError } from "@/modules/redemption/errors";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
@@ -84,8 +84,9 @@ export async function createCatalogItem(
   input: CreateCatalogItemInput,
 ): Promise<CreateCatalogItemResult> {
   await requireVerifiedParent(db, input.parentId);
-  await requireActiveRelationship(db, input.parentId, input.studentId);
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  if (input.parentId !== input.studentId)
+    await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const payloadHash = hashIdempotencyPayload(input.body);
   const now = input.now ?? new Date();
@@ -119,6 +120,10 @@ export async function createCatalogItem(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    await requireVerifiedParent(tx, input.parentId);
+    if (input.parentId !== input.studentId)
+      await requireActiveRelationship(tx, input.parentId, input.studentId);
     const [existingInTx] = await tx
       .select()
       .from(redemptionCatalogItems)
@@ -240,8 +245,9 @@ export async function updateCatalogItem(
   input: UpdateCatalogItemInput,
 ): Promise<UpdateCatalogItemResult> {
   await requireVerifiedParent(db, input.parentId);
-  await requireActiveRelationship(db, input.parentId, input.studentId);
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  if (input.parentId !== input.studentId)
+    await requireActiveRelationship(db, input.parentId, input.studentId);
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const payloadHash = hashIdempotencyPayload({ itemId: input.itemId, ...input.body });
   const auditKey = `audit:redemption-catalog-updated:${input.idempotencyKey}`;
@@ -261,6 +267,10 @@ export async function updateCatalogItem(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    await requireVerifiedParent(tx, input.parentId);
+    if (input.parentId !== input.studentId)
+      await requireActiveRelationship(tx, input.parentId, input.studentId);
     const [auditReplay] = await tx
       .select({ resourceId: auditEvents.resourceId, metadata: auditEvents.metadata })
       .from(auditEvents)
@@ -359,18 +369,20 @@ export async function listCatalogItems(
   studentId: string,
   options: ListCatalogItemsOptions,
 ): Promise<CatalogItemDto[]> {
-  await assertStudentAccountNotFrozen(db, studentId, "read");
+  await assertSubjectAccess(db, studentId, "read");
 
   const activeOnly = options.viewerRole === "student" ? true : (options.activeOnly ?? false);
 
-  const conditions = options.viewerRole === "student"
-    ? [
-        inArray(
-          redemptionCatalogItems.creatorParentId,
-          await listActiveParentIdsForStudent(db, studentId),
-        ),
-      ]
-    : [eq(redemptionCatalogItems.studentId, studentId)];
+  const conditions =
+    options.viewerRole === "student"
+      ? [
+          sql`${redemptionCatalogItems.studentId} <> ${redemptionCatalogItems.creatorParentId}`,
+          inArray(
+            redemptionCatalogItems.creatorParentId,
+            await listActiveParentIdsForStudent(db, studentId),
+          ),
+        ]
+      : [eq(redemptionCatalogItems.studentId, studentId)];
   if (activeOnly) {
     conditions.push(eq(redemptionCatalogItems.active, true));
   }
@@ -388,7 +400,7 @@ export async function getCatalogItemForStudent(
   studentId: string,
   itemId: string,
 ): Promise<typeof redemptionCatalogItems.$inferSelect | null> {
-  await assertStudentAccountNotFrozen(db, studentId, "read");
+  await assertSubjectAccess(db, studentId, "read");
 
   const activeParentIds = await listActiveParentIdsForStudent(db, studentId);
   if (activeParentIds.length === 0) return null;
@@ -399,6 +411,7 @@ export async function getCatalogItemForStudent(
     .where(
       and(
         eq(redemptionCatalogItems.id, itemId),
+        sql`${redemptionCatalogItems.studentId} <> ${redemptionCatalogItems.creatorParentId}`,
         inArray(redemptionCatalogItems.creatorParentId, activeParentIds),
       ),
     )

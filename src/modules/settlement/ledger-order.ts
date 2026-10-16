@@ -3,6 +3,14 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { Database } from "@/db";
 import { pointLedgerEntries } from "@/db/schema";
 
+/** Sum exactly before converting back to the public JSON-safe integer contract. */
+export function sumLedgerAmounts(entries: Array<{ amount: number }>): number {
+  const total = entries.reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
+  if (total < BigInt(Number.MIN_SAFE_INTEGER) || total > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("Balance exceeds integer capacity");
+  return Number(total);
+}
+
 export const ledgerEntryOrderBy = [
   asc(pointLedgerEntries.createdAt),
   asc(pointLedgerEntries.id),
@@ -33,7 +41,7 @@ export async function resolveLastLedgerEntryForStudent(
     return null;
   }
 
-  const balance = entries.reduce((sum, entry) => sum + entry.amount, 0);
+  const balance = sumLedgerAmounts(entries);
   return { id: lastEntry.id, balance };
 }
 

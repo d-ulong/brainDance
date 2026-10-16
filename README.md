@@ -68,4 +68,4 @@ docker compose up -d
 
 ## Windows 生产环境更新
 
-停止旧 Web 与 Worker、备份生产数据库并拉取代码后：若 `pnpm-lock.yaml` 有变化，先运行 `pnpm install --frozen-lockfile`；然后运行 `scripts\start-web-and-worker.bat start`。该脚本会按顺序执行数据库迁移、当前源码生产构建，再启动 Web 与生命周期 Worker；迁移或构建失败时不会启动服务。本次更新未修改依赖锁文件，因此已有依赖完整时，拉取后可直接运行该启动脚本。
+备份生产数据库后运行 `scripts\start-web-and-worker.bat start`（本地开发用 `dev`）。脚本检查干净工作区及配置的上游分支，先 `git pull --ff-only`；成功后停止它管理的本仓库 Web/Worker，安装锁定依赖、迁移、生产构建并重新启动。检查或拉取失败时保留现有服务；迁移/构建失败不启动新服务。旧版脚本启动的未托管窗口首次须手动关闭，脚本不会按端口杀其他程序。进程状态与日志位于 `.review-runtime/windows-launcher/`。

@@ -1,11 +1,9 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-import {
-  buildDigitSpanAttemptPlan,
-} from "@/components/training/digit-span-plan";
+import { buildDigitSpanAttemptPlan } from "@/components/training/digit-span-plan";
 import { STROOP_COLORS } from "@/modules/training/constants";
 
-import type { E2eFixture } from "./ui-helpers";
+import { loginViaApi, type E2eFixture } from "./ui-helpers";
 
 export async function assertNoHorizontalScroll(page: Page) {
   const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
@@ -14,14 +12,7 @@ export async function assertNoHorizontalScroll(page: Page) {
 }
 
 async function loginApi(request: APIRequestContext, identifier: string, password: string) {
-  const response = await request.post("/api/auth/login", {
-    data: {
-      identifier,
-      password,
-      idempotencyKey: `login-${identifier}-${Date.now()}`,
-    },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
+  await loginViaApi(request, identifier, password);
 }
 
 export async function waitForReactionReady(page: Page) {
@@ -183,8 +174,7 @@ export async function completeDigitSpanTraining(page: Page) {
     await waitForDigitSpanResponsePhase(page);
 
     const meta = await readDigitSpanAttemptMeta(page);
-    const digits =
-      meta.mode === "forward" ? meta.digits : [...meta.digits].reverse();
+    const digits = meta.mode === "forward" ? meta.digits : [...meta.digits].reverse();
     await enterDigitSpanAnswer(page, digits);
 
     if (attempt < total - 1) {

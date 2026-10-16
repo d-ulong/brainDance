@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -11,6 +12,7 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const userRoleEnum = pgEnum("user_role", ["admin", "parent", "student"]);
 
@@ -38,6 +40,7 @@ export const users = pgTable(
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     passwordChangedAt: timestamp("password_changed_at", { withTimezone: true }),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    adminTotpLastStep: integer("admin_totp_last_step"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -97,6 +100,7 @@ export const sessions = pgTable("sessions", {
     .references(() => users.id, { onDelete: "cascade" }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   authorizationEpoch: integer("authorization_epoch").notNull().default(0),
+  mfaVerifiedAt: timestamp("mfa_verified_at", { withTimezone: true }),
 });
 
 export const contactVerificationCodes = pgTable(
@@ -109,6 +113,8 @@ export const contactVerificationCodes = pgTable(
     contactType: text("contact_type").notNull(),
     contactValue: text("contact_value").notNull(),
     codeHash: text("code_hash").notNull(),
+    deliveryStatus: text("delivery_status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     issueIdempotencyKey: text("issue_idempotency_key"),
@@ -118,6 +124,14 @@ export const contactVerificationCodes = pgTable(
   (table) => [
     unique("contact_verification_issue_idempotency_unique").on(table.issueIdempotencyKey),
     unique("contact_verification_verify_idempotency_unique").on(table.verifyIdempotencyKey),
+    check(
+      "contact_verification_delivery_status_check",
+      sql`${table.deliveryStatus} IN ('pending', 'sent', 'development', 'failed')`,
+    ),
+    check(
+      "contact_verification_attempt_count_check",
+      sql`${table.attemptCount} >= 0 AND ${table.attemptCount} <= 5`,
+    ),
   ],
 );
 
@@ -133,6 +147,7 @@ export const loginSecurityEvents = pgTable(
   },
   (table) => [
     index("login_security_events_account_key_idx").on(table.accountKey),
+    index("login_security_events_ip_time_idx").on(table.ipAddress, table.occurredAt),
     unique("login_security_events_idempotency_unique").on(table.idempotencyKey),
   ],
 );

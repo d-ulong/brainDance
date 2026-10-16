@@ -89,7 +89,7 @@ test.describe("M1 browser flow", () => {
     await logoutViaUi(page);
 
     await loginViaUi(page, studentUsername, initialPassword);
-    await page.waitForURL("**/student/change-password");
+    await page.waitForURL("**/change-password");
     await fillField(page, "current-password", initialPassword);
     await fillField(page, "new-password", studentPassword);
     await fillField(page, "confirm-password", studentPassword);

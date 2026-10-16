@@ -15,11 +15,14 @@ export function isLocalMediaScanSkipped(
     env.BRAIN_DANCE_MEDIA_SCANNER?.trim() !== "local-no-scan" ||
     env.LOCAL_PILOT_MODE !== "true" ||
     env.NODE_ENV === "production"
-  ) return false;
+  )
+    return false;
   try {
     const url = new URL(env.NEXT_PUBLIC_APP_URL ?? "");
-    return ["http:", "https:"].includes(url.protocol) &&
-      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    return (
+      ["http:", "https:"].includes(url.protocol) &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    );
   } catch {
     return false;
   }
@@ -63,10 +66,47 @@ export function resolveMediaScanner(
     }
     return createFailClosedProductionScanner();
   }
-  const allowTestScanner =
-    env.NODE_ENV !== "production" || env.BRAIN_DANCE_ALLOW_TEST_MEDIA_SCANNER === "true";
+  const allowTestScanner = env.NODE_ENV !== "production";
   if (scannerMode === "test-clean" && allowTestScanner) {
     return createAlwaysCleanTestScanner();
+  }
+  if (
+    scannerMode === "https-relay" &&
+    env.BRAIN_DANCE_MEDIA_SCANNER_URL &&
+    env.BRAIN_DANCE_MEDIA_SCANNER_TOKEN
+  ) {
+    try {
+      const url = new URL(env.BRAIN_DANCE_MEDIA_SCANNER_URL);
+      if (url.protocol !== "https:") return createFailClosedProductionScanner();
+      return {
+        async scan(bytes, declaredMime) {
+          try {
+            const response = await fetch(url, {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${env.BRAIN_DANCE_MEDIA_SCANNER_TOKEN}`,
+                "content-type": declaredMime,
+              },
+              body: new Uint8Array(bytes),
+              signal: AbortSignal.timeout(10_000),
+              redirect: "error",
+            });
+            if (!response.ok) return { outcome: "error", category: "scanner_unavailable" };
+            const result: unknown = await response.json();
+            if (result && typeof result === "object" && "outcome" in result) {
+              if (result.outcome === "clean") return { outcome: "clean" };
+              if (result.outcome === "rejected")
+                return { outcome: "rejected", category: "scanner_rejected" };
+            }
+            return { outcome: "error", category: "scanner_invalid_response" };
+          } catch {
+            return { outcome: "error", category: "scanner_unavailable" };
+          }
+        },
+      };
+    } catch {
+      return createFailClosedProductionScanner();
+    }
   }
   return createFailClosedProductionScanner();
 }

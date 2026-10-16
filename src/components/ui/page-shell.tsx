@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { apiLogout, fetchSession, type SessionInfo } from "@/lib/client/api";
@@ -107,13 +107,32 @@ export function PageShell({
   onBeforeNavigate,
 }: PageShellProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [session, setSession] = useState<SessionInfo | null>(null);
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   const showPageHeading = !hideHeading || Boolean(backHref);
 
   useEffect(() => {
-    if (!showLogout) return;
-    void fetchSession().then(setSession);
-  }, [showLogout]);
+    let cancelled = false;
+    setSessionFailed(false);
+    void fetchSession()
+      .then((value) => {
+        if (!cancelled) {
+          setSession(value);
+          if (value?.mustChangePassword && pathname !== "/change-password") {
+            router.replace("/change-password");
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSessionFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, router, sessionAttempt]);
 
   async function navigate(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
     event.preventDefault();
@@ -125,8 +144,13 @@ export function PageShell({
 
   async function logout() {
     if (onBeforeNavigate && !(await onBeforeNavigate())) return;
-    await apiLogout();
-    window.location.assign("/login");
+    setLogoutError(null);
+    try {
+      await apiLogout();
+      window.location.assign("/login");
+    } catch {
+      setLogoutError("退出失败，请检查网络后再次点击退出。");
+    }
   }
 
   return (
@@ -141,17 +165,19 @@ export function PageShell({
             {showLogout ? <ShellIdentityCluster session={session} /> : null}
             {showLogout ? (
               <>
-                <Link
-                  href="/account"
-                  className="bd-shell-avatar shrink-0"
-                  aria-label={session ? `账号：${shellDisplayName(session)}` : "我的账号"}
-                  data-testid="shell-account-link"
-                  onClick={(event) => void navigate(event, "/account")}
-                >
-                  <span data-testid="shell-display-name">
-                    {session ? shellDisplayName(session) : "…"}
-                  </span>
-                </Link>
+                {session?.mustChangePassword ? null : (
+                  <Link
+                    href="/account"
+                    className="bd-shell-avatar shrink-0"
+                    aria-label={session ? `账号：${shellDisplayName(session)}` : "我的账号"}
+                    data-testid="shell-account-link"
+                    onClick={(event) => void navigate(event, "/account")}
+                  >
+                    <span data-testid="shell-display-name">
+                      {session ? shellDisplayName(session) : sessionFailed ? "我的账号" : "…"}
+                    </span>
+                  </Link>
+                )}
                 <button
                   type="button"
                   className="bd-shell-logout shrink-0"
@@ -163,6 +189,22 @@ export function PageShell({
             ) : null}
           </div>
         </header>
+        {showLogout && sessionFailed ? (
+          <Alert tone="error" role="alert">
+            账号信息暂时无法加载。
+            <SecondaryButton
+              className="ml-2"
+              onClick={() => setSessionAttempt((attempt) => attempt + 1)}
+            >
+              重试账号信息
+            </SecondaryButton>
+          </Alert>
+        ) : null}
+        {logoutError ? (
+          <Alert tone="error" role="alert">
+            {logoutError}
+          </Alert>
+        ) : null}
         <div className="bd-app-body">
           {hideTabs ? null : <TopTabs onBeforeNavigate={onBeforeNavigate} />}
           <div className="bd-main-column">
@@ -202,7 +244,13 @@ export function PageShell({
             ) : (
               <h1 className="sr-only">{title}</h1>
             )}
-            <div className="bd-content flex flex-1 flex-col gap-4">{children}</div>
+            <div className="bd-content flex flex-1 flex-col gap-4">
+              {session?.mustChangePassword && pathname !== "/change-password" ? (
+                <LoadingState label="请先设置新密码…" />
+              ) : (
+                children
+              )}
+            </div>
           </div>
         </div>
       </main>
@@ -274,6 +322,19 @@ export function Toast({
 
 export function LoadingState({ label = "加载中…" }: { label?: string }) {
   return <p className="text-sm text-neutral-500">{label}</p>;
+}
+
+export function SessionLoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col gap-3" data-testid="session-load-error">
+      <Alert tone="error" role="alert">
+        登录状态暂时无法获取，请检查网络后重试。
+      </Alert>
+      <SecondaryButton onClick={onRetry} data-testid="session-retry">
+        重新获取登录状态
+      </SecondaryButton>
+    </div>
+  );
 }
 
 export function PrimaryButton({

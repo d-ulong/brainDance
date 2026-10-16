@@ -27,7 +27,7 @@ export type EndRelationshipResult = {
 async function lockUsersInOrder(tx: Database, userIds: string[]) {
   const ordered = [...new Set(userIds)].sort();
   for (const userId of ordered) {
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR NO KEY UPDATE`);
   }
 }
 
@@ -90,6 +90,13 @@ export async function endRelationship(
       return replayInTx;
     }
 
+    const [target] = await tx
+      .select({ studentId: relationships.studentId, parentId: relationships.parentId })
+      .from(relationships)
+      .where(eq(relationships.id, input.relationshipId))
+      .limit(1);
+    if (!target) throw new FamilyAccessError("RELATIONSHIP_NOT_FOUND", "Relationship not found");
+    await lockUsersInOrder(tx, [target.parentId, target.studentId]);
     await tx.execute(
       sql`SELECT id FROM relationships WHERE id = ${input.relationshipId} FOR UPDATE`,
     );

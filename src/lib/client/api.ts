@@ -70,8 +70,10 @@ type SessionCache = {
 const SESSION_CACHE_TTL_MS = 30_000;
 let sessionCache: SessionCache | null = null;
 let sessionInflight: Promise<SessionInfo | null> | null = null;
+let sessionGeneration = 0;
 
 export function clearSessionCache() {
+  sessionGeneration += 1;
   sessionCache = null;
   sessionInflight = null;
 }
@@ -85,18 +87,23 @@ export async function fetchSession(options?: { force?: boolean }): Promise<Sessi
     return sessionInflight;
   }
 
-  sessionInflight = (async () => {
+  const generation = ++sessionGeneration;
+  const pending = (async () => {
     const response = await fetch("/api/auth/session", { credentials: "same-origin" });
-    let value: SessionInfo | null = null;
-    if (response.status !== 401 && response.ok) {
-      value = (await response.json()) as SessionInfo;
+    if (response.status !== 401 && !response.ok) {
+      throw new ApiError(response.status, { error: "登录状态暂时无法获取，请重试" });
     }
-    sessionCache = { value, at: Date.now() };
-    sessionInflight = null;
+    const value = response.status === 401 ? null : ((await response.json()) as SessionInfo);
+    // An older request must not overwrite a forced refresh or a logout.
+    if (sessionGeneration === generation) sessionCache = { value, at: Date.now() };
     return value;
   })();
-
-  return sessionInflight;
+  sessionInflight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (sessionInflight === pending) sessionInflight = null;
+  }
 }
 
 export async function apiLogout(): Promise<void> {

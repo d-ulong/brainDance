@@ -11,6 +11,7 @@
 import { config } from "dotenv";
 import { randomUUID } from "node:crypto";
 
+import { enqueueDueLifecycleWork } from "../src/modules/data-lifecycle/due-work.service";
 import { getDb } from "../src/db";
 import { configureM6OutboxArtifactStore } from "../src/modules/data-lifecycle/m6-outbox-handlers";
 import { createConfiguredFilesystemArtifactStore } from "../src/modules/data-lifecycle/private-artifact-store";
@@ -23,7 +24,8 @@ const POLL_IDLE_MS = Number(process.env.LIFECYCLE_WORKER_IDLE_MS ?? "500");
 const workerId = process.env.LIFECYCLE_WORKER_ID ?? `lifecycle-worker-${randomUUID()}`;
 
 async function main() {
-  process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
+  if (process.env.NODE_ENV !== "production")
+    process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
 
   const artifactStore = createConfiguredFilesystemArtifactStore();
   configureM6OutboxArtifactStore(() => artifactStore);
@@ -45,7 +47,17 @@ async function main() {
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
+  let nextDueScanAt = 0;
   while (!stopping) {
+    if (Date.now() >= nextDueScanAt) {
+      try {
+        await enqueueDueLifecycleWork(db);
+      } catch {
+        // No payload/error text: connection errors can contain private DSNs.
+        console.error(JSON.stringify({ component: "lifecycle_worker", status: "due_scan_failed" }));
+      }
+      nextDueScanAt = Date.now() + 10_000;
+    }
     const result = await processNextOutboxEvent(db, { workerId });
     if (!result.processed) {
       await new Promise((resolve) => setTimeout(resolve, POLL_IDLE_MS));

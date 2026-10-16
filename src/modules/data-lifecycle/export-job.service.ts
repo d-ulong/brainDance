@@ -9,6 +9,12 @@ import {
   pointRedemptions,
   privateAccessGrants,
   scheduleItems,
+  scheduleTaskExecutions,
+  goalAssignments,
+  goalDefinitions,
+  goalNotes,
+  plans,
+  planActivations,
   trainingMetrics,
   trainingSessions,
   users,
@@ -20,7 +26,10 @@ import {
   type ExportScopeSnapshot,
 } from "@/modules/data-lifecycle/constants";
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
-import { buildExportScopeSnapshot } from "@/modules/data-lifecycle/export-scope.service";
+import {
+  buildExportScopeSnapshot,
+  validateExportScopeStillAuthorized,
+} from "@/modules/data-lifecycle/export-scope.service";
 import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
@@ -139,6 +148,8 @@ export async function createExportJob(
   });
 
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${input.studentId}::uuid FOR UPDATE`);
+    await validateExportScopeStillAuthorized(tx, scope, input.requesterId);
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtext(${`export.create:${input.requesterId}:${input.idempotencyKey}`}))`,
     );
@@ -320,7 +331,7 @@ async function buildExportArtifactContent(
   if (scope.includedSections.includes("profile") && profile) {
     (artifact.sections as Record<string, unknown>).profile = {
       displayName: profile.displayName,
-      username: profile.username,
+      ...(scope.requesterRole === "student" ? { username: profile.username } : {}),
       birthDate: profile.birthDate,
     };
   }
@@ -424,7 +435,85 @@ async function buildExportArtifactContent(
       .from(scheduleItems)
       .where(eq(scheduleItems.studentId, scope.studentId));
 
+    const execution = await db
+      .select({
+        scheduleItemId: scheduleTaskExecutions.scheduleItemId,
+        taskType: scheduleTaskExecutions.taskType,
+        checklist: scheduleTaskExecutions.checklist,
+        pomodoro: scheduleTaskExecutions.pomodoro,
+        revision: scheduleTaskExecutions.revision,
+      })
+      .from(scheduleTaskExecutions)
+      .innerJoin(scheduleItems, eq(scheduleItems.id, scheduleTaskExecutions.scheduleItemId))
+      .where(eq(scheduleItems.studentId, scope.studentId));
+    const planRows = await db
+      .select({
+        id: plans.id,
+        title: plans.title,
+        description: plans.description,
+        planKind: plans.planKind,
+        status: plans.status,
+        ownerId: plans.ownerId,
+        startDate: plans.startDate,
+        endDate: plans.endDate,
+      })
+      .from(plans)
+      .where(eq(plans.studentId, scope.studentId));
+    const activations = await db
+      .select({
+        id: planActivations.id,
+        bindingId: planActivations.bindingId,
+        executionPlanId: planActivations.executionPlanId,
+        effectiveFrom: planActivations.effectiveFrom,
+        effectiveUntil: planActivations.effectiveUntil,
+        definition: planActivations.definition,
+        revision: planActivations.revision,
+      })
+      .from(planActivations)
+      .where(eq(planActivations.studentId, scope.studentId));
+    const assignedGoals = await db
+      .select({
+        assignment: {
+          id: goalAssignments.id,
+          subjectId: goalAssignments.subjectId,
+          status: goalAssignments.status,
+          responsibleParentId: goalAssignments.responsibleParentId,
+          actualPoints: goalAssignments.actualPoints,
+          actualGift: goalAssignments.actualGift,
+          evaluationReason: goalAssignments.evaluationReason,
+          evaluatedAt: goalAssignments.evaluatedAt,
+          completedAt: goalAssignments.completedAt,
+        },
+        definition: {
+          id: goalDefinitions.id,
+          content: goalDefinitions.content,
+          dueDate: goalDefinitions.dueDate,
+          expectedPoints: goalDefinitions.expectedPoints,
+          expectedGift: goalDefinitions.expectedGift,
+          notes: goalDefinitions.notes,
+          horizon: goalDefinitions.horizon,
+          revision: goalDefinitions.revision,
+        },
+      })
+      .from(goalAssignments)
+      .innerJoin(goalDefinitions, eq(goalDefinitions.id, goalAssignments.definitionId))
+      .where(eq(goalAssignments.subjectId, scope.studentId));
+    const notes = await db
+      .select({
+        id: goalNotes.id,
+        assignmentId: goalNotes.assignmentId,
+        authorId: goalNotes.authorId,
+        body: goalNotes.body,
+        createdAt: goalNotes.createdAt,
+      })
+      .from(goalNotes)
+      .innerJoin(goalAssignments, eq(goalAssignments.id, goalNotes.assignmentId))
+      .where(eq(goalAssignments.subjectId, scope.studentId));
     (artifact.sections as Record<string, unknown>).schedule = items;
+    (artifact.sections as Record<string, unknown>).execution = execution;
+    (artifact.sections as Record<string, unknown>).plans = planRows;
+    (artifact.sections as Record<string, unknown>).planActivations = activations;
+    (artifact.sections as Record<string, unknown>).goals = { assignments: assignedGoals, notes };
   }
 
   if (scope.includedSections.includes("training_summary")) {
@@ -439,7 +528,14 @@ async function buildExportArtifactContent(
         finishedAt: trainingSessions.finishedAt,
       })
       .from(trainingSessions)
-      .where(eq(trainingSessions.traineeId, scope.studentId));
+      .where(
+        and(
+          eq(trainingSessions.traineeId, scope.studentId),
+          scope.requesterRole === "parent"
+            ? eq(trainingSessions.sessionKind, "effective")
+            : undefined,
+        ),
+      );
 
     const sessionSummaries = [];
 
@@ -494,6 +590,9 @@ export async function processExportJob(
   };
 
   const prepared = await db.transaction(async (tx): Promise<PreparedWork> => {
+    await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM export_jobs WHERE id = ${input.jobId}::uuid) FOR UPDATE`,
+    );
     await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
     const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);
@@ -525,8 +624,6 @@ export async function processExportJob(
     await assertStudentAccountNotFrozen(tx, job.studentId);
 
     const scope = job.scopeSnapshot as unknown as ExportScopeSnapshot;
-    const { validateExportScopeStillAuthorized } =
-      await import("@/modules/data-lifecycle/export-scope.service");
     await validateExportScopeStillAuthorized(tx, scope, job.requesterId);
 
     if (job.status === EXPORT_JOB_STATUS.PENDING) {
@@ -566,6 +663,9 @@ export async function processExportJob(
 
   try {
     const finalized = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT id FROM users WHERE id = (SELECT student_id FROM export_jobs WHERE id = ${input.jobId}::uuid) FOR UPDATE`,
+      );
       await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
       const [job] = await tx
@@ -585,6 +685,11 @@ export async function processExportJob(
       if (job.status !== EXPORT_JOB_STATUS.PROCESSING) {
         throw new DataLifecycleError("STATE_CONFLICT", "Export job finalize state conflict");
       }
+      await validateExportScopeStillAuthorized(
+        tx,
+        job.scopeSnapshot as unknown as ExportScopeSnapshot,
+        job.requesterId,
+      );
 
       await tx
         .update(exportJobs)
@@ -652,6 +757,9 @@ export async function issueExportDownloadToken(
   const expiresAt = new Date(now.getTime() + EXPORT_TOKEN_TTL_MS);
 
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM export_jobs WHERE id = ${input.jobId}::uuid) FOR UPDATE`,
+    );
     await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
     const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);
@@ -710,6 +818,9 @@ export async function deliverExportDownload(
   const tokenHash = hashDownloadToken(input.tokenPlaintext);
 
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT id FROM users WHERE id = (SELECT student_id FROM export_jobs WHERE id = ${input.jobId}::uuid) FOR UPDATE`,
+    );
     await tx.execute(sql`SELECT id FROM export_jobs WHERE id = ${input.jobId}::uuid FOR UPDATE`);
 
     const [job] = await tx.select().from(exportJobs).where(eq(exportJobs.id, input.jobId)).limit(1);

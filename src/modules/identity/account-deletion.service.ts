@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { sessions, users } from "@/db/schema";
+import { contactVerificationCodes, sessions, users } from "@/db/schema";
 
 export async function purgeStudentSessionsInTx(tx: Database, studentId: string): Promise<number> {
   const result = await tx.delete(sessions).where(eq(sessions.userId, studentId)).returning({
@@ -15,10 +15,19 @@ export async function minimizeStudentIdentityForDeletion(
   input: { studentId: string; deletionRequestId: string; now: Date },
 ): Promise<void> {
   await tx
+    .delete(contactVerificationCodes)
+    .where(eq(contactVerificationCodes.userId, input.studentId));
+  await tx
     .update(users)
     .set({
       displayName: "Deleted User",
       email: null,
+      birthDate: null,
+      passwordHash: `!deleted:${input.deletionRequestId}`,
+      contactVerifiedAt: null,
+      passwordChangedAt: null,
+      lockedUntil: null,
+      adminTotpLastStep: null,
       phone: null,
       username: sql`'deleted_' || ${input.deletionRequestId}::text`,
       status: "disabled",
@@ -32,12 +41,16 @@ export async function replayStudentIdentityTombstone(
   input: { studentId: string; deletionRequestId: string; purgedAt: Date },
 ): Promise<boolean> {
   const [user] = await tx
-    .select({ displayName: users.displayName })
+    .select({
+      displayName: users.displayName,
+      birthDate: users.birthDate,
+      passwordHash: users.passwordHash,
+    })
     .from(users)
     .where(eq(users.id, input.studentId))
     .limit(1);
 
-  if (!user || user.displayName === "Deleted User") {
+  if (!user) {
     return false;
   }
 

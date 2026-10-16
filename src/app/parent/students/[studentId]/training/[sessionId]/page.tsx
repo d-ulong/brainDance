@@ -14,18 +14,17 @@ import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { TrainingSessionReview } from "@/components/training/training-session-review";
 import { TrendsPanel } from "@/components/training/trends-panel";
 import { StudentContextBanner } from "@/components/ui/student-context-banner";
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
-import {
-  fetchStudentTrainingSession,
-  type TrainingSessionDetail,
-} from "@/lib/client/training-api";
+import { fetchStudentTrainingSession, type TrainingSessionDetail } from "@/lib/client/training-api";
 
 export default function ParentStudentTrainingResultPage({
   params,
 }: {
   params: Promise<{ studentId: string; sessionId: string }>;
 }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -50,6 +49,8 @@ export default function ParentStudentTrainingResultPage({
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       setStudentId(resolved.studentId);
@@ -72,11 +73,26 @@ export default function ParentStudentTrainingResultPage({
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadSession, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadSession, params, router, sessionAttempt]);
 
   const backHref = studentId ? `/parent/students/${studentId}/training` : "/parent/students";
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="学生训练结果">
@@ -150,7 +166,11 @@ export default function ParentStudentTrainingResultPage({
         </ul>
       </section>
       {studentId ? (
-        <TrendsPanel studentId={studentId} trainingKey={detail.trainingKey} testIdPrefix="parent-student-trends" />
+        <TrendsPanel
+          studentId={studentId}
+          trainingKey={detail.trainingKey}
+          testIdPrefix="parent-student-trends"
+        />
       ) : null}
     </PageShell>
   );

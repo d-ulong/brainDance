@@ -32,6 +32,8 @@ export async function GET(request: Request, context: RouteContext) {
       studentId,
       from: query.from,
       to: query.to,
+      actorId: dbUser.id,
+      actorRole: dbUser.role === "parent" ? "parent" : "student",
     });
 
     return NextResponse.json({ items });
@@ -41,10 +43,12 @@ export async function GET(request: Request, context: RouteContext) {
   }
 }
 
-const clearBodySchema = z.object({
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  through: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-}).strict();
+const clearBodySchema = z
+  .object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    through: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  .strict();
 
 export async function DELETE(request: Request, context: RouteContext) {
   const idempotency = requireIdempotencyKey(request);
@@ -54,15 +58,17 @@ export async function DELETE(request: Request, context: RouteContext) {
     const { studentId: rawStudentId } = await context.params;
     const studentId = m2UuidParamSchema.parse(rawStudentId);
     const body = clearBodySchema.parse(await request.json());
-    return NextResponse.json(await clearScheduleItems(db, {
-      actorId: dbUser.id,
-      actorRole: dbUser.role,
-      studentId,
-      from: body.from,
-      through: body.through,
-      idempotencyKey: idempotency.key,
-      requestId: request.headers.get("x-request-id") ?? undefined,
-    }));
+    return NextResponse.json(
+      await clearScheduleItems(db, {
+        actorId: dbUser.id,
+        actorRole: dbUser.role,
+        studentId,
+        from: body.from,
+        through: body.through,
+        idempotencyKey: idempotency.key,
+        requestId: request.headers.get("x-request-id") ?? undefined,
+      }),
+    );
   } catch (error) {
     const { status, body } = toRouteErrorResponse(error);
     return NextResponse.json(body, { status });

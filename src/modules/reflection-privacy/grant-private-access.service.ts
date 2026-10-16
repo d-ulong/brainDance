@@ -1,3 +1,4 @@
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
@@ -15,7 +16,7 @@ import {
 async function lockUsersInOrder(tx: Database, userIds: string[]) {
   const ordered = [...new Set(userIds)].sort();
   for (const userId of ordered) {
-    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR NO KEY UPDATE`);
   }
 }
 
@@ -79,6 +80,7 @@ export async function grantPrivateAccess(
   input: GrantPrivateAccessInput,
   options?: GrantPrivateAccessOptions,
 ): Promise<GrantPrivateAccessResult> {
+  await assertSubjectAccess(db, input.studentId, "write");
   const replayGrantId = await findGrantReplay(db, input.idempotencyKey, "grant");
   if (replayGrantId) {
     return {
@@ -90,6 +92,7 @@ export async function grantPrivateAccess(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "read");
     const replayInTx = await findGrantReplay(tx, input.idempotencyKey, "grant");
     if (replayInTx) {
       return {
@@ -114,6 +117,7 @@ export async function grantPrivateAccess(
     }
 
     await lockUsersInOrder(tx, [input.studentId, input.parentId]);
+    await assertSubjectAccess(tx, input.studentId, "write");
 
     const active = await hasActiveRelationship(tx, input.parentId, input.studentId);
     if (!active) {
@@ -235,6 +239,7 @@ export async function revokePrivateAccess(
   input: RevokePrivateAccessInput,
   options?: RevokePrivateAccessOptions,
 ): Promise<RevokePrivateAccessResult> {
+  await assertSubjectAccess(db, input.studentId, "read");
   const replayGrantId = await findGrantReplay(db, input.idempotencyKey, "revoke");
   if (replayGrantId) {
     return {
@@ -246,6 +251,7 @@ export async function revokePrivateAccess(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "read");
     const replayInTx = await findGrantReplay(tx, input.idempotencyKey, "revoke");
     if (replayInTx) {
       return {

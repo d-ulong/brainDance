@@ -13,7 +13,9 @@ const bodySchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const { db, user, session } = await requireAuthenticatedSession();
+    const { db, user, session } = await requireAuthenticatedSession({
+      allowPasswordChangeRequired: true,
+    });
     const body = bodySchema.parse(await request.json().catch(() => ({})));
 
     await logout(db, {
@@ -33,7 +35,7 @@ export async function POST(request: Request) {
 
 export async function GET() {
   try {
-    const { db, user } = await requireAuthenticatedSession();
+    const { db, user } = await requireAuthenticatedSession({ allowPasswordChangeRequired: true });
     const [dbUser] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
 
     return Response.json({

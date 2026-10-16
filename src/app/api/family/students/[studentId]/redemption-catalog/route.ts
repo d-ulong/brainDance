@@ -17,7 +17,8 @@ export async function GET(request: Request, context: RouteContext) {
     const { db, dbUser } = await requireAuthenticatedSession();
     const { studentId: rawStudentId } = await context.params;
     const studentId = m2UuidParamSchema.parse(rawStudentId);
-    await requireStudentReadAccess(db, dbUser, studentId);
+    if (!(dbUser.role === "parent" && dbUser.id === studentId))
+      await requireStudentReadAccess(db, dbUser, studentId);
 
     const url = new URL(request.url);
     const activeOnly = url.searchParams.get("activeOnly") === "true";

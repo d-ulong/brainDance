@@ -29,4 +29,12 @@ describe("effective-status", () => {
       ),
     ).toBe("in_progress");
   });
+  it("expires a started item at the same next-day cutoff", () => {
+    expect(
+      effectiveStatus(
+        { status: "pending", familyDate, startedAt: new Date("2026-01-01T02:00:00Z") },
+        new Date("2026-01-02T14:00:00Z"),
+      ),
+    ).toBe("expired");
+  });
 });

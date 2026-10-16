@@ -5,12 +5,14 @@ import { loginSecurityEvents, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { normalizeAccountKey, verifyPassword } from "@/lib/crypto";
 import { createLucia } from "@/lib/lucia";
+import { configuredAdminTotpSecret, verifyAdminTotp } from "@/modules/identity/totp";
 import { loginPolicy } from "@/modules/identity/login-policy";
 import { IdentityError } from "@/modules/identity/errors";
 
 export type LoginInput = {
   identifier: string;
   password: string;
+  totpCode?: string;
   ipAddress?: string;
   idempotencyKey?: string;
   requestId?: string;
@@ -96,22 +98,12 @@ async function recordSecurityEvent(
     idempotencyKey?: string;
   },
 ): Promise<void> {
-  if (input.idempotencyKey) {
-    const [existing] = await db
-      .select({ id: loginSecurityEvents.id })
-      .from(loginSecurityEvents)
-      .where(eq(loginSecurityEvents.idempotencyKey, input.idempotencyKey))
-      .limit(1);
-    if (existing) {
-      return;
-    }
-  }
-
   await db.insert(loginSecurityEvents).values({
     accountKey: input.accountKey,
     eventType: input.eventType,
     ipAddress: input.ipAddress,
-    idempotencyKey: input.idempotencyKey,
+    // Authentication evidence is never client-deduplicated.
+    idempotencyKey: undefined,
     occurredAt: sql`clock_timestamp()`,
   });
 }
@@ -119,9 +111,39 @@ async function recordSecurityEvent(
 export async function login(db: Database, input: LoginInput): Promise<LoginResult> {
   // Commit failure accounting too; serialize a known account's checks and counters.
   const outcome = await db.transaction(async (tx) => {
+    const normalized = normalizeAccountKey(input.identifier);
+    const locks = [
+      `login:account:${normalized}`,
+      ...(input.ipAddress ? [`login:ip:${input.ipAddress}`] : []),
+    ].sort();
+    for (const key of locks)
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
     const found = await findUserByIdentifier(tx, input.identifier);
     if (found) await tx.execute(sql`SELECT id FROM users WHERE id = ${found.id} FOR UPDATE`);
     try {
+      const accountKey = found ? `user:${found.id}` : normalized;
+      if (!found && (await countRecentFailures(tx, accountKey)) >= loginPolicy().maxFailures) {
+        throw new IdentityError("ACCOUNT_LOCKED", "尝试次数较多，请稍后重试");
+      }
+      if (input.ipAddress) {
+        const [counter] = await tx
+          .select({ count: sql<number>`count(*)::int` })
+          .from(loginSecurityEvents)
+          .where(
+            and(
+              eq(loginSecurityEvents.ipAddress, input.ipAddress),
+              eq(loginSecurityEvents.eventType, "login_attempt"),
+              gt(loginSecurityEvents.occurredAt, new Date(Date.now() - 15 * 60_000)),
+            ),
+          );
+        if ((counter?.count ?? 0) >= 100)
+          throw new IdentityError("RATE_LIMITED", "请求过于频繁，请稍后重试");
+      }
+      await recordSecurityEvent(tx, {
+        accountKey,
+        eventType: "login_attempt",
+        ipAddress: input.ipAddress,
+      });
       return await loginInTransaction(tx, input);
     } catch (error) {
       if (error instanceof IdentityError) return error;
@@ -134,7 +156,7 @@ export async function login(db: Database, input: LoginInput): Promise<LoginResul
 
 async function loginInTransaction(db: Database, input: LoginInput): Promise<LoginResult> {
   const user = await findUserByIdentifier(db, input.identifier);
-  const accountKey = normalizeAccountKey(input.identifier);
+  const accountKey = user ? `user:${user.id}` : normalizeAccountKey(input.identifier);
 
   if (!user) {
     await recordSecurityEvent(db, {
@@ -180,7 +202,13 @@ async function loginInTransaction(db: Database, input: LoginInput): Promise<Logi
   }
 
   const passwordValid = await verifyPassword(input.password, user.passwordHash);
-  if (!passwordValid) {
+  let mfaStep: number | null = null;
+  if (passwordValid && user.role === "admin") {
+    const secret = configuredAdminTotpSecret(user.id);
+    if (!input.totpCode) throw new IdentityError("MFA_REQUIRED", "请输入身份验证器中的六位验证码");
+    mfaStep = verifyAdminTotp(secret, input.totpCode, user.adminTotpLastStep);
+  }
+  if (!passwordValid || (user.role === "admin" && mfaStep === null)) {
     await recordSecurityEvent(db, {
       accountKey,
       eventType: "login_failed",
@@ -210,7 +238,6 @@ async function loginInTransaction(db: Database, input: LoginInput): Promise<Logi
         resourceId: user.id,
         reasonCode: "login_failures",
         requestId: input.requestId,
-        idempotencyKey: input.idempotencyKey ? `audit:lock:${input.idempotencyKey}` : undefined,
         metadata: { failureCount: failures },
       });
     }
@@ -242,9 +269,12 @@ async function loginInTransaction(db: Database, input: LoginInput): Promise<Logi
     idempotencyKey: input.idempotencyKey ? `success:${input.idempotencyKey}` : undefined,
   });
 
+  if (mfaStep !== null)
+    await db.update(users).set({ adminTotpLastStep: mfaStep }).where(eq(users.id, user.id));
   const lucia = createLucia(db);
   const session = await lucia.createSession(user.id, {
     authorizationEpoch: user.authorizationEpoch,
+    mfaVerifiedAt: user.role === "admin" ? new Date() : null,
   });
   const sessionCookie = lucia.createSessionCookie(session.id);
 
@@ -254,7 +284,6 @@ async function loginInTransaction(db: Database, input: LoginInput): Promise<Logi
     resourceType: "session",
     resourceId: null,
     requestId: input.requestId,
-    idempotencyKey: input.idempotencyKey ? `audit:login:${input.idempotencyKey}` : undefined,
   });
 
   return {
@@ -295,7 +324,10 @@ export async function validateSession(db: Database, sessionId: string) {
     return null;
   }
 
-  if (result.session.authorizationEpoch !== result.user.authorizationEpoch) {
+  if (
+    result.session.authorizationEpoch !== result.user.authorizationEpoch ||
+    (result.user.role === "admin" && !result.session.mfaVerifiedAt)
+  ) {
     await lucia.invalidateSession(sessionId);
     return null;
   }

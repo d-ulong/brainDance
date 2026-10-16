@@ -84,11 +84,21 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
       href: "/account",
       label: "我的",
       icon: "👤",
-      matches: (path) => path === "/account" || path.startsWith("/parent/change-password"),
+      matches: (path) =>
+        path === "/account" ||
+        path.startsWith("/parent/change-password") ||
+        path.startsWith("/parent/my-redemption"),
     },
   ],
   admin: [
     { id: "home", href: "/", label: "首页", icon: "🏠", matches: (path) => path === "/" },
+    {
+      id: "accounts",
+      href: "/admin/accounts",
+      label: "账号",
+      icon: "👥",
+      matches: (path) => path.startsWith("/admin/accounts"),
+    },
     {
       id: "invitations",
       href: "/admin/invitations",
@@ -101,15 +111,14 @@ const TABS_BY_ROLE: Record<SessionInfo["role"], Tab[]> = {
       href: "/account",
       label: "我的",
       icon: "🌟",
-      matches: (path) => path === "/account",
+      matches: (path) => path === "/account" || path === "/change-password",
     },
   ],
 };
 
 function mayShowTabs(session: SessionInfo | null | undefined): session is SessionInfo {
   return Boolean(
-    session &&
-    (session.role === "admin" || (session.contactVerified && !session.mustChangePassword)),
+    session && !session.mustChangePassword && (session.role === "admin" || session.contactVerified),
   );
 }
 
@@ -117,16 +126,43 @@ export function TopTabs({ onBeforeNavigate }: TopTabsProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null | undefined>(undefined);
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    void fetchSession().then((value) => {
-      if (!cancelled) setSession(value);
-    });
+    setSessionFailed(false);
+    setSession(undefined);
+    void fetchSession()
+      .then((value) => {
+        if (!cancelled) setSession(value);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSession(null);
+          setSessionFailed(true);
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sessionAttempt]);
+
+  if (sessionFailed)
+    return (
+      <nav className="bd-top-tabs" aria-label="主要功能" data-testid="top-tabs-error">
+        <p role="alert" className="text-sm">
+          导航暂时无法加载。
+        </p>
+        <button
+          type="button"
+          className="min-h-11 rounded-full border px-3"
+          onClick={() => setSessionAttempt((attempt) => attempt + 1)}
+        >
+          重试导航
+        </button>
+      </nav>
+    );
 
   // While session is loading, reserve nav space with a lightweight skeleton so the masthead
   // does not pop in after the first paint (root cause: client-only fetchSession gate).

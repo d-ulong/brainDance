@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import { config } from "dotenv";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -9,8 +8,14 @@ import { requireDatabaseUrl } from "../src/lib/env";
 import { hashPassword } from "../src/lib/crypto";
 import { changePassword } from "../src/modules/identity/change-password.service";
 import { createControlledStudent } from "../src/modules/identity/create-controlled-student.service";
+import { login } from "../src/modules/identity/login.service";
 import { seedM5TrainingDefinitions } from "../src/modules/training/definition.service";
-import { seedAdminUser } from "../src/modules/identity/seed-admin";
+import {
+  E2E_ADMIN_EMAIL,
+  E2E_ADMIN_ID,
+  E2E_ADMIN_TOTP_SECRET,
+  isolatedE2eTotpConfig,
+} from "../tests/helpers/e2e-auth-config";
 import { migrateTestDb } from "../tests/helpers/db";
 import { bootstrapVerifiedParentWithInvite } from "../tests/helpers/family-access";
 import { bootstrapCatalogItem, seedRebuildSafeStudentBalance } from "../tests/helpers/redemption";
@@ -22,28 +27,35 @@ const FIXTURE_PATH = path.join(process.cwd(), "tests/e2e/.fixture.json");
 
 async function main() {
   process.env.SESSION_SECRET ??= "test-session-secret-at-least-32-characters-long";
+  process.env.ADMIN_TOTP_SECRETS = isolatedE2eTotpConfig();
   await migrateTestDb();
 
   const db = createDb(requireDatabaseUrl());
   const runId = crypto.randomUUID().slice(0, 8);
 
-  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@local.braindance";
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "ChangeMe-Admin-123456";
-
-  await seedAdminUser(db, {
-    email: adminEmail,
-    password: adminPassword,
-    displayName: "E2E Admin",
-  });
+  const adminEmail = E2E_ADMIN_EMAIL;
+  const adminPassword = "E2eAdmin-Test-123456";
   const adminPasswordHash = await hashPassword(adminPassword);
   await db
-    .update(users)
-    .set({
+    .insert(users)
+    .values({
+      id: E2E_ADMIN_ID,
+      role: "admin",
+      email: adminEmail,
+      displayName: "E2E Admin",
       passwordHash: adminPasswordHash,
       status: "active",
-      lockedUntil: null,
+      contactVerifiedAt: new Date(),
     })
-    .where(eq(users.email, adminEmail.trim().toLowerCase()));
+    .onConflictDoUpdate({
+      target: users.id,
+      set: {
+        passwordHash: adminPasswordHash,
+        status: "active",
+        lockedUntil: null,
+        adminTotpLastStep: null,
+      },
+    });
   await seedM5TrainingDefinitions(db);
 
   const parentEmail = `e2e-parent-${runId}@test.local`;
@@ -63,9 +75,14 @@ async function main() {
     idempotencyKey: `e2e-create-student-${runId}`,
   });
 
+  const studentLogin = await login(db, {
+    identifier: studentUsername,
+    password: initialPassword,
+    idempotencyKey: `e2e-initial-login-${runId}`,
+  });
   await changePassword(db, {
     userId: created.studentId,
-    currentSessionId: "bootstrap-session",
+    currentSessionId: studentLogin.sessionId,
     currentPassword: initialPassword,
     newPassword: studentPassword,
     idempotencyKey: `e2e-change-password-${runId}`,
@@ -80,9 +97,14 @@ async function main() {
     idempotencyKey: `e2e-create-second-student-${runId}`,
   });
 
+  const secondLogin = await login(db, {
+    identifier: `e2e_student_second_${runId}`,
+    password: initialPassword,
+    idempotencyKey: `e2e-second-initial-login-${runId}`,
+  });
   await changePassword(db, {
     userId: secondCreated.studentId,
-    currentSessionId: "bootstrap-second-session",
+    currentSessionId: secondLogin.sessionId,
     currentPassword: initialPassword,
     newPassword: studentPassword,
     idempotencyKey: `e2e-change-second-password-${runId}`,
@@ -110,6 +132,7 @@ async function main() {
       {
         adminEmail,
         adminPassword,
+        adminTotpSecret: E2E_ADMIN_TOTP_SECRET,
         parentEmail,
         parentPassword,
         parentId,

@@ -2,7 +2,15 @@ import { config } from "dotenv";
 import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { factVersions, planActivations, planItemRules, planLibrary, plans, pointLedgerEntries, scheduleItems } from "@/db/schema";
+import {
+  factVersions,
+  planActivations,
+  planItemRules,
+  planLibrary,
+  plans,
+  pointLedgerEntries,
+  scheduleItems,
+} from "@/db/schema";
 import { completeScheduleItem } from "@/modules/schedule/complete-schedule.service";
 import { clearScheduleItems } from "@/modules/schedule/clear-schedule.service";
 import { queryScheduleItems } from "@/modules/schedule/schedule-query.service";
@@ -123,6 +131,12 @@ describe.skipIf(!hasDb)("plan library activation", () => {
       .limit(1);
     expect(ledger?.amount).toBe(10);
     await persistExpiredPastWindow(db, studentId, new Date("2026-01-17T10:01:00.000Z"));
+    const beforeDeadlineLedgers = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.studentId, studentId));
+    expect(beforeDeadlineLedgers.some((entry) => entry.amount === -2)).toBe(false);
+    await persistExpiredPastWindow(db, studentId, new Date("2026-01-17T14:00:00.000Z"));
     const incompleteLedgers = await db
       .select()
       .from(pointLedgerEntries)
@@ -193,9 +207,9 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     });
     expect(activated.itemsCreated).toBeGreaterThan(0);
     expect(
-      (await listStudentPlanLibrary(db, studentId)).find((plan) => plan.id === own.id)
-        ?.definition.entries[0]?.points.onTimeWithin,
-    ).toBe(0);
+      (await listStudentPlanLibrary(db, studentId)).find((plan) => plan.id === own.id)?.definition
+        .entries[0]?.points.onTimeWithin,
+    ).toBe(10);
 
     const parentPlan = await createPlanLibrary(db, {
       ownerId: parentId,
@@ -212,8 +226,14 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     });
 
     const visible = await listStudentPlanLibrary(db, studentId);
-    expect(visible.find((plan) => plan.id === own.id)).toMatchObject({ canEdit: true, boundToSelf: true });
-    expect(visible.find((plan) => plan.id === parentPlan.id)).toMatchObject({ canEdit: false, boundToSelf: true });
+    expect(visible.find((plan) => plan.id === own.id)).toMatchObject({
+      canEdit: true,
+      boundToSelf: true,
+    });
+    expect(visible.find((plan) => plan.id === parentPlan.id)).toMatchObject({
+      canEdit: false,
+      boundToSelf: true,
+    });
 
     const generated = await generatePlanLibraryRange(db, {
       ownerId: studentId,
@@ -236,7 +256,7 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("lets a parent bind, generate, and list a zero-point personal plan", async () => {
+  it("lets a parent bind, generate, and list a scoring personal plan", async () => {
     const { parentId } = await bootstrapParentStudentRelationship(db);
     const own = await createPlanLibrary(db, {
       ownerId: parentId,
@@ -253,7 +273,9 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     });
     expect(activated.itemsCreated).toBeGreaterThan(0);
     const visible = (await listPlanLibrary(db, parentId)).find((plan) => plan.id === own.id);
-    expect(visible?.bindings).toEqual(expect.arrayContaining([expect.objectContaining({ studentId: parentId })]));
+    expect(visible?.bindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ studentId: parentId })]),
+    );
     const generated = await generatePlanLibraryRange(db, {
       ownerId: parentId,
       studentId: parentId,
@@ -266,60 +288,219 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     expect(generated.itemsCreated).toBeGreaterThan(0);
     const personalPlan = await db.select().from(plans).where(eq(plans.id, activated.planId));
     expect(personalPlan[0]?.planKind).toBe("personal");
-    const personalItems = await db.select({ entry: planItemRules.entry }).from(planItemRules).innerJoin(scheduleItems, eq(scheduleItems.id, planItemRules.scheduleItemId)).where(eq(scheduleItems.planId, activated.planId));
+    const personalItems = await db
+      .select({ entry: planItemRules.entry })
+      .from(planItemRules)
+      .innerJoin(scheduleItems, eq(scheduleItems.id, planItemRules.scheduleItemId))
+      .where(eq(scheduleItems.planId, activated.planId));
     expect(personalItems.length).toBeGreaterThan(0);
-    expect(personalItems.every((item) => {
-      const entry = item.entry as typeof definition.entries[number];
-      return entry.points.onTimeWithin === 0 && entry.points.incomplete === 0;
-    })).toBe(true);
+    expect(
+      personalItems.every((item) => {
+        const entry = item.entry as (typeof definition.entries)[number];
+        return entry.points.onTimeWithin > 0;
+      }),
+    ).toBe(true);
   });
 
   it("projects started work, accepts a direct completion interval, and settles its points", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
-    const saved = await createPlanLibrary(db, { ownerId: parentId, definition, idempotencyKey: "manual-complete-library" });
-    const active = await activatePlanLibrary(db, { ownerId: parentId, studentId, libraryId: saved.id, effectiveFrom: "2026-01-15", idempotencyKey: "manual-complete-activate", now: FIXED_NOW });
-    const [reading] = await db.select().from(scheduleItems).where(and(eq(scheduleItems.planId, active.planId), eq(scheduleItems.familyDate, "2026-01-15"), eq(scheduleItems.slotKey, "reading"))).limit(1);
-    await startPlanItem(db, { actorId: studentId, scheduleItemId: reading!.id, idempotencyKey: "manual-status-start", now: new Date("2026-01-15T10:30:00.000Z") });
-    const projected = (await queryScheduleItems(db, { studentId, from: "2026-01-15", to: "2026-01-15", now: new Date("2026-01-15T10:40:00.000Z") })).find((item) => item.id === reading!.id);
+    const saved = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition,
+      idempotencyKey: "manual-complete-library",
+    });
+    const active = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      effectiveFrom: "2026-01-15",
+      idempotencyKey: "manual-complete-activate",
+      now: FIXED_NOW,
+    });
+    const [reading] = await db
+      .select()
+      .from(scheduleItems)
+      .where(
+        and(
+          eq(scheduleItems.planId, active.planId),
+          eq(scheduleItems.familyDate, "2026-01-15"),
+          eq(scheduleItems.slotKey, "reading"),
+        ),
+      )
+      .limit(1);
+    await startPlanItem(db, {
+      actorId: studentId,
+      scheduleItemId: reading!.id,
+      idempotencyKey: "manual-status-start",
+      now: new Date("2026-01-15T10:30:00.000Z"),
+    });
+    const projected = (
+      await queryScheduleItems(db, {
+        studentId,
+        from: "2026-01-15",
+        to: "2026-01-15",
+        now: new Date("2026-01-15T10:40:00.000Z"),
+      })
+    ).find((item) => item.id === reading!.id);
     expect(projected?.effectiveStatus).toBe("in_progress");
 
-    const result = await completeScheduleItem(db, { actorId: studentId, scheduleItemId: reading!.id, idempotencyKey: "manual-status-complete", body: { durationMinutes: 30 }, now: new Date("2026-01-15T11:30:00.000Z") });
+    const result = await completeScheduleItem(db, {
+      actorId: studentId,
+      scheduleItemId: reading!.id,
+      idempotencyKey: "manual-status-complete",
+      body: { durationMinutes: 30 },
+      now: new Date("2026-01-15T11:30:00.000Z"),
+    });
     expect(result.completionKind).toBe("on_time");
-    const [fact] = await db.select().from(factVersions).where(eq(factVersions.id, result.factVersionId));
+    const [fact] = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.id, result.factVersionId));
     expect(fact).toMatchObject({ sourceKind: "manual", submittedBy: studentId });
-    const [ledger] = await db.select().from(pointLedgerEntries).where(eq(pointLedgerEntries.studentId, studentId)).limit(1);
+    const [ledger] = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.studentId, studentId))
+      .limit(1);
     expect(ledger?.amount).toBe(10);
   });
 
   it("lets a related parent start and complete a student's task with an auditable points fact", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
-    const saved = await createPlanLibrary(db, { ownerId: parentId, definition, idempotencyKey: "parent-operates-library" });
-    const active = await activatePlanLibrary(db, { ownerId: parentId, studentId, libraryId: saved.id, effectiveFrom: "2026-01-15", idempotencyKey: "parent-operates-activate", now: FIXED_NOW });
-    const [reading] = await db.select().from(scheduleItems).where(and(eq(scheduleItems.planId, active.planId), eq(scheduleItems.familyDate, "2026-01-15"), eq(scheduleItems.slotKey, "reading"))).limit(1);
-    await startPlanItem(db, { actorId: parentId, actorRole: "parent", scheduleItemId: reading!.id, idempotencyKey: "parent-starts-task", now: new Date("2026-01-15T10:30:00.000Z") });
-    const result = await completeScheduleItem(db, { actorId: parentId, actorRole: "parent", scheduleItemId: reading!.id, idempotencyKey: "parent-completes-task", body: { durationMinutes: 30 }, now: new Date("2026-01-15T11:00:00.000Z") });
-    const [fact] = await db.select().from(factVersions).where(eq(factVersions.id, result.factVersionId));
-    const [ledger] = await db.select().from(pointLedgerEntries).where(eq(pointLedgerEntries.studentId, studentId)).limit(1);
+    const saved = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition,
+      idempotencyKey: "parent-operates-library",
+    });
+    const active = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: saved.id,
+      effectiveFrom: "2026-01-15",
+      idempotencyKey: "parent-operates-activate",
+      now: FIXED_NOW,
+    });
+    const [reading] = await db
+      .select()
+      .from(scheduleItems)
+      .where(
+        and(
+          eq(scheduleItems.planId, active.planId),
+          eq(scheduleItems.familyDate, "2026-01-15"),
+          eq(scheduleItems.slotKey, "reading"),
+        ),
+      )
+      .limit(1);
+    await startPlanItem(db, {
+      actorId: parentId,
+      actorRole: "parent",
+      scheduleItemId: reading!.id,
+      idempotencyKey: "parent-starts-task",
+      now: new Date("2026-01-15T10:30:00.000Z"),
+    });
+    const result = await completeScheduleItem(db, {
+      actorId: parentId,
+      actorRole: "parent",
+      scheduleItemId: reading!.id,
+      idempotencyKey: "parent-completes-task",
+      body: { durationMinutes: 30 },
+      now: new Date("2026-01-15T11:00:00.000Z"),
+    });
+    const [fact] = await db
+      .select()
+      .from(factVersions)
+      .where(eq(factVersions.id, result.factVersionId));
+    const [ledger] = await db
+      .select()
+      .from(pointLedgerEntries)
+      .where(eq(pointLedgerEntries.studentId, studentId))
+      .limit(1);
     expect(fact).toMatchObject({ sourceKind: "manual", submittedBy: parentId });
     expect(ledger?.amount).toBe(10);
   });
 
   it("clears only authorized unstarted future work and replays safely", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
-    const parentLibrary = await createPlanLibrary(db, { ownerId: parentId, definition, idempotencyKey: "clear-parent-library" });
-    const active = await activatePlanLibrary(db, { ownerId: parentId, studentId, libraryId: parentLibrary.id, effectiveFrom: "2026-01-15", idempotencyKey: "clear-parent-activate", now: FIXED_NOW });
-    const [started] = await db.select().from(scheduleItems).where(and(eq(scheduleItems.planId, active.planId), eq(scheduleItems.familyDate, "2026-01-15"), eq(scheduleItems.slotKey, "reading"))).limit(1);
-    await startPlanItem(db, { actorId: studentId, scheduleItemId: started!.id, idempotencyKey: "clear-protected-start", now: new Date("2026-01-15T10:30:00.000Z") });
+    const parentLibrary = await createPlanLibrary(db, {
+      ownerId: parentId,
+      definition,
+      idempotencyKey: "clear-parent-library",
+    });
+    const active = await activatePlanLibrary(db, {
+      ownerId: parentId,
+      studentId,
+      libraryId: parentLibrary.id,
+      effectiveFrom: "2026-01-15",
+      idempotencyKey: "clear-parent-activate",
+      now: FIXED_NOW,
+    });
+    const [started] = await db
+      .select()
+      .from(scheduleItems)
+      .where(
+        and(
+          eq(scheduleItems.planId, active.planId),
+          eq(scheduleItems.familyDate, "2026-01-15"),
+          eq(scheduleItems.slotKey, "reading"),
+        ),
+      )
+      .limit(1);
+    await startPlanItem(db, {
+      actorId: studentId,
+      scheduleItemId: started!.id,
+      idempotencyKey: "clear-protected-start",
+      now: new Date("2026-01-15T10:30:00.000Z"),
+    });
 
-    const studentAttempt = await clearScheduleItems(db, { actorId: studentId, actorRole: "student", studentId, from: "2026-01-15", through: "2026-01-20", idempotencyKey: "student-clear-parent", now: FIXED_NOW });
+    const studentAttempt = await clearScheduleItems(db, {
+      actorId: studentId,
+      actorRole: "student",
+      studentId,
+      from: "2026-01-15",
+      through: "2026-01-20",
+      idempotencyKey: "student-clear-parent",
+      now: FIXED_NOW,
+    });
     expect(studentAttempt.clearedCount).toBe(0);
-    const parentResult = await clearScheduleItems(db, { actorId: parentId, actorRole: "parent", studentId, from: "2026-01-15", through: "2026-01-20", idempotencyKey: "parent-clear", now: FIXED_NOW });
+    const parentResult = await clearScheduleItems(db, {
+      actorId: parentId,
+      actorRole: "parent",
+      studentId,
+      from: "2026-01-15",
+      through: "2026-01-20",
+      idempotencyKey: "parent-clear",
+      now: FIXED_NOW,
+    });
     expect(parentResult.clearedCount).toBeGreaterThan(0);
-    const [protectedItem] = await db.select().from(scheduleItems).where(eq(scheduleItems.id, started!.id));
+    const [protectedItem] = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.id, started!.id));
     expect(protectedItem?.status).toBe("pending");
-    const replay = await clearScheduleItems(db, { actorId: parentId, actorRole: "parent", studentId, from: "2026-01-15", through: "2026-01-20", idempotencyKey: "parent-clear", now: FIXED_NOW });
-    expect(replay).toMatchObject({ clearedCount: parentResult.clearedCount, idempotentReplay: true });
-    await expect(clearScheduleItems(db, { actorId: parentId, actorRole: "parent", studentId, from: "2026-01-15", through: "2026-04-15", idempotencyKey: "parent-clear-too-long", now: FIXED_NOW })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    const replay = await clearScheduleItems(db, {
+      actorId: parentId,
+      actorRole: "parent",
+      studentId,
+      from: "2026-01-15",
+      through: "2026-01-20",
+      idempotencyKey: "parent-clear",
+      now: FIXED_NOW,
+    });
+    expect(replay).toMatchObject({
+      clearedCount: parentResult.clearedCount,
+      idempotentReplay: true,
+    });
+    await expect(
+      clearScheduleItems(db, {
+        actorId: parentId,
+        actorRole: "parent",
+        studentId,
+        from: "2026-01-15",
+        through: "2026-04-15",
+        idempotencyKey: "parent-clear-too-long",
+        now: FIXED_NOW,
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
   it("removes an active student binding without deleting prior facts or charging a penalty", async () => {
     const { parentId, studentId } = await bootstrapParentStudentRelationship(db);
@@ -403,11 +584,16 @@ describe.skipIf(!hasDb)("plan library activation", () => {
       .where(and(eq(planActivations.studentId, studentId), isNull(planActivations.effectiveUntil)));
     expect(active).toHaveLength(2);
     expect(active.some((row) => row.executionPlanId === replacement.planId)).toBe(true);
-    const sameTime = await db.select().from(scheduleItems).where(and(
-      eq(scheduleItems.studentId, studentId),
-      eq(scheduleItems.familyDate, "2026-01-16"),
-      eq(scheduleItems.slotKey, "reading"),
-    ));
+    const sameTime = await db
+      .select()
+      .from(scheduleItems)
+      .where(
+        and(
+          eq(scheduleItems.studentId, studentId),
+          eq(scheduleItems.familyDate, "2026-01-16"),
+          eq(scheduleItems.slotKey, "reading"),
+        ),
+      );
     const high = sameTime.find((item) => item.planId === replacement.planId);
     const low = sameTime.find((item) => item.planId !== replacement.planId);
     expect(high?.suppressedByScheduleItemId).toBeNull();
@@ -444,7 +630,9 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     const legacyFutureItems = await db
       .select()
       .from(scheduleItems)
-      .where(and(eq(scheduleItems.planId, legacy.planId), eq(scheduleItems.familyDate, "2026-01-16")));
+      .where(
+        and(eq(scheduleItems.planId, legacy.planId), eq(scheduleItems.familyDate, "2026-01-16")),
+      );
     expect(legacyFutureItems).not.toHaveLength(0);
     expect(legacyFutureItems.every((item) => item.status === "pending")).toBe(true);
   });
@@ -479,6 +667,13 @@ describe.skipIf(!hasDb)("plan library activation", () => {
       generatedFrom: "2026-01-16",
       generatedThrough: "2026-01-20",
     });
+    const beforeBinding = await db
+      .select({ id: scheduleItems.id })
+      .from(scheduleItems)
+      .where(
+        and(eq(scheduleItems.studentId, studentId), eq(scheduleItems.familyDate, "2026-01-15")),
+      );
+    expect(beforeBinding).toHaveLength(0);
   });
 
   it("projects entry description snapshot and generatedDatesByStudent from schedule facts", async () => {
@@ -613,5 +808,4 @@ describe.skipIf(!hasDb)("plan library activation", () => {
     expect(listed.every((item) => item.status !== "cancelled")).toBe(true);
     expect(listed.some((item) => item.status === "pending")).toBe(true);
   });
-
 });

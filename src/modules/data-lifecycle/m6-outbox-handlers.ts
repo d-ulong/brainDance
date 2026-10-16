@@ -1,3 +1,8 @@
+import { archiveAdultStudent, processDueSchedule } from "@/modules/data-lifecycle/due-work.service";
+import {
+  getDeletionRequest,
+  processDeletionWorker,
+} from "@/modules/data-lifecycle/deletion-request.service";
 import type { Database } from "@/db";
 import { processExportJob } from "@/modules/data-lifecycle/export-job.service";
 import {
@@ -24,6 +29,53 @@ function requireArtifactStore(): PrivateArtifactStore {
 }
 
 const M6_EVENT_HANDLERS: ReadonlyMap<string, ReadonlyMap<number, M6OutboxHandler>> = new Map([
+  [
+    "lifecycle.schedule_due",
+    new Map<number, M6OutboxHandler>([
+      [
+        1,
+        async (db, event) => {
+          const { studentId, scheduleItemId } = event.payload;
+          if (typeof studentId !== "string" || typeof scheduleItemId !== "string")
+            throw new Error("Invalid schedule due payload");
+          await processDueSchedule(db, studentId, scheduleItemId);
+        },
+      ],
+    ]),
+  ],
+  [
+    "lifecycle.deletion_due",
+    new Map<number, M6OutboxHandler>([
+      [
+        1,
+        async (db, event) => {
+          if (typeof event.payload.requestId !== "string")
+            throw new Error("Invalid deletion due payload");
+          const request = await getDeletionRequest(db, event.payload.requestId);
+          if (!request || request.status === "cancelled") return;
+          const result = await processDeletionWorker(db, {
+            requestId: event.payload.requestId,
+            artifactStore: requireArtifactStore(),
+          });
+          if (!result.executed && result.status !== "executed" && result.status !== "cancelled")
+            throw new Error("Deletion due condition changed");
+        },
+      ],
+    ]),
+  ],
+  [
+    "lifecycle.age_due",
+    new Map<number, M6OutboxHandler>([
+      [
+        1,
+        async (db, event) => {
+          if (typeof event.payload.studentId !== "string")
+            throw new Error("Invalid age due payload");
+          await archiveAdultStudent(db, event.payload.studentId);
+        },
+      ],
+    ]),
+  ],
   ["export.requested", new Map<number, M6OutboxHandler>([[1, handleExportRequestedV1]])],
 ]);
 

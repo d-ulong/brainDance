@@ -24,7 +24,13 @@ import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
+import {
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  SecondaryButton,
+} from "@/components/ui/page-shell";
 
 type Phase = "intro" | "stimulus" | "response";
 
@@ -230,7 +236,8 @@ export function DigitSpanTrainingRunner({
 
     const expected = expectedDigitSpanResponse(attempt);
     const correct =
-      digits.length === expected.length && digits.every((digit, index) => digit === expected[index]);
+      digits.length === expected.length &&
+      digits.every((digit, index) => digit === expected[index]);
 
     try {
       await lifecycle.appendEvent("span.response", {
@@ -323,6 +330,7 @@ export function DigitSpanTrainingRunner({
     return (
       <PageShell title="数字广度" backHref={lifecycle.hubPath}>
         <Alert tone="error">{lifecycle.error}</Alert>
+        <PrimaryButton onClick={lifecycle.retryAuthentication}>重新准备训练</PrimaryButton>
       </PageShell>
     );
   }
@@ -354,7 +362,9 @@ export function DigitSpanTrainingRunner({
           网络不稳定，正在重试提交…
         </Alert>
       ) : null}
-      {lifecycle.error && uiPhase !== "intro" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
+      {lifecycle.error && uiPhase !== "intro" ? (
+        <Alert tone="error">{lifecycle.error}</Alert>
+      ) : null}
 
       {uiPhase === "intro" ? (
         <section className="bd-training-intro space-y-4" data-testid="digit-span-intro">
@@ -373,7 +383,8 @@ export function DigitSpanTrainingRunner({
             </li>
           </ul>
           <p className="text-sm text-slate-600">
-            各难度均为 16 次；长度从 4 位起。整串显示：≤5 位 2 秒，6–8 位 4 秒，9–14 位 7 秒，15 位及以上 10 秒。
+            各难度均为 16 次；长度从 4 位起。整串显示：≤5 位 2 秒，6–8 位 4 秒，9–14 位 7 秒，15
+            位及以上 10 秒。
           </p>
           <fieldset className="space-y-2">
             <legend className="text-sm font-semibold text-slate-800">难度</legend>
@@ -433,10 +444,7 @@ export function DigitSpanTrainingRunner({
               data-digits={currentAttempt.digits.join(",")}
               data-phase={phase}
             >
-              <div
-                className="flex flex-wrap items-stretch gap-3"
-                data-testid="digit-span-cues"
-              >
+              <div className="flex flex-wrap items-stretch gap-3" data-testid="digit-span-cues">
                 <div
                   className={[
                     "min-w-[7.5rem] flex-1 rounded-2xl border-2 px-4 py-3 text-center",
@@ -466,7 +474,10 @@ export function DigitSpanTrainingRunner({
               </div>
               {phase === "stimulus" ? (
                 <>
-                  <p className="mt-4 text-sm font-medium text-neutral-600" data-testid="digit-stimulus-label">
+                  <p
+                    className="mt-4 text-sm font-medium text-neutral-600"
+                    data-testid="digit-stimulus-label"
+                  >
                     {sequential ? "请记住依次出现的数字" : "请记住以下数字序列"}
                   </p>
                   <p
@@ -480,9 +491,7 @@ export function DigitSpanTrainingRunner({
                 <p
                   className={[
                     "mt-4 rounded-xl px-3 py-2 text-base font-bold",
-                    isBackward
-                      ? "bg-amber-100 text-amber-950"
-                      : "bg-sky-100 text-sky-950",
+                    isBackward ? "bg-amber-100 text-amber-950" : "bg-sky-100 text-sky-950",
                   ].join(" ")}
                   data-testid="digit-recall-prompt"
                 >

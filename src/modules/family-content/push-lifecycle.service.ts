@@ -6,6 +6,7 @@ import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   assertCanAccessPush,
   assertStudentNotFrozenForFamilyContent,
+  lockPushSubjectForWrite,
   loadPushOrThrow,
   requireCreatorOwnership,
   requireParentLinkedToStudent,
@@ -66,6 +67,9 @@ export async function editFamilyPush(
   });
   const auditKey = pushCommandAuditKey(input.idempotencyKey);
 
+  const authorizationPush = await loadPushOrThrow(db, input.pushId);
+  await assertStudentNotFrozenForFamilyContent(db, authorizationPush.studentId, "write");
+  await requireCreatorOwnership(db, { actorId: input.actorId, push: authorizationPush });
   const replay = await findAuditReplay(db, auditKey);
   if (replay) {
     assertAuditReplayMatch({
@@ -78,6 +82,11 @@ export async function editFamilyPush(
   }
 
   return db.transaction(async (tx) => {
+    await lockPushSubjectForWrite(tx, input.pushId);
+    await requireCreatorOwnership(tx, {
+      actorId: input.actorId,
+      push: await loadPushOrThrow(tx, input.pushId),
+    });
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
 
     const replayInTx = await findAuditReplay(tx, auditKey);
@@ -205,6 +214,9 @@ export async function transitionFamilyPush(
   const auditKey = pushCommandAuditKey(input.idempotencyKey);
   const canEdit = input.action !== "delete";
 
+  const authorizationPush = await loadPushOrThrow(db, input.pushId);
+  await assertStudentNotFrozenForFamilyContent(db, authorizationPush.studentId, "write");
+  await requireCreatorOwnership(db, { actorId: input.actorId, push: authorizationPush });
   const replay = await findAuditReplay(db, auditKey);
   if (replay) {
     assertAuditReplayMatch({
@@ -220,6 +232,11 @@ export async function transitionFamilyPush(
   }
 
   return db.transaction(async (tx) => {
+    await lockPushSubjectForWrite(tx, input.pushId);
+    await requireCreatorOwnership(tx, {
+      actorId: input.actorId,
+      push: await loadPushOrThrow(tx, input.pushId),
+    });
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
 
     const replayInTx = await findAuditReplay(tx, auditKey);
@@ -417,9 +434,7 @@ export async function listFamilyPushes(
       count: sql<number>`count(*)::int`,
     })
     .from(pushAnswers)
-    .where(
-      and(inArray(pushAnswers.pushId, pushIds), eq(pushAnswers.studentId, input.studentId)),
-    )
+    .where(and(inArray(pushAnswers.pushId, pushIds), eq(pushAnswers.studentId, input.studentId)))
     .groupBy(pushAnswers.pushId);
   const commentRows = await db
     .select({

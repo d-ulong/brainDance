@@ -31,9 +31,11 @@ export async function completeReactionSession(
     reactionMs?: number;
     correctTrials?: number;
     trialCount?: number;
+    /** Preserve an explicitly installed protocol version instead of reseeding defaults. */
+    seedDefinitions?: boolean;
   },
 ) {
-  await ensureM5TrainingDefinitions(db);
+  if (input?.seedDefinitions !== false) await ensureM5TrainingDefinitions(db);
 
   const reactionMs = input?.reactionMs ?? 350;
 

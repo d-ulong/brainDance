@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { asc, eq, sql } from "drizzle-orm";
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { auditEvents, outboxEvents, pointBalanceProjection, pointLedgerEntries } from "@/db/schema";
@@ -220,11 +221,19 @@ describe.skipIf(!hasDb)("m3 projection rebuild cli", () => {
 
   it("R07-04 CLI rejects invalid student-id without leaking database errors", () => {
     try {
-      execFileSync("tsx scripts/rebuild-projection.ts --student-id not-a-uuid", {
-        encoding: "utf8",
-        stdio: "pipe",
-        shell: true,
-      });
+      execFileSync(
+        process.execPath,
+        [
+          path.resolve("node_modules/tsx/dist/cli.mjs"),
+          "scripts/rebuild-projection.ts",
+          "--student-id",
+          "not-a-uuid",
+        ],
+        {
+          encoding: "utf8",
+          stdio: "pipe",
+        },
+      );
       throw new Error("Expected CLI failure");
     } catch (error) {
       const err = error as { stderr?: string; stdout?: string; message?: string; status?: number };

@@ -3,10 +3,19 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { Alert, Field, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  Field,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 
 export default function AdminInvitationsPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -15,18 +24,25 @@ export default function AdminInvitationsPage() {
   const [invitationCode, setInvitationCode] = useState<string | null>(null);
 
   useEffect(() => {
-    void fetchSession().then((session) => {
-      if (!session) {
-        router.replace("/login");
-        return;
-      }
-      if (session.role !== "admin") {
-        router.replace("/");
-        return;
-      }
-      setLoading(false);
-    });
-  }, [router]);
+    setSessionFailed(false);
+    setLoading(true);
+    void fetchSession()
+      .then((session) => {
+        if (!session) {
+          router.replace("/login");
+          return;
+        }
+        if (session.role !== "admin") {
+          router.replace("/");
+          return;
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        setSessionFailed(true);
+        setLoading(false);
+      });
+  }, [router, sessionAttempt]);
 
   async function createInvitation() {
     setSubmitting(true);
@@ -51,6 +67,18 @@ export default function AdminInvitationsPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="创建邀请码">

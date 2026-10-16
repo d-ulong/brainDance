@@ -57,6 +57,7 @@ export type TrainingSessionLifecycle = {
   hubPath: string;
   isInteractionAllowed: () => boolean;
   beginSession: () => Promise<StartTrainingSessionResult | null>;
+  retryAuthentication: () => void;
   appendEvent: (
     eventType: string,
     payload: Record<string, unknown>,
@@ -72,6 +73,7 @@ export function useTrainingSessionLifecycle(
 ): TrainingSessionLifecycle {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [authenticationAttempt, setAuthenticationAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<StartTrainingSessionResult | null>(null);
   const [starting, setStarting] = useState(false);
@@ -205,6 +207,8 @@ export function useTrainingSessionLifecycle(
   }, [trainingKey]);
 
   useEffect(() => {
+    setLoading(true);
+    setError(null);
     void (async () => {
       const auth = await fetchSession();
       if (!auth || auth.role !== options.role) {
@@ -233,8 +237,12 @@ export function useTrainingSessionLifecycle(
 
       await beginSession();
       setLoading(false);
-    })();
-  }, [beginSession, options.deferSessionStart, options.role, router]);
+    })().catch(() => {
+      authReadyRef.current = false;
+      setError("登录状态暂时无法获取，请检查网络后重试。");
+      setLoading(false);
+    });
+  }, [authenticationAttempt, beginSession, options.deferSessionStart, options.role, router]);
 
   const submitSession = useCallback(async () => {
     const activeSession = sessionRef.current;
@@ -317,6 +325,7 @@ export function useTrainingSessionLifecycle(
     hubPath: options.hubPath,
     isInteractionAllowed,
     beginSession,
+    retryAuthentication: () => setAuthenticationAttempt((attempt) => attempt + 1),
     appendEvent,
     submitSession,
     navigateToResult,

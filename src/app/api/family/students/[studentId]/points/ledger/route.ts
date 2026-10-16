@@ -20,7 +20,9 @@ export async function GET(request: Request, context: RouteContext) {
       limit: url.searchParams.get("limit") ?? undefined,
     });
 
-    await requireStudentReadAccess(db, dbUser, studentId);
+    if (!(dbUser.role === "parent" && dbUser.id === studentId)) {
+      await requireStudentReadAccess(db, dbUser, studentId);
+    }
 
     const entries = await queryPointsLedger(db, studentId, query.limit);
     return NextResponse.json({ entries });

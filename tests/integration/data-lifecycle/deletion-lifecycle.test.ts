@@ -138,7 +138,11 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
     });
 
     await expect(
-      processDeletionWorker(db, { requestId: created.requestId, artifactStore }),
+      processDeletionWorker(db, {
+        requestId: created.requestId,
+        artifactStore,
+        now: created.revocableUntil,
+      }),
     ).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
 
     await confirmDeletionRequest(db, {
@@ -147,9 +151,16 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
       idempotencyKey: "student-confirm",
     });
 
+    const early = await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: new Date(created.revocableUntil.getTime() - 1),
+    });
+    expect(early.executed).toBe(false);
     const executed = await processDeletionWorker(db, {
       requestId: created.requestId,
       artifactStore,
+      now: created.revocableUntil,
     });
 
     expect(executed.status).toBe("executed");
@@ -185,7 +196,11 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
       idempotencyKey: "confirm-purge",
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     const [user] = await db.select().from(users).where(eq(users.id, student.studentId)).limit(1);
     expect(user!.displayName).toBe("Deleted User");
@@ -240,8 +255,16 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
       idempotencyKey: "confirm-idempotent",
     });
 
-    const first = await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
-    const second = await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    const first = await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
+    const second = await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     expect(first.executed).toBe(true);
     expect(second.executed).toBe(false);
@@ -285,7 +308,11 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
       idempotencyKey: "confirm-tombstone",
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     await db.transaction(async (tx) => {
       await tx
@@ -352,7 +379,11 @@ describe.skipIf(!hasDb)("M6 P2 deletion lifecycle", () => {
       idempotencyKey: "confirm-reflection-del",
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     const [purged] = await db
       .select()

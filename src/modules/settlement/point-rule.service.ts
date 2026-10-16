@@ -9,7 +9,7 @@ import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
 import { hashIdempotencyPayload } from "@/modules/schedule/normalize-idempotency-payload";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { SettlementError } from "@/modules/settlement/errors";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 
 export const SCHEDULE_SYSTEM_COMPLETE_V1 = "schedule_system_complete_v1" as const;
 export const SCHEDULE_ERROR_COUNT_V1 = "schedule_error_count_v1" as const;
@@ -161,7 +161,7 @@ export async function enablePointRule(
     throw error;
   }
 
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const bodyHash = hashIdempotencyPayload(input.body);
 
@@ -218,6 +218,8 @@ export async function enablePointRule(
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectAccess(tx, input.studentId, "write");
+      await requireActiveRelationship(tx, input.parentId, input.studentId);
       const [rule] = await tx
         .insert(pointRules)
         .values({
@@ -313,4 +315,77 @@ export async function enablePointRule(
     }
     throw error;
   }
+}
+
+/** Create the immutable scoring versions for one plan activation. Caller owns
+ * schedule creation in the same transaction; settlement owns its rule tables. */
+export async function createFrozenPlanEntryRules(
+  tx: Database,
+  input: {
+    studentId: string;
+    creatorId: string;
+    executionPlanId: string;
+    payloadHash: string;
+    entries: Array<{ key: string; points: Record<string, number> }>;
+    now: Date;
+  },
+): Promise<{ ruleId: string; ruleVersionByEntryKey: Map<string, string> }> {
+  if (
+    !input.entries.length ||
+    new Set(input.entries.map((entry) => entry.key)).size !== input.entries.length
+  )
+    throw new SettlementError("VALIDATION_ERROR", "Invalid plan entry keys");
+  const [rule] = await tx
+    .insert(pointRules)
+    .values({
+      studentId: input.studentId,
+      creatorParentId: input.creatorId,
+      templateId: "plan_entry_conditions_v1",
+      active: false,
+      createIdempotencyKey: `plan-activation:${input.executionPlanId}`,
+      createIdempotencyPayloadHash: input.payloadHash,
+      createdAt: input.now,
+    })
+    .returning({ id: pointRules.id });
+  if (!rule) throw new SettlementError("STATE_CONFLICT", "Plan scoring rule insert failed");
+  const versions = await tx
+    .insert(pointRuleVersions)
+    .values(
+      input.entries.map((entry, index) => ({
+        pointRuleId: rule.id,
+        version: index + 1,
+        parameters: { entryKey: entry.key },
+        effect: entry.points,
+        effectiveAt: input.now,
+        status: "active",
+      })),
+    )
+    .returning({ id: pointRuleVersions.id, version: pointRuleVersions.version });
+  const ruleVersionByEntryKey = new Map(
+    input.entries.map((entry, index) => {
+      const version = versions.find((row) => row.version === index + 1);
+      if (!version) throw new SettlementError("STATE_CONFLICT", "Plan scoring version missing");
+      return [entry.key, version.id];
+    }),
+  );
+  return { ruleId: rule.id, ruleVersionByEntryKey };
+}
+
+export async function loadFrozenPlanEntryRuleVersions(
+  tx: Database,
+  ruleId: string,
+  entryKeys: string[],
+): Promise<Map<string, string>> {
+  const versions = await tx
+    .select({ id: pointRuleVersions.id, version: pointRuleVersions.version })
+    .from(pointRuleVersions)
+    .where(eq(pointRuleVersions.pointRuleId, ruleId));
+  return new Map(
+    entryKeys.map((key, index) => {
+      const version = versions.find((row) => row.version === index + 1);
+      if (!version)
+        throw new SettlementError("STATE_CONFLICT", "Frozen plan scoring version missing");
+      return [key, version.id];
+    }),
+  );
 }

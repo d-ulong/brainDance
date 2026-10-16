@@ -32,7 +32,7 @@ Use this contract whenever a schedule execution fact, effective status, completi
 | End and duration both supplied | `VALIDATION_ERROR`, HTTP 400 |
 | Start/end invalid, reversed, or future | `VALIDATION_ERROR`, HTTP 400 |
 | Duration mode pushes end past now | `VALIDATION_ERROR` with copy about start+duration, not a blank end-time field |
-| Ordinary completion after the next-day 18:00 cutoff | completion-window error; no positive settlement |
+| Ordinary completion at or after the next-day 22:00 cutoff | completion-window error; no positive settlement |
 | Student clears a parent-owned item | item remains unchanged |
 | Parent lacks an active relationship | forbidden |
 | Range starts before today, exceeds today + 89, or spans over 90 days | `VALIDATION_ERROR`, HTTP 400 |
@@ -71,3 +71,13 @@ await recordStartedAt(itemId);
 return queryScheduleItems(studentId, range);
 ```
 
+
+## 8. Versioned execution correction (2026-10-16)
+
+- `PATCH /api/schedule-items/:itemId/execution` requires `expectedRevision`, optional full `checklist`, `pomodoroAction: start|pause|resume|stop`, `subtaskId` and correction `reason`. Same key/payload replays the first result; another payload or stale revision conflicts. Preserve title/difficulty/duration/interval/timer metadata through every query and update.
+- `POST /api/schedule-items/:itemId/correct` requires revision and a reason (2–500 characters), accepts start/end or duration, checklist and final pomodoro data. It creates a successor completion fact and signed reversal/new settlement in one transaction. Student edits close at next midnight after the planned date; parent edits close after day60 (day61 midnight).
+- Completion freezes execution and stops running/paused task and homework subtask timers. Timer states are running, paused, stopped. Inputs are execution interval, pause time and pause count; focused seconds are derived consistently. Browser time only renders the authoritative state.
+- A corrected completed fact may contain `execution.all_completed=false`; status remains completed so correction history/window persists, but scoring uses the incomplete rule. DTO `executionAllCompleted=false` must display an explicit incomplete correction warning, never an all-done celebration.
+- Query returns `executionRevision`, completion/actual duration, `canStart`, `canComplete`, `canEditExecution`, `canCorrect`, deadlines and suppression source. UI obeys these capabilities. Deadline wins over in-progress projection. Start is permitted on plan day or next day before22:00; a next-day start remains late against the original frozen scoring threshold.
+- Equal maximal priorities coexist. Strictly lower tasks are suppressed, preserved and excluded from actionable counts; removing the higher binding reconciles and uncovers eligible lower tasks.
+- Test two clients at the same revision (one succeeds); same-key changed payload (conflict); repeated signed corrections (exact sum); next-day start/completion; paused completion; day60 parent/day1 student boundaries; priorities10/10/5; completed task with unchecked child.

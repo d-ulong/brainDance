@@ -149,7 +149,7 @@ describe.skipIf(!hasDb)("account experience contracts", () => {
       .where(eq(users.id, parentId));
     await db.insert(loginSecurityEvents).values(
       Array.from({ length: 5 }, () => ({
-        accountKey: "lock-new@test.local",
+        accountKey: `user:${parentId}`,
         eventType: "login_failed",
         occurredAt: new Date(Date.now() - 500),
       })),
@@ -165,7 +165,7 @@ describe.skipIf(!hasDb)("account experience contracts", () => {
         .from(loginSecurityEvents)
         .where(
           and(
-            eq(loginSecurityEvents.accountKey, "lock-new@test.local"),
+            eq(loginSecurityEvents.accountKey, `user:${parentId}`),
             eq(loginSecurityEvents.eventType, "account_unlocked"),
           ),
         ),

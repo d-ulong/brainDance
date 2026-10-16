@@ -1,11 +1,13 @@
-import { addFamilyDays } from "@/modules/time-policy/add-family-days";
-import { familyLocalInstant } from "@/modules/time-policy/family-local-instant";
+import {
+  completionWindowEnd,
+  isPastCompletionWindow,
+} from "@/modules/time-policy/completion-window";
 
-/** Plan-item completion and automatic non-completion are finalized at 18:00 next family day. */
+/** Uses the same exclusive cutoff as ordinary completion. */
 export function planSettlementDeadline(familyDate: string): Date {
-  return familyLocalInstant(addFamilyDays(familyDate, 1), "18:00:00.000");
+  return completionWindowEnd(familyDate);
 }
 
 export function isPastPlanSettlementDeadline(familyDate: string, now: Date): boolean {
-  return now.getTime() > planSettlementDeadline(familyDate).getTime();
+  return isPastCompletionWindow(familyDate, now);
 }

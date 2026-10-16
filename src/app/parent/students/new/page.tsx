@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -21,6 +22,8 @@ import {
 } from "@/modules/identity/password-policy";
 
 export default function ParentCreateStudentPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -34,18 +37,25 @@ export default function ParentCreateStudentPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
 
   useEffect(() => {
-    void fetchSession().then((session) => {
-      if (!session || session.role !== "parent") {
-        router.replace("/login");
-        return;
-      }
-      if (!session.contactVerified) {
-        router.replace("/verify-contact");
-        return;
-      }
-      setLoading(false);
-    });
-  }, [router]);
+    setSessionFailed(false);
+    setLoading(true);
+    void fetchSession()
+      .then((session) => {
+        if (!session || session.role !== "parent") {
+          router.replace("/login");
+          return;
+        }
+        if (!session.contactVerified) {
+          router.replace("/verify-contact");
+          return;
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        setSessionFailed(true);
+        setLoading(false);
+      });
+  }, [router, sessionAttempt]);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -78,6 +88,18 @@ export default function ParentCreateStudentPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="创建学生">

@@ -2,9 +2,13 @@ import path from "node:path";
 
 import { config } from "dotenv";
 import { defineConfig, devices } from "@playwright/test";
+import { isolatedE2eTotpConfig } from "./tests/helpers/e2e-auth-config";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
+
+const adminTotpSecrets = isolatedE2eTotpConfig();
+process.env.ADMIN_TOTP_SECRETS = adminTotpSecrets;
 
 const e2ePort = process.env.PLAYWRIGHT_PORT ?? "3003";
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${e2ePort}`;
@@ -45,7 +49,7 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: `node "${path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next")}" start -p ${e2ePort}`,
+          command: `node "${path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next")}" dev -p ${e2ePort}`,
           url: baseURL,
           reuseExistingServer: false,
           timeout: 300_000,
@@ -54,6 +58,7 @@ export default defineConfig({
             SESSION_SECRET:
               process.env.SESSION_SECRET ?? "test-session-secret-at-least-32-characters-long",
             SESSION_COOKIE_SECURE: "false",
+            ADMIN_TOTP_SECRETS: adminTotpSecrets,
             EXPOSE_DEV_OTP: "true",
             BRAIN_DANCE_ARTIFACT_ROOT:
               process.env.BRAIN_DANCE_ARTIFACT_ROOT ??

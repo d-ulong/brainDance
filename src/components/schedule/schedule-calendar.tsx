@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
-import { todayFamilyDate, type ScheduleItemDto } from "@/lib/client/m2-api";
+import { scheduleStatusLabel, todayFamilyDate, type ScheduleItemDto } from "@/lib/client/m2-api";
 
 export type CalendarView = "day" | "week" | "month";
 
@@ -32,11 +32,28 @@ export function rangeForCalendarDate(date: string, view: CalendarView) {
   return { from: formatFamilyDate(gridFrom), through: formatFamilyDate(through) };
 }
 
+export function rangeForCalendarSummary(date: string, view: CalendarView) {
+  if (view !== "month") return rangeForCalendarDate(date, view);
+  const base = parseFamilyDate(date);
+  return {
+    from: formatFamilyDate(new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), 1))),
+    through: formatFamilyDate(new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0))),
+  };
+}
+
 export function moveCalendarDate(date: string, view: CalendarView, direction: -1 | 1) {
   const next = parseFamilyDate(date);
   if (view === "day") next.setUTCDate(next.getUTCDate() + direction);
   else if (view === "week") next.setUTCDate(next.getUTCDate() + direction * 7);
-  else next.setUTCMonth(next.getUTCMonth() + direction);
+  else {
+    const day = next.getUTCDate();
+    next.setUTCDate(1);
+    next.setUTCMonth(next.getUTCMonth() + direction);
+    const lastDay = new Date(
+      Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0),
+    ).getUTCDate();
+    next.setUTCDate(Math.min(day, lastDay));
+  }
   return formatFamilyDate(next);
 }
 
@@ -78,10 +95,17 @@ function EventCard({
     <article
       className={`bd-calendar-event bd-calendar-event-${item.effectiveStatus} ${compact ? "is-compact" : ""}`}
       data-testid={`student-schedule-item-${item.id}`}
+      data-schedule-item-id={item.id}
+      tabIndex={-1}
     >
       <div className="w-full text-left">
         <div>
           <time>{itemTime(item)}</time>
+          <span className="bd-calendar-status">
+            {item.suppressedByScheduleItemId
+              ? "已被其他计划覆盖"
+              : scheduleStatusLabel(item.effectiveStatus)}
+          </span>
           <strong>
             {item.title || item.planTitle || "计划任务"}
             {pointsInline ? (
@@ -144,15 +168,22 @@ export function ScheduleCalendar({
   for (const item of items)
     byDate.set(item.familyDate, [...(byDate.get(item.familyDate) ?? []), item]);
   const today = todayFamilyDate();
-  const dayItems = [...(byDate.get(selectedDate) ?? [])].sort((a, b) =>
-    a.scheduledAt.localeCompare(b.scheduledAt),
+  const dayItems = useMemo(
+    () =>
+      items
+        .filter((item) => item.familyDate === selectedDate)
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt)),
+    [items, selectedDate],
   );
   const dayScrollRef = useRef<HTMLDivElement>(null);
+  const positionedDate = useRef<string | null>(null);
   const weekDates = datesBetween(range.from, 7);
   const monthDates = datesBetween(range.from, 42);
 
   useEffect(() => {
     if (view !== "day") return;
+    const positionKey = `${view}:${selectedDate}`;
+    if (!dayItems.length || positionedDate.current === positionKey) return;
     const container = dayScrollRef.current;
     if (!container) return;
     const currentHour = Number(
@@ -165,10 +196,19 @@ export function ScheduleCalendar({
     const earliestItemHour = dayItems.length
       ? Math.min(...dayItems.map((item) => Number(itemTime(item).slice(0, 2))))
       : currentHour;
-    const targetHour = Math.min(23, Math.max(0, earliestItemHour, currentHour));
+    const targetHour =
+      selectedDate === today
+        ? Number(
+            itemTime(
+              dayItems.find((item) => Number(itemTime(item).slice(0, 2)) >= currentHour) ??
+                dayItems[0],
+            ).slice(0, 2),
+          )
+        : earliestItemHour;
     const row = container.querySelector<HTMLElement>(`[data-hour="${targetHour}"]`);
-    row?.scrollIntoView({ block: "start" });
-  }, [dayItems, selectedDate, view]);
+    if (row) container.scrollTop = row.offsetTop - container.offsetTop;
+    positionedDate.current = positionKey;
+  }, [dayItems, selectedDate, view, today]);
 
   return (
     <section
@@ -242,7 +282,10 @@ export function ScheduleCalendar({
               type="button"
               className={date === today ? "is-today" : ""}
               aria-pressed={date === selectedDate}
-              onClick={() => onDateChange(date)}
+              onClick={() => {
+                onDateChange(date);
+                onViewChange("day");
+              }}
             >
               <span>
                 {["日", "一", "二", "三", "四", "五", "六"][parseFamilyDate(date).getUTCDay()]}
@@ -268,10 +311,13 @@ export function ScheduleCalendar({
               type="button"
               className={`${outside ? "is-outside" : ""} ${date === today ? "is-today" : ""}`}
               aria-pressed={date === selectedDate}
-              onClick={() => onDateChange(date)}
+              onClick={() => {
+                onDateChange(date);
+                onViewChange("day");
+              }}
             >
               {Number(date.slice(8))}
-              {count ? <small className="block text-[0.6rem]">{count}</small> : null}
+              {count ? <small className="block text-xs">{count}</small> : null}
             </button>
           );
         })}
@@ -358,7 +404,17 @@ export function ScheduleCalendar({
                     : undefined
                 }
               >
-                <time>{Number(date.slice(8))}</time>
+                <button
+                  type="button"
+                  className="bd-calendar-open-day"
+                  aria-label={`${date}，${monthItems.length}项日程，打开当天`}
+                  onClick={() => {
+                    onDateChange(date);
+                    onViewChange("day");
+                  }}
+                >
+                  <time>{Number(date.slice(8))}</time>
+                </button>
                 <div>
                   {monthItems.slice(0, 4).map((item) => (
                     <EventCard key={item.id} item={item} compact />

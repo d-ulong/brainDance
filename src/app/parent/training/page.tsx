@@ -4,15 +4,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession } from "@/lib/client/api";
 import { PARENT_TRAINING_OPTIONS } from "@/lib/client/training-api";
 
 export default function ParentTrainingHubPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") {
@@ -24,9 +28,24 @@ export default function ParentTrainingHubPage() {
         return;
       }
       setLoading(false);
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [router, sessionAttempt]);
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="家长训练中心">

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
-import { PageShell, PrimaryButton, Toast } from "@/components/ui/page-shell";
+import { SessionLoadError, PageShell, PrimaryButton, Toast } from "@/components/ui/page-shell";
 import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
@@ -18,6 +18,8 @@ import {
 import { planLibraryCreateTemplate } from "@/lib/plans/plan-create-template";
 
 export default function StudentPlanNewPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [startDate] = useState(todayFamilyDate());
   const template = useMemo(() => planLibraryCreateTemplate(startDate), [startDate]);
@@ -42,6 +44,7 @@ export default function StudentPlanNewPage() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -49,13 +52,12 @@ export default function StudentPlanNewPage() {
         return;
       }
       setStudentId(session.userId);
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+    });
+  }, [router, sessionAttempt]);
 
-  async function persistPlan(
-    definition: Parameters<typeof savePlanLibrary>[0],
-    priority: number,
-  ) {
+  async function persistPlan(definition: Parameters<typeof savePlanLibrary>[0], priority: number) {
     if (saveLock.current || activateLock.current || activating) return;
     saveLock.current = true;
     setSaving(true);
@@ -98,7 +100,14 @@ export default function StudentPlanNewPage() {
   }
 
   async function activateSavedPlan() {
-    if (!savedPlan || !studentId || activating || saving || activateLock.current || saveLock.current)
+    if (
+      !savedPlan ||
+      !studentId ||
+      activating ||
+      saving ||
+      activateLock.current ||
+      saveLock.current
+    )
       return;
     if (dirty) {
       setError("有未保存的修改，请先保存计划后再启用。");
@@ -136,6 +145,17 @@ export default function StudentPlanNewPage() {
     router.push("/student/plans");
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   return (
     <PageShell
       title="制定新计划"

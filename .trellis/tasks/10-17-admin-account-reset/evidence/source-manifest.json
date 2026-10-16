@@ -1,0 +1,196 @@
+{
+  "head": "3d4c47637fb48b3f985674050342c0b73d30741c",
+  "comparison": "pre-feature working source snapshot",
+  "files": [
+    {
+      "path": "src/app/page.tsx",
+      "sha256": "ae5804c3f556e8511e1246282b6cf57edd8951a2a00c0b097188b310f2a18f6d",
+      "previousSha256": "a8b9528ecd1805f4f5656c01e28c8341f7f0174e261239478f9eb7758644602e"
+    },
+    {
+      "path": "src/lib/auth-request.ts",
+      "sha256": "59c1e79b49618aa2972a67a6e5e276b63ecf38bb35930a00f31b2bf0120ce675",
+      "previousSha256": "5aab910e0bca96b8f9165940ab63a14841b361fc3653b00963ed26b8ea23ee27"
+    },
+    {
+      "path": "src/lib/http-errors.ts",
+      "sha256": "512af8b8bf6ca4275f33272d580173951c3308bc33183c119ba61e712527b409",
+      "previousSha256": "c26f931372c105cfa86190a5c3da4a88d4b2462d1d71e12af7b9f70380171b69"
+    },
+    {
+      "path": "src/modules/identity/admin-accounts.service.ts",
+      "sha256": "8f4ba630dbdbc8b50b8fb881a708614c8b7c097dae90cea509b4aec4a9f3ed25",
+      "previousSha256": null
+    },
+    {
+      "path": "src/modules/identity/change-password.service.ts",
+      "sha256": "c79517bd64483642e21aecb3990f6208f14c16f2205740340e43e37008c7158c",
+      "previousSha256": "66f12111604ab58a59dd65688d82942510e19106ab28b7296962ffe388b91178"
+    },
+    {
+      "path": "src/modules/identity/credential-session.ts",
+      "sha256": "e18c7ad92f0f1c7d012a1e7d0b9c771a03f6407abffe21fa7a369e4c09e37325",
+      "previousSha256": null
+    },
+    {
+      "path": "src/modules/identity/errors.ts",
+      "sha256": "bdae6c3054e46a7310ce96175ab6235eb0025b9a316406952cba84a4d752d6da",
+      "previousSha256": "50ff06f652760fcd6a3f92bb7f95b3df60bdfadc23d731a9d9d0f3eb82d9797e"
+    },
+    {
+      "path": "src/modules/outbox/worker-constants.ts",
+      "sha256": "9e6f2bf2589873468d5f566c28ad5b91757a38c62bbe9e93a9ddac6ebb79276f",
+      "previousSha256": "d5c773c9cc6558f71a3de89d5e8fced97122cf266105620047f0cca98eac5914"
+    },
+    {
+      "path": "src/lib/client/admin-accounts.ts",
+      "sha256": "05721de6dcd07b555591244a2b0e58c7071023560db24e4d34f3d147215d2bb0",
+      "previousSha256": null
+    },
+    {
+      "path": "src/components/ui/change-password-form.tsx",
+      "sha256": "f31b131df234403eabd25899b59ac017eaede81ea0974b6bb301ef48d8330441",
+      "previousSha256": null
+    },
+    {
+      "path": "src/components/ui/page-shell.tsx",
+      "sha256": "c803ee9590996651749d45e692c1e5ba59fdb8a6825097caa6ff1c61665ef3a1",
+      "previousSha256": "247372d83ddea8cbbe420278cbeb908902aca091f403cabc554cc66e12421f6e"
+    },
+    {
+      "path": "src/components/ui/top-tabs.tsx",
+      "sha256": "870bca8206c8781f845ab26392b69e6aac922666991a6374399f5a321fd57ea0",
+      "previousSha256": "c51d3d64c9a05f596274631acade1bb39ea78bd0a3380d6e63f99bdb6639209d"
+    },
+    {
+      "path": "src/app/account/page.tsx",
+      "sha256": "3ed32666e871320a691d79d4f49a8e5f678ff33324f668d59d4eaf214ad09c5d",
+      "previousSha256": "7d95faa6d6671426c739bfcdb202b103711cf4881ac44f3952ac7ebeb52987f3"
+    },
+    {
+      "path": "src/app/change-password/page.tsx",
+      "sha256": "4f63009d40268cf882a24253ddc014497d3281f1085ba45c24c7f17c963b5dad",
+      "previousSha256": null
+    },
+    {
+      "path": "src/app/login/page.tsx",
+      "sha256": "8d381bfbcc5b372b9100cfa104952ffdc21e0c3a52af84ad311c53bfd718a778",
+      "previousSha256": "15ebb8f1f37a586f2d1c9cc58cf9b9b9ea7ce5fc98550da9580504552f80c6dc"
+    },
+    {
+      "path": "src/app/verify-contact/page.tsx",
+      "sha256": "e0355883fe65cca6817e4dc7293c888d1ea6932da2fc0c90b36d1c9cc4af5ccb",
+      "previousSha256": "3dbccb9495c8302956ee00129af744268b011d39eab815eb2b2753142aacee75"
+    },
+    {
+      "path": "src/app/student/change-password/page.tsx",
+      "sha256": "b082e94cac723eee506f12d8e375829ff1af98b268b4aeb54fe8e7c5ffd66b73",
+      "previousSha256": "72a73164d31f5f0a4fb03fd9353ad03dc16affcc4a0eb2bb91302f2f086a04dc"
+    },
+    {
+      "path": "src/app/parent/change-password/page.tsx",
+      "sha256": "c1c59d0337a68cd178967e5c5dff566616db6bf16ccd3c075f07f6856eaefba4",
+      "previousSha256": "843ec70deddb65d102df5a989d9f7b3ef4d6cf946bc936f905f812688b990695"
+    },
+    {
+      "path": "src/app/api/auth/change-password/route.ts",
+      "sha256": "7d48fdfd030c26e09ff7791737dc009d09e907e61e05d2bff466ac15a5b3dfa7",
+      "previousSha256": "785b83708e8e97a3ebc0afff74173a1bd32e640673e2b058e141d04c0075bd3a"
+    },
+    {
+      "path": "src/app/api/auth/session/route.ts",
+      "sha256": "f9360fdd55a84827704b281d325ea716ae84ff6ec0a93633e6af0156c0cdbdc1",
+      "previousSha256": "473fe59555b350921a2fae7aa9c73b3c44907252aa84bc740551b3deb6ffafb2"
+    },
+    {
+      "path": "src/app/api/admin/accounts/route.ts",
+      "sha256": "ec3590ad905fbdd200e702d1d6792f84cdf1d126d7b0c102904406b48ec78bfb",
+      "previousSha256": null
+    },
+    {
+      "path": "src/app/api/admin/accounts/[userId]/reset-password/route.ts",
+      "sha256": "55c6e48973afbaddf1998432f8c530a196635bf7e5bdd04145d67db0d767aea4",
+      "previousSha256": null
+    },
+    {
+      "path": "src/app/admin/accounts/page.tsx",
+      "sha256": "898efbd19f5714505f12367210d78231db04bcff4dbaca5802725dd494a62d17",
+      "previousSha256": null
+    },
+    {
+      "path": "scripts/e2e-bootstrap.ts",
+      "sha256": "e68f3f2b00f9cbf81c17e52cc8f418f015bd6056a52ffcd6104c1290c22e2d12",
+      "previousSha256": "a003fb090a99a9af2702bdc55243666aab4d376dd7effae2e48c0b5a557a618c"
+    },
+    {
+      "path": "scripts/start-web-and-worker.bat",
+      "sha256": "13a5d8599d5c6f25de4826e69f7fb7b622b41eed2d558b9bac344b4a0c5db755",
+      "previousSha256": "4de188d0421e5682d4c97792a4ea5c3e1fc86b10d074ac14e58878f031eb7694"
+    },
+    {
+      "path": "scripts/start-web-and-worker.ps1",
+      "sha256": "c6a5e4d194c3ecee7904705d2f5d0b8ada7a4f863859cefbf16dede582020cf4",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/e2e/admin-account-reset-flow.spec.ts",
+      "sha256": "945858f6cff0c67fdf5bedee58c51a5f9a6f964a3deeea4d49c7422596eaf884",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/e2e/admin-account-reset-ui.spec.ts",
+      "sha256": "302991c62c1f7f6b40cf3f83559b4b976d918387877d94a1169f9ee198b90de1",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/e2e/m1-browser-flow.spec.ts",
+      "sha256": "237d98290a240fbd6d136459df31019f14abf145897519769e94a6c417b33ab8",
+      "previousSha256": "85b2ed76d7ccc08dfd4ae5eda5fea7e77e0cb89d690778cc3206bd3dfd01fa6d"
+    },
+    {
+      "path": "tests/helpers/e2e-auth-config.ts",
+      "sha256": "f8e6c6e885551a94d67bd844f062c34def5a25a784fd9c587da0a348179c5f55",
+      "previousSha256": "ffbec51d9d44c1d21b492f4fad25f9a00a108f1cd4bb8c2199b7bd7a3774d67b"
+    },
+    {
+      "path": "tests/unit/deployment/start-web-and-worker.test.ts",
+      "sha256": "ce5c2e153a9a3e3a6b6c5a4e7bc4615235ecfd8dcf43e409770e72a5817ef147",
+      "previousSha256": "f508a808ff3fb9882c99c8c6dcfadd6fe3ce3b7579332b1283313ea051ea410a"
+    },
+    {
+      "path": "tests/unit/identity/admin-account-routes.test.ts",
+      "sha256": "befda86b2233ab1dff7600a032b2d1c5dcda2096006c0394051b5c85743c4c15",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/unit/identity/password-change-access.test.ts",
+      "sha256": "7aeeb4582e4d82b2368968bc127f27a207efdb209a65cf4908e888cd8e42c93a",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/integration/identity/admin-account-reset.test.ts",
+      "sha256": "9631c4031a87302d0709ac87e81ff9cf4cbeedd9f4215db23bc808fc88d79098",
+      "previousSha256": null
+    },
+    {
+      "path": "tests/integration/identity/controlled-student.test.ts",
+      "sha256": "976efe2507b76f998c60259b3ac1a3645d45282fef13e46794f9b5f1626327a9",
+      "previousSha256": "ac79f5c450c95b1da7548c61af9dd17426684e8a8ff85af117d589236c16471e"
+    },
+    {
+      "path": ".trellis/spec/backend/admin-account-reset.md",
+      "sha256": "adf6328c47d5622d8ebb4fc6ca412657fdc8fe1aaa39b2f291e99e1d0f359dfe",
+      "previousSha256": null
+    },
+    {
+      "path": ".trellis/spec/backend/index.md",
+      "sha256": "52c98b11aa12aea68a732b0b058c9703e0514df3c8e2a99ff4c6e1a01df7098c",
+      "previousSha256": "ddae08fade3c27be32c272ec1986b20d1b734aaf79d9829bdf71d97b3049e6f3"
+    },
+    {
+      "path": ".trellis/spec/backend/production-startup.md",
+      "sha256": "df56e6fa9249cc3712e1747d008ddf10002bfb7ab960f3432e7df85611f5bfc7",
+      "previousSha256": "7324d685b50affb30d270a7c5ce51ae8e3317b19b19f89669cb660c65420a65c"
+    }
+  ]
+}

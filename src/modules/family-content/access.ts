@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { familyPushes } from "@/db/schema";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import {
   hasActiveRelationship,
@@ -31,7 +31,7 @@ export async function assertStudentNotFrozenForFamilyContent(
   mode: "read" | "write" = "read",
 ): Promise<void> {
   try {
-    await assertStudentAccountNotFrozen(db, studentId, mode);
+    await assertSubjectAccess(db, studentId, mode);
   } catch (error) {
     if (error instanceof DataLifecycleError && error.code === "FROZEN") {
       throw new FamilyContentError("FROZEN", "Student account is frozen");
@@ -124,4 +124,10 @@ export async function loadUserRole(db: Database, userId: string): Promise<Parent
     }
     throw error;
   }
+}
+
+/** Subject lock always precedes push/answer/comment/media row locks. */
+export async function lockPushSubjectForWrite(db: Database, pushId: string): Promise<void> {
+  const push = await loadPushOrThrow(db, pushId);
+  await assertStudentNotFrozenForFamilyContent(db, push.studentId, "write");
 }

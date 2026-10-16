@@ -88,14 +88,41 @@ export const scheduleTaskExecutions = pgTable(
       .primaryKey()
       .references(() => scheduleItems.id),
     taskType: text("task_type").notNull().default("normal"),
+    revision: integer("revision").notNull().default(0),
     checklist: jsonb("checklist").$type<Array<Record<string, unknown>>>().notNull().default([]),
     pomodoro: jsonb("pomodoro").$type<Record<string, unknown>>().notNull().default({}),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    check("schedule_task_executions_revision_check", sql`${t.revision} >= 0`),
     check(
       "schedule_task_executions_type_check",
       sql`${t.taskType} IN ('normal', 'homework', 'exercise')`,
+    ),
+  ],
+);
+
+/** Durable command results; serialized under the subject and occurrence locks. */
+export const scheduleExecutionCommands = pgTable(
+  "schedule_execution_commands",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id),
+    scheduleItemId: uuid("schedule_item_id")
+      .notNull()
+      .references(() => scheduleItems.id),
+    key: text("key").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("schedule_execution_commands_actor_item_key_unique").on(
+      t.actorId,
+      t.scheduleItemId,
+      t.key,
     ),
   ],
 );

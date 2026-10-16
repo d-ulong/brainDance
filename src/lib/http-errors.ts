@@ -7,6 +7,11 @@ import { FamilyContentError } from "@/modules/family-content/errors";
 
 export function appErrorToStatus(code: string): number {
   switch (code) {
+    case "RATE_LIMITED":
+      return 429;
+    case "DELIVERY_UNAVAILABLE":
+    case "MFA_NOT_CONFIGURED":
+      return 503;
     case "UNAUTHORIZED":
     case "INVALID_CREDENTIALS":
       return 401;
@@ -14,6 +19,7 @@ export function appErrorToStatus(code: string): number {
     case "ACCOUNT_LOCKED":
     case "CONTACT_NOT_VERIFIED":
     case "PASSWORD_CHANGE_REQUIRED":
+    case "MFA_REQUIRED":
       return 403;
     case "INVITATION_INVALID":
     case "INVITATION_EXPIRED":

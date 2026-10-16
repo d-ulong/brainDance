@@ -12,6 +12,40 @@ export type CurrentFormalPlanDto = {
   localTime: string | null;
 };
 
+export type TaskTimerDto = {
+  state?: "running" | "paused" | "stopped";
+  startedAt?: string;
+  pausedAt?: string;
+  stoppedAt?: string;
+  pauseCount?: number;
+  pausedSeconds?: number;
+  focusedSeconds?: number;
+};
+
+export type ChecklistTaskDto = {
+  id: string;
+  title: string;
+  completed: boolean;
+  difficulty?: string;
+  durationMinutes?: number;
+  startedAt?: string;
+  completedAt?: string;
+  pomodoro?: TaskTimerDto;
+};
+
+export type TaskExecutionResultDto = {
+  revision: number;
+  checklist: ChecklistTaskDto[];
+  pomodoro: TaskTimerDto;
+  taskType: "normal" | "homework" | "exercise";
+  factVersionId?: string;
+  predecessorFactId?: string;
+  reversalLedgerEntryIds?: string[];
+  settlementId?: string;
+  ledgerEntryId?: string;
+  idempotentReplay: boolean;
+};
+
 export type ScheduleItemDto = {
   id: string;
   planId: string;
@@ -36,9 +70,19 @@ export type ScheduleItemDto = {
   durationMinutes?: number | null;
   taskType?: "normal" | "homework" | "exercise";
   completionStandard?: string | null;
-  checklist?: Array<{ id: string; title: string; completed: boolean }>;
-  pomodoro?: { state?: "running" | "paused"; pauseCount?: number; pausedSeconds?: number };
+  checklist?: ChecklistTaskDto[];
+  pomodoro?: TaskTimerDto;
+  executionRevision?: number;
+  executionAllCompleted?: boolean;
+  completedAt?: string | null;
+  actualDurationMinutes?: number | null;
+  canStart?: boolean;
+  canComplete?: boolean;
   canEditExecution?: boolean;
+  canCorrect?: boolean;
+  completionDeadline?: string;
+  editDeadline?: string;
+  suppressedByScheduleItemId?: string | null;
 };
 
 export type PointsBalanceDto = {
@@ -219,19 +263,38 @@ export async function startPlanItem(itemId: string) {
 export async function updateTaskExecution(
   itemId: string,
   body: {
-    checklist?: Array<{
-      id: string;
-      title: string;
-      completed: boolean;
-      difficulty?: string;
-      durationMinutes?: number;
-    }>;
-    pomodoroAction?: "start" | "pause" | "resume";
+    expectedRevision: number;
+    checklist?: ChecklistTaskDto[];
+    pomodoroAction?: "start" | "pause" | "resume" | "stop";
+    subtaskId?: string;
+    reason?: string;
   },
 ) {
-  return apiWriteWithIdempotency(`/api/schedule-items/${itemId}/execution`, {
-    method: "PATCH",
-    idempotencyKeyPrefix: "schedule-task-execution",
+  return apiWriteWithIdempotency<TaskExecutionResultDto>(
+    `/api/schedule-items/${itemId}/execution`,
+    {
+      method: "PATCH",
+      idempotencyKeyPrefix: "schedule-task-execution",
+      body,
+    },
+  );
+}
+
+export async function correctScheduleItem(
+  itemId: string,
+  body: {
+    expectedRevision: number;
+    reason: string;
+    startedAt?: string;
+    completedAt?: string;
+    durationMinutes?: number;
+    checklist?: ChecklistTaskDto[];
+    pomodoro?: TaskTimerDto;
+  },
+) {
+  return apiWriteWithIdempotency<TaskExecutionResultDto>(`/api/schedule-items/${itemId}/correct`, {
+    method: "POST",
+    idempotencyKeyPrefix: "schedule-correction",
     body,
   });
 }

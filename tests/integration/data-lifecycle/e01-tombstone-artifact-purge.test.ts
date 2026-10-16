@@ -65,7 +65,11 @@ describe.skipIf(!hasDb)("M6 P2 E01 tombstone artifact purge", () => {
       idempotencyKey: `e01-confirm-${crypto.randomUUID().slice(0, 8)}`,
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     return created.requestId;
   }

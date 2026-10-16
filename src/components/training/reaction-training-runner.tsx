@@ -13,7 +13,13 @@ import {
   useKeyboardAction,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
+import {
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  SecondaryButton,
+} from "@/components/ui/page-shell";
 import { DEFAULT_REACTION_TRIAL_COUNT, REACTION_MIN_VALID_MS } from "@/modules/training/constants";
 
 type Phase = "intro" | "waiting" | "go" | "feedback";
@@ -125,16 +131,19 @@ export function ReactionTrainingRunner({
 
   useEffect(() => () => clearTimers(), [clearTimers]);
 
-  const showFeedback = useCallback((text: string, tone: "ok" | "bad", delayMs: number, next: () => void) => {
-    setFeedbackText(text);
-    setFeedbackTone(tone);
-    setPhase("feedback");
-    phaseRef.current = "feedback";
-    feedbackTimerRef.current = setTimeout(() => {
-      feedbackTimerRef.current = null;
-      next();
-    }, delayMs);
-  }, []);
+  const showFeedback = useCallback(
+    (text: string, tone: "ok" | "bad", delayMs: number, next: () => void) => {
+      setFeedbackText(text);
+      setFeedbackTone(tone);
+      setPhase("feedback");
+      phaseRef.current = "feedback";
+      feedbackTimerRef.current = setTimeout(() => {
+        feedbackTimerRef.current = null;
+        next();
+      }, delayMs);
+    },
+    [],
+  );
 
   const afterTrial = useCallback(
     async (nextIndex: number) => {
@@ -332,6 +341,7 @@ export function ReactionTrainingRunner({
     return (
       <PageShell title="反应力训练" backHref={lifecycle.hubPath}>
         <Alert tone="error">{lifecycle.error}</Alert>
+        <PrimaryButton onClick={lifecycle.retryAuthentication}>重新准备训练</PrimaryButton>
       </PageShell>
     );
   }
@@ -374,11 +384,12 @@ export function ReactionTrainingRunner({
       {phase === "intro" ? (
         <section className="bd-training-intro space-y-4" data-testid="reaction-intro">
           <p className="text-sm text-slate-700">
-            蓝色「准备…」时不要点；变成<strong>绿色「点!」</strong>后，尽快点击屏幕或按 Space / Enter。抢点会提示太早并重来。
+            蓝色「准备…」时不要点；变成<strong>绿色「点!」</strong>后，尽快点击屏幕或按 Space /
+            Enter。抢点会提示太早并重来。
           </p>
           <p className="text-sm text-slate-600">
-            每轮等待时间随机（约 0.8–2.5 秒）；超过 1 秒未反应记为太慢。本局共 {DEFAULT_REACTION_TRIAL_COUNT}{" "}
-            次，成绩取有效反应的中位数。
+            每轮等待时间随机（约 0.8–2.5 秒）；超过 1 秒未反应记为太慢。本局共{" "}
+            {DEFAULT_REACTION_TRIAL_COUNT} 次，成绩取有效反应的中位数。
           </p>
           <PrimaryButton
             data-testid="reaction-start"

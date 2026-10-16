@@ -5,12 +5,14 @@ import { use, useEffect, useRef, useState } from "react";
 
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
-import { LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
+import { SessionLoadError, LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
 import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { fetchPlanLibrary, updatePlanLibrary, type PlanLibraryDto } from "@/lib/client/m2-api";
 
 export default function StudentPlanEditPage({ params }: { params: Promise<{ planId: string }> }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const { planId } = use(params);
   const router = useRouter();
   const [plan, setPlan] = useState<PlanLibraryDto | null>(null);
@@ -23,6 +25,8 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
   useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -42,8 +46,11 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
       } finally {
         setLoading(false);
       }
-    })();
-  }, [planId, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [planId, router, sessionAttempt]);
 
   async function save(definition: Parameters<typeof updatePlanLibrary>[2], priority: number) {
     if (!plan || saveLock.current) return;
@@ -76,6 +83,18 @@ export default function StudentPlanEditPage({ params }: { params: Promise<{ plan
     router.push("/student/plans");
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   return (
     <PageShell
       title="编辑计划"

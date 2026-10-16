@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
   createExportJob,
@@ -18,6 +24,8 @@ import {
 } from "@/lib/client/m6-api";
 
 export default function StudentExportPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +81,8 @@ export default function StudentExportPage() {
   );
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -98,12 +108,15 @@ export default function StudentExportPage() {
       } finally {
         setLoading(false);
       }
-    })();
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
 
     return () => {
       clearPollTimer();
     };
-  }, [clearPollTimer, loadJobs, router, startPolling]);
+  }, [clearPollTimer, loadJobs, router, startPolling, sessionAttempt]);
 
   async function onCreateExport() {
     if (!studentId) return;
@@ -174,6 +187,18 @@ export default function StudentExportPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="数据导出">

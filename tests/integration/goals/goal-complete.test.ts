@@ -2,9 +2,20 @@ import { config } from "dotenv";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditEvents, families, goalAssignments, outboxEvents, relationships, users } from "@/db/schema";
+import {
+  auditEvents,
+  families,
+  goalAssignments,
+  outboxEvents,
+  relationships,
+  users,
+} from "@/db/schema";
 import { completeGoal, createGoals, evaluateGoal, listGoals } from "@/modules/goals/goal.service";
-import { closeIsolatedM2Database, openIsolatedM2Database, type IsolatedM2Database } from "../migrations/m2-isolated-database";
+import {
+  closeIsolatedM2Database,
+  openIsolatedM2Database,
+  type IsolatedM2Database,
+} from "../migrations/m2-isolated-database";
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -36,6 +47,7 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
         },
         {
           role: "student",
+          birthDate: "2015-01-01",
           displayName: "目标学生",
           username: `complete_student_${crypto.randomUUID().slice(0, 8)}`,
           passwordHash: "test",
@@ -44,6 +56,7 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
         },
         {
           role: "student",
+          birthDate: "2015-01-01",
           displayName: "其他学生",
           username: `complete_other_${crypto.randomUUID().slice(0, 8)}`,
           passwordHash: "test",
@@ -67,7 +80,13 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
       horizon: "medium",
       idempotencyKey: "seed-goal",
     });
-    return { db, parent: parent!, student: student!, otherStudent: otherStudent!, assignmentId: created.assignmentIds[0]! };
+    return {
+      db,
+      parent: parent!,
+      student: student!,
+      otherStudent: otherStudent!,
+      assignmentId: created.assignmentIds[0]!,
+    };
   }
 
   it("allows subject completion with idempotent replay and blocks other actors", async () => {
@@ -76,7 +95,11 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
       completeGoal(db, { actorId: parent.id, assignmentId, idempotencyKey: "parent-complete" }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(
-      completeGoal(db, { actorId: otherStudent.id, assignmentId, idempotencyKey: "other-complete" }),
+      completeGoal(db, {
+        actorId: otherStudent.id,
+        assignmentId,
+        idempotencyKey: "other-complete",
+      }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     const first = await completeGoal(db, {
@@ -94,9 +117,9 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
     const listed = (await listGoals(db, student.id)).find((g) => g.assignmentId === assignmentId)!;
     expect(listed.status).toBe("completed");
     expect(listed.canEvaluate).toBe(false);
-    expect((await listGoals(db, parent.id)).find((g) => g.assignmentId === assignmentId)?.canEvaluate).toBe(
-      true,
-    );
+    expect(
+      (await listGoals(db, parent.id)).find((g) => g.assignmentId === assignmentId)?.canEvaluate,
+    ).toBe(true);
 
     const audits = await db
       .select()
@@ -122,7 +145,11 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
       }),
     ).rejects.toMatchObject({ code: "STATE_CONFLICT" });
 
-    await completeGoal(db, { actorId: student.id, assignmentId, idempotencyKey: "complete-before-eval" });
+    await completeGoal(db, {
+      actorId: student.id,
+      assignmentId,
+      idempotencyKey: "complete-before-eval",
+    });
     const evaluated = await evaluateGoal(db, {
       actorId: parent.id,
       assignmentId,
@@ -131,7 +158,10 @@ describe.skipIf(!hasDb)("goal complete state machine", () => {
       idempotencyKey: "eval-after-complete",
     });
     expect(evaluated.status).toBe("succeeded");
-    const [row] = await db.select().from(goalAssignments).where(eq(goalAssignments.id, assignmentId));
+    const [row] = await db
+      .select()
+      .from(goalAssignments)
+      .where(eq(goalAssignments.id, assignmentId));
     expect(row?.completedBy).toBe(student.id);
     expect(row?.completedAt).toBeTruthy();
     expect(row?.evaluatedBy).toBe(parent.id);

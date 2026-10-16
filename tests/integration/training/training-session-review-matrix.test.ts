@@ -175,6 +175,33 @@ describe.skipIf(!hasDb)("training session trial review matrix", () => {
     expect(deniedOtherChild.status).toBe(403);
   });
 
+  it("keeps practice session review private from linked parent while allowing its owner", async () => {
+    const linked = await bootstrapLinkedParentStudent(db);
+    await completeReactionSession(db, linked.studentId);
+    const practice = await completeReactionSession(db, linked.studentId);
+    expect(practice.submitted.sessionKind).toBe("practice");
+
+    withSessionCookie(linked.parentSession);
+    const parentResponse = await getFamilyStudentTrainingSessionRoute(
+      familySessionRequest(linked.studentId, practice.started.sessionId),
+      {
+        params: Promise.resolve({
+          studentId: linked.studentId,
+          sessionId: practice.started.sessionId,
+        }),
+      },
+    );
+    expect(parentResponse.status).toBe(403);
+
+    withSessionCookie(linked.studentSession);
+    const ownerResponse = await getTrainingSessionRoute(
+      new Request(`http://localhost/api/training/sessions/${practice.started.sessionId}`),
+      { params: Promise.resolve({ sessionId: practice.started.sessionId }) },
+    );
+    expect(ownerResponse.status).toBe(200);
+    expect((await ownerResponse.json()).sessionKind).toBe("practice");
+  });
+
   it("blocks revoked parent from child session detail at request time", async () => {
     const linked = await bootstrapLinkedParentStudent(db);
     const reaction = await completeReactionSession(db, linked.studentId);

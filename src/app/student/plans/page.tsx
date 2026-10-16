@@ -8,6 +8,7 @@ import { StudentScheduleWorkspace } from "@/components/schedule/student-schedule
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { Modal } from "@/components/ui/modal";
 import {
+  SessionLoadError,
   Field,
   LoadingState,
   PageShell,
@@ -42,6 +43,8 @@ type WorkspaceView = "plans" | "schedule" | "goals";
 const horizonLabel = { short: "近期", medium: "中期", long: "远期" } as const;
 
 export default function StudentPlansPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [plans, setPlans] = useState<PlanLibraryDto[]>([]);
@@ -132,6 +135,8 @@ export default function StudentPlansPage() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") return router.replace("/login");
@@ -153,8 +158,11 @@ export default function StudentPlansPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [load, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [load, router, sessionAttempt]);
 
   const completedCount = useMemo(
     () => todayItems.filter((item) => item.effectiveStatus === "completed").length,
@@ -265,6 +273,18 @@ export default function StudentPlansPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="计划日程">

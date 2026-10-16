@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { Alert, LoadingState, PageShell, PrimaryButton } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+} from "@/components/ui/page-shell";
 import { ApiError, apiFetch, fetchSession, newIdempotencyKey } from "@/lib/client/api";
 
 type PendingRequest = {
@@ -15,6 +21,8 @@ type PendingRequest = {
 };
 
 export default function StudentLinkPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +37,8 @@ export default function StudentLinkPage() {
   }
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -47,8 +57,11 @@ export default function StudentLinkPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [router, sessionAttempt]);
 
   async function issueCode() {
     setIssuing(true);
@@ -85,6 +98,18 @@ export default function StudentLinkPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="关联家长">

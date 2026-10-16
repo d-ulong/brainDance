@@ -7,7 +7,8 @@ import {
   hasActiveRelationship,
   listActiveParentIdsForStudent,
 } from "@/modules/family-access/authorization.service";
-import { isStudentAccountFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
+import { DataLifecycleError } from "@/modules/data-lifecycle/errors";
 import { FAMILY_CONTENT_EVENT_TYPES } from "@/modules/family-content/constants";
 import {
   createNotificationIfAbsent,
@@ -54,7 +55,7 @@ async function handleMediaPurgeRequestedOutboxV1(
 async function cancelScheduledPushInTx(
   tx: Database,
   push: typeof familyPushes.$inferSelect,
-  reason: "frozen" | "relationship_inactive",
+  reason: "frozen" | "relationship_inactive" | "subject_ineligible",
 ): Promise<void> {
   const now = new Date();
   await tx
@@ -97,6 +98,13 @@ async function handlePublishRequestedV1(db: Database, event: ClaimedOutboxEvent)
   }
 
   await db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({ studentId: familyPushes.studentId })
+      .from(familyPushes)
+      .where(eq(familyPushes.id, pushId))
+      .limit(1);
+    if (!target) return;
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${target.studentId}::uuid FOR UPDATE`);
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${pushId} FOR UPDATE`);
     const [push] = await tx.select().from(familyPushes).where(eq(familyPushes.id, pushId)).limit(1);
     if (!push) {
@@ -108,8 +116,15 @@ async function handlePublishRequestedV1(db: Database, event: ClaimedOutboxEvent)
       return;
     }
 
-    if (await isStudentAccountFrozen(tx, push.studentId)) {
-      await cancelScheduledPushInTx(tx, push, "frozen");
+    try {
+      await assertSubjectAccess(tx, push.studentId, "write");
+    } catch (error) {
+      if (!(error instanceof DataLifecycleError)) throw error;
+      await cancelScheduledPushInTx(
+        tx,
+        push,
+        error.code === "FROZEN" ? "frozen" : "subject_ineligible",
+      );
       return;
     }
 

@@ -119,8 +119,17 @@ export async function createFamilyPush(
     linkUrl: input.linkUrl,
     mediaIds: input.mediaIds,
   });
-  if (input.answerDisclosureDays !== undefined && input.answerDisclosureDays !== null && (!Number.isInteger(input.answerDisclosureDays) || input.answerDisclosureDays < 0 || input.answerDisclosureDays > 365)) {
-    throw new FamilyContentError("VALIDATION_ERROR", "answerDisclosureDays must be an integer from 0 to 365");
+  if (
+    input.answerDisclosureDays !== undefined &&
+    input.answerDisclosureDays !== null &&
+    (!Number.isInteger(input.answerDisclosureDays) ||
+      input.answerDisclosureDays < 0 ||
+      input.answerDisclosureDays > 365)
+  ) {
+    throw new FamilyContentError(
+      "VALIDATION_ERROR",
+      "answerDisclosureDays must be an integer from 0 to 365",
+    );
   }
 
   let status: FamilyPushStatus;
@@ -156,6 +165,7 @@ export async function createFamilyPush(
     answerDisclosureDays: input.answerDisclosureDays ?? null,
   });
 
+  await assertStudentNotFrozenForFamilyContent(db, input.studentId, "write");
   const replay = await findCreateReplay(db, input.actorId, input.idempotencyKey, payloadHash);
   if (replay) {
     return replay;
@@ -165,6 +175,8 @@ export async function createFamilyPush(
   await assertStudentNotFrozenForFamilyContent(db, input.studentId, "write");
 
   return db.transaction(async (tx) => {
+    await assertStudentNotFrozenForFamilyContent(tx, input.studentId, "write");
+    await requireParentLinkedToStudent(tx, input.actorId, input.studentId);
     const replayInTx = await findCreateReplay(tx, input.actorId, input.idempotencyKey, payloadHash);
     if (replayInTx) {
       return replayInTx;

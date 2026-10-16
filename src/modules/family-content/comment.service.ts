@@ -13,6 +13,7 @@ import { hasActiveRelationship } from "@/modules/family-access/authorization.ser
 import {
   assertCanAccessPush,
   assertStudentNotFrozenForFamilyContent,
+  lockPushSubjectForWrite,
   loadPushOrThrow,
 } from "@/modules/family-content/access";
 import {
@@ -33,7 +34,11 @@ async function toCommentDto(
   version: typeof pushCommentVersions.$inferSelect | null,
   actorId: string,
 ): Promise<PushCommentDto> {
-  const [author] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, comment.authorId)).limit(1);
+  const [author] = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, comment.authorId))
+    .limit(1);
   const reference = await loadCommentReference(db, comment);
   const deleted = comment.deletedAt !== null;
   return {
@@ -127,7 +132,8 @@ export async function listPushComments(
     push,
   });
 
-  const related = input.actorRole === "student" ? await relatedPushesForStudentRead(db, input.pushId) : null;
+  const related =
+    input.actorRole === "student" ? await relatedPushesForStudentRead(db, input.pushId) : null;
   // Parent comments are immediately visible unless their thread/quote would reveal a
   // still-private peer answer. Peer-authored comments follow the same disclosure gate
   // as the peer answer they belong to.
@@ -141,11 +147,19 @@ export async function listPushComments(
   const result: PushCommentDto[] = [];
   for (const comment of comments) {
     if (input.actorRole === "student" && comment.authorId !== input.actorId) {
-      const [author] = await db.select({ role: users.role }).from(users).where(eq(users.id, comment.authorId)).limit(1);
+      const [author] = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(eq(users.id, comment.authorId))
+        .limit(1);
       const source = related?.find((candidate) => candidate.id === comment.pushId);
       if (author?.role === "student") {
         if (!source || !isAnswerDisclosed(source, input.actorId)) continue;
-      } else if (!source || (!isAnswerDisclosed(source, input.actorId) && (comment.parentCommentId || comment.quotedAnswerId || comment.quotedCommentId))) {
+      } else if (
+        !source ||
+        (!isAnswerDisclosed(source, input.actorId) &&
+          (comment.parentCommentId || comment.quotedAnswerId || comment.quotedCommentId))
+      ) {
         continue;
       }
     }
@@ -191,6 +205,13 @@ export async function createPushComment(
     quotedCommentId: input.quotedCommentId ?? null,
   });
 
+  const authorizationPush = await loadPushOrThrow(db, input.pushId);
+  await assertStudentNotFrozenForFamilyContent(db, authorizationPush.studentId, "write");
+  await assertCanAccessPush(db, {
+    actorId: input.actorId,
+    actorRole: input.actorId === authorizationPush.studentId ? "student" : "parent",
+    push: authorizationPush,
+  });
   const [existing] = await db
     .select()
     .from(pushComments)
@@ -220,6 +241,7 @@ export async function createPushComment(
   }
 
   return db.transaction(async (tx) => {
+    await lockPushSubjectForWrite(tx, input.pushId);
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
     const push = await loadPushOrThrow(tx, input.pushId);
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
@@ -263,14 +285,36 @@ export async function createPushComment(
       }
     }
     if (input.quotedAnswerId && input.quotedCommentId) {
-      throw new FamilyContentError("VALIDATION_ERROR", "A comment can quote one answer or one comment");
+      throw new FamilyContentError(
+        "VALIDATION_ERROR",
+        "A comment can quote one answer or one comment",
+      );
     }
     if (input.quotedAnswerId) {
-      const [quoted] = await tx.select({ id: pushAnswers.id }).from(pushAnswers).where(and(eq(pushAnswers.id, input.quotedAnswerId), inArray(pushAnswers.pushId, referencePushIds))).limit(1);
+      const [quoted] = await tx
+        .select({ id: pushAnswers.id })
+        .from(pushAnswers)
+        .where(
+          and(
+            eq(pushAnswers.id, input.quotedAnswerId),
+            inArray(pushAnswers.pushId, referencePushIds),
+          ),
+        )
+        .limit(1);
       if (!quoted) throw new FamilyContentError("NOT_FOUND", "Quoted answer not found");
     }
     if (input.quotedCommentId) {
-      const [quoted] = await tx.select({ id: pushComments.id }).from(pushComments).where(and(eq(pushComments.id, input.quotedCommentId), inArray(pushComments.pushId, referencePushIds), isNull(pushComments.deletedAt))).limit(1);
+      const [quoted] = await tx
+        .select({ id: pushComments.id })
+        .from(pushComments)
+        .where(
+          and(
+            eq(pushComments.id, input.quotedCommentId),
+            inArray(pushComments.pushId, referencePushIds),
+            isNull(pushComments.deletedAt),
+          ),
+        )
+        .limit(1);
       if (!quoted) throw new FamilyContentError("NOT_FOUND", "Quoted comment not found");
     }
 
@@ -362,7 +406,10 @@ export async function createPushComment(
       },
     });
 
-    return { comment: await toCommentDto(tx, comment, version!, input.actorId), idempotentReplay: false };
+    return {
+      comment: await toCommentDto(tx, comment, version!, input.actorId),
+      idempotentReplay: false,
+    };
   });
 }
 
@@ -404,6 +451,13 @@ export async function mutatePushComment(
     if (!comment) {
       throw new FamilyContentError("NOT_FOUND", "Comment not found");
     }
+    const push = await loadPushOrThrow(client, comment.pushId);
+    await assertStudentNotFrozenForFamilyContent(client, push.studentId, "write");
+    await assertCanAccessPush(client, {
+      actorId: input.actorId,
+      actorRole: input.actorId === push.studentId ? "student" : "parent",
+      push,
+    });
     const [version] = comment.deletedAt
       ? [null]
       : await client
@@ -431,6 +485,13 @@ export async function mutatePushComment(
   }
 
   return db.transaction(async (tx) => {
+    const [target] = await tx
+      .select({ pushId: pushComments.pushId })
+      .from(pushComments)
+      .where(eq(pushComments.id, input.commentId))
+      .limit(1);
+    if (!target) throw new FamilyContentError("NOT_FOUND", "Comment not found");
+    await lockPushSubjectForWrite(tx, target.pushId);
     await tx.execute(sql`SELECT id FROM push_comments WHERE id = ${input.commentId} FOR UPDATE`);
 
     const replayInTx = await findAuditReplay(tx, auditKey);
@@ -495,7 +556,10 @@ export async function mutatePushComment(
         },
       });
 
-      return { comment: await toCommentDto(tx, updated!, null, input.actorId), idempotentReplay: false };
+      return {
+        comment: await toCommentDto(tx, updated!, null, input.actorId),
+        idempotentReplay: false,
+      };
     }
 
     if (!input.body) {
@@ -538,6 +602,9 @@ export async function mutatePushComment(
       },
     });
 
-    return { comment: await toCommentDto(tx, updated!, version!, input.actorId), idempotentReplay: false };
+    return {
+      comment: await toCommentDto(tx, updated!, version!, input.actorId),
+      idempotentReplay: false,
+    };
   });
 }

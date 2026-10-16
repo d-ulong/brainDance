@@ -4,7 +4,7 @@ import { STROOP_COLORS } from "@/modules/training/constants";
 import { getDigitSpanSchemaForAgeBand } from "@/modules/training/digit-span-v1";
 import { getStroopSchemaForAgeBand } from "@/modules/training/stroop-v1";
 
-import type { E2eFixture } from "./ui-helpers";
+import { loginViaApi, type E2eFixture } from "./ui-helpers";
 
 const STROOP_COLOR_LABEL = {
   red: "红",
@@ -66,14 +66,7 @@ export async function loginApi(
   identifier: string,
   password: string,
 ): Promise<void> {
-  const response = await request.post("/api/auth/login", {
-    data: {
-      identifier,
-      password,
-      idempotencyKey: `polish-login-${identifier}-${Date.now()}`,
-    },
-  });
-  expect(response.ok(), await response.text()).toBeTruthy();
+  await loginViaApi(request, identifier, password);
 }
 
 export async function logoutApi(request: APIRequestContext): Promise<void> {

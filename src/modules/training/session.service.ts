@@ -20,7 +20,7 @@ import {
   buildSubmitCompetitionLockKey,
 } from "@/modules/training/submit-competition-lock-key";
 import { TrainingError } from "@/modules/training/errors";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import {
   buildProjectionStateFromRows,
   filterProjectionEligibleMetrics,
@@ -186,13 +186,13 @@ async function authorizeTrainingSubject(
 
 async function assertSubjectWritable(db: Database, subject: TrainingSubject): Promise<void> {
   if (subject.traineeRole === "student") {
-    await assertStudentAccountNotFrozen(db, subject.traineeId, "write");
+    await assertSubjectAccess(db, subject.traineeId, "write");
   }
 }
 
 async function assertSubjectReadable(db: Database, subject: TrainingSubject): Promise<void> {
   if (subject.traineeRole === "student") {
-    await assertStudentAccountNotFrozen(db, subject.traineeId, "read");
+    await assertSubjectAccess(db, subject.traineeId, "read");
   }
 }
 
@@ -432,6 +432,7 @@ export async function startTrainingSessionForSubject(
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectWritable(tx, subject);
       const [created] = await tx
         .insert(trainingSessions)
         .values({
@@ -514,7 +515,22 @@ export async function appendTrainingEventForSubject(
   db: Database,
   input: AppendTrainingEventInput,
 ): Promise<AppendTrainingEventResult> {
-  const subject = await authorizeTrainingSubject(db, input.subject);
+  return db.transaction(async (tx) => {
+    const subject = await authorizeTrainingSubject(tx, input.subject);
+    await assertSubjectWritable(tx, subject);
+    await tx.execute(
+      sql`SELECT id FROM training_sessions WHERE id = ${input.sessionId}::uuid FOR UPDATE`,
+    );
+    return appendTrainingEventInTx(tx, { ...input, subject });
+  });
+}
+
+async function appendTrainingEventInTx(
+  db: Database,
+  input: AppendTrainingEventInput,
+): Promise<AppendTrainingEventResult> {
+  const subject = input.subject;
+  await assertSubjectWritable(db, subject);
   const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
@@ -601,6 +617,7 @@ export async function cancelTrainingSessionForSubject(
   input: { subject: TrainingSubject; sessionId: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "cancelled" }> {
   const subject = await authorizeTrainingSubject(db, input.subject);
+  await assertSubjectWritable(db, subject);
   const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active") {
@@ -609,6 +626,7 @@ export async function cancelTrainingSessionForSubject(
 
   const finishedAt = new Date();
   await db.transaction(async (tx) => {
+    await assertSubjectWritable(tx, subject);
     await tx
       .update(trainingSessions)
       .set({ status: "cancelled", finishedAt })
@@ -644,6 +662,7 @@ export async function abandonTrainingSessionForSubject(
   input: { subject: TrainingSubject; sessionId: string; reason?: string; requestId?: string },
 ): Promise<{ sessionId: string; status: "abandoned" }> {
   const subject = await authorizeTrainingSubject(db, input.subject);
+  await assertSubjectWritable(db, subject);
   const session = await loadOwnedSession(db, subject.traineeId, input.sessionId);
 
   if (session.status !== "active" && session.status !== "submitted") {
@@ -655,6 +674,7 @@ export async function abandonTrainingSessionForSubject(
 
   const finishedAt = new Date();
   await db.transaction(async (tx) => {
+    await assertSubjectWritable(tx, subject);
     await tx
       .update(trainingSessions)
       .set({ status: "abandoned", finishedAt })
@@ -694,6 +714,7 @@ async function finalizeInvalidSession(
   const finishedAt = new Date();
   try {
     await db.transaction(async (tx) => {
+      await assertSubjectWritable(tx, input.subject);
       await tx
         .update(trainingSessions)
         .set({
@@ -781,10 +802,19 @@ export async function submitTrainingSessionForSubject(
   if (session.blurAccumulatedMs > TRAINING_BLUR_ABANDON_MS) {
     const finishedAt = new Date();
     try {
-      await db
-        .update(trainingSessions)
-        .set({ status: "abandoned", finishedAt, submitIdempotencyKey: input.idempotencyKey })
-        .where(eq(trainingSessions.id, input.sessionId));
+      await db.transaction(async (tx) => {
+        await assertSubjectWritable(tx, subject);
+        const [updated] = await tx
+          .update(trainingSessions)
+          .set({ status: "abandoned", finishedAt, submitIdempotencyKey: input.idempotencyKey })
+          .where(
+            and(eq(trainingSessions.id, input.sessionId), eq(trainingSessions.status, "active")),
+          )
+          .returning({ id: trainingSessions.id });
+        if (!updated) {
+          throw new TrainingError("SESSION_INVALID_STATE", "Session is not active");
+        }
+      });
     } catch (error) {
       if (isPostgresUniqueViolation(error)) {
         return replayOrMismatchOnSubmitKeyConflict(db, authorizedInput);
@@ -825,6 +855,13 @@ export async function submitTrainingSessionForSubject(
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectWritable(tx, subject);
+      const replay = await findSubmitSessionByIdempotency(
+        tx,
+        subject.traineeId,
+        input.idempotencyKey,
+      );
+      if (replay) return resolveSubmitIdempotencyReplay(tx, authorizedInput, replay);
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtext(${buildFullRebuildProjectionLockKey()}))`,
       );
@@ -1034,7 +1071,14 @@ export async function getTrainingSessionForStudent(
   db: Database,
   studentId: string,
   sessionId: string,
+  observerId: string = studentId,
 ): Promise<TrainingSessionDetail> {
+  if (observerId !== studentId) {
+    await requireActiveRelationship(db, observerId, studentId);
+    const session = await loadOwnedSession(db, studentId, sessionId);
+    if (session.sessionKind === "practice")
+      throw new TrainingError("FORBIDDEN", "Practice sessions are private");
+  }
   const subject = await resolveTrainingSubject(db, studentId);
   return getTrainingSessionForSubject(db, subject, sessionId);
 }
@@ -1046,9 +1090,16 @@ export async function getTrainingSummaryForParent(
   trainingKey: string = REACTION_TRAINING_KEY,
 ): Promise<ParentTrainingSummary> {
   await requireActiveRelationship(db, parentId, studentId);
-  await assertStudentAccountNotFrozen(db, studentId, "read");
+  await assertSubjectAccess(db, studentId, "read");
 
-  const summary = await loadTrainingSummaryForTrainee(db, studentId, trainingKey);
+  const subject = await resolveTrainingSubject(db, studentId);
+  const summary = await loadTrainingSummaryForTrainee(
+    db,
+    studentId,
+    trainingKey,
+    subject.ageBand,
+    true,
+  );
   return {
     studentId,
     ...summary,
@@ -1059,8 +1110,10 @@ async function loadTrainingSummaryForTrainee(
   db: Database,
   traineeId: string,
   trainingKey: string,
-  defaultAgeBand: string = "9-12",
+  defaultAgeBand: TrainingAgeBand = "9-12",
+  effectiveOnly = false,
 ): Promise<Omit<SubjectTrainingSummary, "traineeId">> {
+  const definition = await getActiveTrainingDefinition(db, trainingKey, defaultAgeBand);
   const [latestSession] = await db
     .select()
     .from(trainingSessions)
@@ -1069,6 +1122,9 @@ async function loadTrainingSummaryForTrainee(
         eq(trainingSessions.traineeId, traineeId),
         eq(trainingSessions.trainingKey, trainingKey),
         eq(trainingSessions.status, "completed"),
+        eq(trainingSessions.definitionVersion, definition.version),
+        eq(trainingSessions.ageBand, defaultAgeBand),
+        effectiveOnly ? eq(trainingSessions.sessionKind, "effective") : undefined,
       ),
     )
     .orderBy(sql`${trainingSessions.finishedAt} DESC NULLS LAST`)
@@ -1081,6 +1137,8 @@ async function loadTrainingSummaryForTrainee(
       and(
         eq(trainingProfileProjection.traineeId, traineeId),
         eq(trainingProfileProjection.trainingKey, trainingKey),
+        eq(trainingProfileProjection.definitionVersion, definition.version),
+        eq(trainingProfileProjection.ageBand, defaultAgeBand),
       ),
     );
 
@@ -1102,9 +1160,8 @@ async function loadTrainingSummaryForTrainee(
 
   return {
     trainingKey,
-    definitionVersion:
-      latestSession?.definitionVersion ?? projectionRows[0]?.definitionVersion ?? 1,
-    ageBand: latestSession?.ageBand ?? projectionRows[0]?.ageBand ?? defaultAgeBand,
+    definitionVersion: definition.version,
+    ageBand: defaultAgeBand,
     familyDate: latestSession?.familyDate ?? toFamilyDate(),
     lastSession,
     projection: projectionRows

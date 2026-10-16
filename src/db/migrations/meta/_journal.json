@@ -337,6 +337,34 @@
       "when": 1789632000000,
       "tag": "0047_schedule_task_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792108800000,
+      "tag": "0048_schedule_execution_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792108801000,
+      "tag": "0049_identity_assurance",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792108802000,
+      "tag": "0050_lifecycle_signed_reversals",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792108803000,
+      "tag": "0051_points_safe_integer_capacity",
+      "breakpoints": true
     }
   ]
 }

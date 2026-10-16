@@ -6,6 +6,7 @@ import { ErrorDialog } from "@/components/ui/error-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import {
+  SessionLoadError,
   Field,
   LoadingState,
   PageShell,
@@ -180,6 +181,8 @@ export default function ParentPlansPage() {
 }
 
 function ParentPlansPageContent() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const params = useParams<{ studentId?: string }>();
   const searchParams = useSearchParams();
@@ -221,6 +224,8 @@ function ParentPlansPageContent() {
     setStudents(studentResponse.students);
   }, []);
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") return router.replace("/login");
@@ -236,8 +241,11 @@ function ParentPlansPageContent() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [load, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [load, router, sessionAttempt]);
   const assignmentOptions = selfOption ? [selfOption, ...students] : students;
   function resetForm() {
     setTitle("");
@@ -368,6 +376,18 @@ function ParentPlansPageContent() {
       setRemoving(null);
     }
   }
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading)
     return (
       <PageShell title="计划">

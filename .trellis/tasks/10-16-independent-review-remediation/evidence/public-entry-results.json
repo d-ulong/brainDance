@@ -1,0 +1,25 @@
+{
+  "server": "http://localhost:3002",
+  "realAnonymousAPI": true,
+  "testsPassed": 4,
+  "themes": [
+    "space",
+    "candy"
+  ],
+  "widths": [
+    1280,
+    360
+  ],
+  "minimumTextContrast": {
+    "space": 10.647038258667807,
+    "candy": 9.644420354125874
+  },
+  "titleFontPx": 18,
+  "descriptionFontPx": 14,
+  "horizontalOverflow": false,
+  "keyboardLoginAndRegistrationNavigation": true,
+  "adminPasswordPlusTotpLogin": 200,
+  "adminInvitationPage": 200,
+  "verificationSessionLogout": 200,
+  "secretsIncluded": false
+}

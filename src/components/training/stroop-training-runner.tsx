@@ -21,7 +21,13 @@ import {
   useTrainingSessionLifecycle,
   type TrainingSessionLifecycleOptions,
 } from "@/components/training/use-training-session-lifecycle";
-import { Alert, LoadingState, PageShell, PrimaryButton, SecondaryButton } from "@/components/ui/page-shell";
+import {
+  Alert,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  SecondaryButton,
+} from "@/components/ui/page-shell";
 import type { StroopColor } from "@/modules/training/constants";
 import { STROOP_COLORS } from "@/modules/training/constants";
 
@@ -173,6 +179,7 @@ export function StroopTrainingRunner({
     return (
       <PageShell title="Stroop 抑制" backHref={lifecycle.hubPath}>
         <Alert tone="error">{lifecycle.error}</Alert>
+        <PrimaryButton onClick={lifecycle.retryAuthentication}>重新准备训练</PrimaryButton>
       </PageShell>
     );
   }
@@ -201,7 +208,9 @@ export function StroopTrainingRunner({
           网络不稳定，正在重试提交…
         </Alert>
       ) : null}
-      {lifecycle.error && phase === "running" ? <Alert tone="error">{lifecycle.error}</Alert> : null}
+      {lifecycle.error && phase === "running" ? (
+        <Alert tone="error">{lifecycle.error}</Alert>
+      ) : null}
 
       {phase === "intro" ? (
         <section className="bd-training-intro space-y-4" data-testid="stroop-intro">
@@ -277,7 +286,9 @@ export function StroopTrainingRunner({
               data-task-mode={currentTrial.taskMode}
             >
               <p className="text-xs text-neutral-500">{prompt}</p>
-              <p className={`mt-2 text-4xl font-bold ${STROOP_COLOR_CLASSES[currentTrial.inkColor]}`}>
+              <p
+                className={`mt-2 text-4xl font-bold ${STROOP_COLOR_CLASSES[currentTrial.inkColor]}`}
+              >
                 {STROOP_COLOR_LABELS[currentTrial.wordColor]}
               </p>
             </div>

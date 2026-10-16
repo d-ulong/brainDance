@@ -2,7 +2,14 @@ import { config } from "dotenv";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { auditEvents, families, goalGiftRedemptions, outboxEvents, relationships, users } from "@/db/schema";
+import {
+  auditEvents,
+  families,
+  goalGiftRedemptions,
+  outboxEvents,
+  relationships,
+  users,
+} from "@/db/schema";
 import {
   completeGoal,
   createGoals,
@@ -54,6 +61,7 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
         },
         {
           role: "student",
+          birthDate: "2015-01-01",
           displayName: "学生",
           username: "gift_student",
           passwordHash: "test",
@@ -64,7 +72,12 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       .returning({ id: users.id });
     const [family] = await db.insert(families).values({}).returning({ id: families.id });
     await db.insert(relationships).values([
-      { familyId: family!.id, parentId: parent!.id, studentId: student!.id, acceptedAt: new Date() },
+      {
+        familyId: family!.id,
+        parentId: parent!.id,
+        studentId: student!.id,
+        acceptedAt: new Date(),
+      },
       {
         familyId: family!.id,
         parentId: otherParent!.id,
@@ -94,7 +107,9 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       idempotencyKey: "goal-with-horizon",
     });
     const assignmentId = created.assignmentIds[0]!;
-    const listed = (await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)!;
+    const listed = (await listGoals(db, parent!.id)).find(
+      (goal) => goal.assignmentId === assignmentId,
+    )!;
     expect(listed).toMatchObject({
       horizon: "short",
       giftRedeemedAt: null,
@@ -102,7 +117,11 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       status: "active",
     });
 
-    await completeGoal(db, { actorId: student!.id, assignmentId, idempotencyKey: "complete-gift-goal" });
+    await completeGoal(db, {
+      actorId: student!.id,
+      assignmentId,
+      idempotencyKey: "complete-gift-goal",
+    });
     await evaluateGoal(db, {
       actorId: parent!.id,
       assignmentId,
@@ -112,7 +131,9 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       idempotencyKey: "evaluate-gift-goal",
     });
 
-    const succeeded = (await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)!;
+    const succeeded = (await listGoals(db, parent!.id)).find(
+      (goal) => goal.assignmentId === assignmentId,
+    )!;
     expect(succeeded).toMatchObject({
       status: "succeeded",
       actualGift: "博物馆门票",
@@ -171,7 +192,9 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
       }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
 
-    const after = (await listGoals(db, parent!.id)).find((goal) => goal.assignmentId === assignmentId)!;
+    const after = (await listGoals(db, parent!.id)).find(
+      (goal) => goal.assignmentId === assignmentId,
+    )!;
     expect(after.giftRedeemedAt).toBe(new Date(redeemedAt).toISOString());
     expect(after.canRecordGiftRedemption).toBe(false);
 
@@ -184,13 +207,20 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
     const audits = await db
       .select()
       .from(auditEvents)
-      .where(and(eq(auditEvents.action, "goal.gift_redeemed"), eq(auditEvents.resourceId, assignmentId)));
+      .where(
+        and(eq(auditEvents.action, "goal.gift_redeemed"), eq(auditEvents.resourceId, assignmentId)),
+      );
     expect(audits.length).toBeGreaterThanOrEqual(1);
 
     const outbox = await db
       .select()
       .from(outboxEvents)
-      .where(and(eq(outboxEvents.eventType, "goal.gift_redeemed"), eq(outboxEvents.aggregateId, assignmentId)));
+      .where(
+        and(
+          eq(outboxEvents.eventType, "goal.gift_redeemed"),
+          eq(outboxEvents.aggregateId, assignmentId),
+        ),
+      );
     expect(outbox.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -209,6 +239,7 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
         },
         {
           role: "student",
+          birthDate: "2015-01-01",
           displayName: "冲突学生",
           username: "conflict_student",
           passwordHash: "test",
@@ -220,7 +251,12 @@ describe.skipIf(!hasDb)("goal horizon and gift redemption", () => {
     const [family] = await db.insert(families).values({}).returning({ id: families.id });
     await db
       .insert(relationships)
-      .values({ familyId: family!.id, parentId: parent!.id, studentId: student!.id, acceptedAt: new Date() });
+      .values({
+        familyId: family!.id,
+        parentId: parent!.id,
+        studentId: student!.id,
+        acceptedAt: new Date(),
+      });
 
     const active = await createGoals(db, {
       actorId: parent!.id,

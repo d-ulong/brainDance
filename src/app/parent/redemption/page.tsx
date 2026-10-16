@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal } from "@/components/ui/modal";
 import { StudentManagementTabs } from "@/components/ui/student-management-tabs";
 import {
+  SessionLoadError,
   Field,
   LoadingState,
   PageShell,
@@ -37,6 +38,8 @@ const studentLabel = (student: LinkedStudent) =>
 const dayOf = (value: string) => value.slice(0, 10);
 
 export default function ParentRedemptionHubPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState<LinkedStudent[]>([]);
@@ -80,6 +83,8 @@ export default function ParentRedemptionHubPage() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") return router.replace("/login");
@@ -90,8 +95,11 @@ export default function ParentRedemptionHubPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [load, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [load, router, sessionAttempt]);
 
   const visibleCatalog = catalog;
   const visibleRecords = useMemo(
@@ -173,6 +181,18 @@ export default function ParentRedemptionHubPage() {
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading)
     return (
       <PageShell title="兑换项目">

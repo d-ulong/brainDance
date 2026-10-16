@@ -1984,7 +1984,11 @@ describe.skipIf(!hasDb)("M7 family content P2 media remediation", () => {
       studentId,
       idempotencyKey: `delconfirm-${crypto.randomUUID()}`,
     });
-    await processDeletionWorker(db, { requestId: request.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: request.requestId,
+      artifactStore,
+      now: request.revocableUntil,
+    });
 
     await expect(
       readMediaWithCapability(db, {

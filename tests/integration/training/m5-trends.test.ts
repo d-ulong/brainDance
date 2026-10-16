@@ -234,6 +234,8 @@ describe.skipIf(!hasDb)("M5 training trends", () => {
     });
 
     const v2 = await completeReactionSession(db, student.studentId, {
+      // The fixture intentionally installed a different protocol; do not reseed v3 defaults.
+      seedDefinitions: false,
       startIdempotencyKey: "v2-start",
       submitIdempotencyKey: "v2-submit",
     });

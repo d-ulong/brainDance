@@ -7,17 +7,20 @@ Use this contract when changing or running the Windows production launcher after
 ## 2. Signatures
 
 - Launcher: `scripts\start-web-and-worker.bat start`
-- Ordered commands: `pnpm db:migrate` → `pnpm build` → `pnpm start` and `pnpm worker:lifecycle`
+- Ordered commands: clean checkout/upstream check → `git pull --ff-only` → stop owned processes → `pnpm install --frozen-lockfile` → `pnpm db:migrate` → production `pnpm build` → web and worker.
+- Implementation: the BAT entry delegates to `scripts/start-web-and-worker.ps1`; `dev` skips only production build.
 - Authority: `DATABASE_URL` loaded by the production process environment / `.env.local`.
 
 ## 3. Contracts
 
-- Stop the old web and worker before updating files.
+- Pull before stopping services, as explicitly requested by the user. Dirty, detached, untracked-upstream, or pull failure must leave running services untouched. Never stash, reset, rebase, or force a pull.
+- Stop only launcher-owned process trees, verified by recorded PID, creation time and the exact launcher path in the command line. Never kill by port or all Node processes. Older untracked launchers require manual closure once.
+- Serialize launchers per checkout with an OS mutex. Store private local process state and logs under ignored `.review-runtime/windows-launcher/`.
 - Back up the production database before applying new migrations.
 - Run migrations before building and starting the new code.
 - Always build the current checkout; an existing `.next\BUILD_ID` does not prove that the build matches the current Git revision.
 - A migration or build failure exits before either long-running process starts.
-- If `pnpm-lock.yaml` changed, run `pnpm install --frozen-lockfile` before the launcher.
+- The launcher always runs `pnpm install --frozen-lockfile` after stopping owned processes and before migration.
 
 ## 4. Validation & Error Matrix
 
@@ -30,13 +33,13 @@ Use this contract when changing or running the Windows production launcher after
 
 ## 5. Good / Base / Bad Cases
 
-- Good: stop old processes, pull, frozen-install when needed, back up, run the launcher, then verify health and a schema-dependent page.
+- Good: back up the database, run the launcher to check/pull/restart, then verify health and a schema-dependent page.
 - Base: no dependency change; launcher applies idempotent migrations, rebuilds, and starts both processes.
 - Bad: pull and run `pnpm start` against an existing `.next` directory while skipping migrations.
 
 ## 6. Tests Required
 
-- Static launcher test asserts migration before build and both before process start.
+- Launcher tests assert pull-before-stop and migration/build/start ordering; executable Windows failure tests prove dirty/no-upstream/pull failures leave process state untouched and skip dependency/migration commands.
 - Run migrations against an explicitly named isolated database and verify the newest required columns.
 - Run a route test for a schema-dependent endpoint and a production build.
 - After deployment, verify `/api/health` and one schema-dependent authenticated page.

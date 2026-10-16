@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { StudentContextBanner } from "@/components/ui/student-context-banner";
 import {
@@ -18,6 +18,8 @@ export default function ParentReflectionPage({
 }: {
   params: Promise<{ studentId: string }>;
 }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +50,8 @@ export default function ParentReflectionPage({
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       const sid = resolved.studentId;
@@ -70,9 +74,24 @@ export default function ParentReflectionPage({
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadReflection, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadReflection, params, router, sessionAttempt]);
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="今日总结">
@@ -84,7 +103,9 @@ export default function ParentReflectionPage({
   return (
     <PageShell title="今日总结">
       <div className="mx-auto flex w-full max-w-md flex-col gap-4 px-4 pb-8">
-        {studentId ? <StudentContextBanner studentId={studentId} label="正在查看总结的学生" /> : null}
+        {studentId ? (
+          <StudentContextBanner studentId={studentId} label="正在查看总结的学生" />
+        ) : null}
         {error ? <Alert tone="error">{error}</Alert> : null}
 
         {forbidden ? (

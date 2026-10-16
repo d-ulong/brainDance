@@ -14,7 +14,13 @@ export type IdentityErrorCode =
   | "USER_NOT_FOUND"
   | "CONTACT_NOT_VERIFIED"
   | "VALIDATION_ERROR"
-  | "PASSWORD_CHANGE_REQUIRED";
+  | "PASSWORD_CHANGE_REQUIRED"
+  | "MFA_REQUIRED"
+  | "MFA_NOT_CONFIGURED"
+  | "DELIVERY_UNAVAILABLE"
+  | "RATE_LIMITED"
+  | "STATE_CONFLICT"
+  | "IDEMPOTENCY_CONFLICT";
 
 export class IdentityError extends Error {
   readonly code: IdentityErrorCode;

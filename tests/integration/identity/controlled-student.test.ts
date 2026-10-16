@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { users } from "@/db/schema";
+import { createLucia } from "@/lib/lucia";
 import * as passwordCrypto from "@/lib/crypto";
 import { REACTION_TRAINING_KEY } from "@/modules/training/constants";
 import { changePassword } from "@/modules/identity/change-password.service";
@@ -185,9 +186,13 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
       } satisfies Partial<IdentityError>),
     );
 
+    const initialSession = await createLucia(db).createSession(created.studentId, {
+      authorizationEpoch: beforeChange!.authorizationEpoch,
+    });
+
     const changed = await changePassword(db, {
       userId: created.studentId,
-      currentSessionId: "test-session",
+      currentSessionId: initialSession.id,
       currentPassword: initialPassword,
       newPassword,
       idempotencyKey: "change-password-1",
@@ -218,7 +223,7 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
 
     const replay = await changePassword(db, {
       userId: created.studentId,
-      currentSessionId: "test-session",
+      currentSessionId: changed.sessionCookie.value,
       currentPassword: initialPassword,
       newPassword,
       idempotencyKey: "change-password-1",
@@ -231,11 +236,14 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
     const parentEmail = `parent-${randomUUID()}@test.local`;
     const { parentId } = await bootstrapVerifiedParentWithInvite(db, parentEmail);
     const [before] = await db.select().from(users).where(eq(users.id, parentId)).limit(1);
+    const parentSession = await createLucia(db).createSession(parentId, {
+      authorizationEpoch: before!.authorizationEpoch,
+    });
 
     await expect(
       changePassword(db, {
         userId: parentId,
-        currentSessionId: "parent-session",
+        currentSessionId: parentSession.id,
         currentPassword: "WrongPass1a",
         newPassword: "Parent2bYz",
         idempotencyKey: "parent-change-wrong",
@@ -245,7 +253,7 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
     await expect(
       changePassword(db, {
         userId: parentId,
-        currentSessionId: "parent-session",
+        currentSessionId: parentSession.id,
         currentPassword: "Parent1aXy",
         newPassword: "Parent1aXy",
         idempotencyKey: "parent-change-same",
@@ -254,7 +262,7 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
 
     const changed = await changePassword(db, {
       userId: parentId,
-      currentSessionId: "parent-session",
+      currentSessionId: parentSession.id,
       currentPassword: "Parent1aXy",
       newPassword: "Parent2bYz",
       idempotencyKey: "parent-change-ok",
@@ -295,7 +303,7 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
     expect(renewed!.session.id).not.toBe(prior.sessionId);
   });
 
-  it("rejects password change for non self roles via service role gate", async () => {
+  it("rejects administrator password change without an authenticated session", async () => {
     const { adminId, password: adminPassword } = await bootstrapAdmin(db);
 
     await expect(
@@ -306,6 +314,6 @@ describe.skipIf(!hasDb)("controlled student and password change", () => {
         newPassword: "Abc123",
         idempotencyKey: "admin-change",
       }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });

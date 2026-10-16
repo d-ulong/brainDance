@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "事务和数据库锁序"}
+{"file": ".trellis/spec/backend/review-remediation-contracts.md", "reason": "MFA主体资格及会话契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "页面与双主题组件"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "聚焦浏览器与静态验证"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "登录会话到UI完整链路"}

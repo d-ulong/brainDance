@@ -1,14 +1,20 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { auditEvents, pointBalanceProjection, pointRedemptions, redemptionCatalogItems } from "@/db/schema";
+import {
+  auditEvents,
+  users,
+  pointBalanceProjection,
+  pointRedemptions,
+  redemptionCatalogItems,
+} from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   listActiveParentIdsForStudent,
   requireActiveRelationship,
 } from "@/modules/family-access/authorization.service";
 import { appendOutboxEvent } from "@/modules/outbox/append-outbox-event";
-import { assertStudentAccountNotFrozen } from "@/modules/data-lifecycle/freeze-guard.service";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { isPostgresUniqueViolation } from "@/lib/postgres-errors";
 import { appendLedgerForRedemption } from "@/modules/redemption/ledger-redemption.service";
 import { lockStudentBalanceThenMonthlyUsage } from "@/modules/redemption/approve-lock-order";
@@ -148,7 +154,7 @@ export async function createRedemptionRequest(
     throw new RedemptionError("FORBIDDEN", "Only the student can create redemption requests");
   }
 
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const payload = { catalogItemId: input.catalogItemId };
   const payloadHash = hashIdempotencyPayload(payload);
@@ -174,6 +180,7 @@ export async function createRedemptionRequest(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
     const [replay] = await tx
       .select()
       .from(pointRedemptions)
@@ -195,7 +202,15 @@ export async function createRedemptionRequest(
       return { redemption: toRedemptionDto(replay), idempotentReplay: true };
     }
 
-    const activeParentIds = await listActiveParentIdsForStudent(tx, input.studentId);
+    const [subject] = await tx.select().from(users).where(eq(users.id, input.studentId)).limit(1);
+    const selfParent = subject?.role === "parent" && subject.id === input.actorId;
+    if (!subject || !["student", "parent"].includes(subject.role))
+      throw new RedemptionError("FORBIDDEN", "Redemption subject denied");
+    if (selfParent && !subject.contactVerifiedAt)
+      throw new RedemptionError("FORBIDDEN", "Parent contact must be verified");
+    const activeParentIds = selfParent
+      ? [subject.id]
+      : await listActiveParentIdsForStudent(tx, input.studentId);
     if (activeParentIds.length === 0) {
       throw new RedemptionError("NOT_FOUND", "Catalog item not found");
     }
@@ -206,6 +221,9 @@ export async function createRedemptionRequest(
       .where(
         and(
           eq(redemptionCatalogItems.id, input.catalogItemId),
+          selfParent
+            ? eq(redemptionCatalogItems.studentId, input.studentId)
+            : sql`${redemptionCatalogItems.studentId} <> ${redemptionCatalogItems.creatorParentId}`,
           inArray(redemptionCatalogItems.creatorParentId, activeParentIds),
         ),
       )
@@ -219,11 +237,20 @@ export async function createRedemptionRequest(
       throw new RedemptionError("CATALOG_INACTIVE", "Catalog item is not active");
     }
 
-    await tx.execute(sql`SELECT student_id FROM point_balance_projection WHERE student_id = ${input.studentId}::uuid FOR UPDATE`);
-    const [balanceRow] = await tx.select({ balance: pointBalanceProjection.balance }).from(pointBalanceProjection).where(eq(pointBalanceProjection.studentId, input.studentId)).limit(1);
+    await tx.execute(
+      sql`SELECT student_id FROM point_balance_projection WHERE student_id = ${input.studentId}::uuid FOR UPDATE`,
+    );
+    const [balanceRow] = await tx
+      .select({ balance: pointBalanceProjection.balance })
+      .from(pointBalanceProjection)
+      .where(eq(pointBalanceProjection.studentId, input.studentId))
+      .limit(1);
     const availableBalance = balanceRow?.balance ?? 0;
     if (availableBalance < catalogItem.cost) {
-      throw new RedemptionError("INSUFFICIENT_BALANCE", `积分不足：当前 ${availableBalance} 分，需要 ${catalogItem.cost} 分`);
+      throw new RedemptionError(
+        "INSUFFICIENT_BALANCE",
+        `积分不足：当前 ${availableBalance} 分，需要 ${catalogItem.cost} 分`,
+      );
     }
 
     if (catalogItem.monthlyLimit != null) {
@@ -293,6 +320,39 @@ export async function createRedemptionRequest(
         },
       });
 
+      if (selfParent) {
+        const ledger = await appendLedgerForRedemption(tx, {
+          studentId: input.studentId,
+          redemptionId: inserted.id,
+          amount: -inserted.costSnapshot,
+          actorId: input.actorId,
+          idempotencyKey: `ledger:redemption:${inserted.id}`,
+          now,
+        });
+        const [approved] = await tx
+          .update(pointRedemptions)
+          .set({
+            status: "approved",
+            confirmedAt: now,
+            confirmedBy: input.actorId,
+            ledgerEntryId: ledger.ledgerEntryId,
+          })
+          .where(eq(pointRedemptions.id, inserted.id))
+          .returning();
+        await appendAuditEvent(tx, {
+          actorId: input.actorId,
+          action: "point_redemption.approved",
+          resourceType: "point_redemption",
+          resourceId: inserted.id,
+          idempotencyKey: `audit:self-redemption-approved:${inserted.id}`,
+          metadata: {
+            studentId: input.studentId,
+            amount: -inserted.costSnapshot,
+            selfConfirmed: true,
+          },
+        });
+        return { redemption: toRedemptionDto(approved!), idempotentReplay: false };
+      }
       return { redemption: toRedemptionDto(inserted), idempotentReplay: false };
     } catch (error) {
       if (isPostgresUniqueViolation(error)) {
@@ -344,7 +404,7 @@ export async function cancelRedemptionRequest(
     throw new RedemptionError("FORBIDDEN", "Only the student can cancel redemption requests");
   }
 
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const auditKey = `audit:redemption-cancelled:${input.idempotencyKey}`;
   const cancelPayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
@@ -364,6 +424,7 @@ export async function cancelRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
     if (await findCommandReplay(tx, auditKey, input.redemptionId, cancelPayloadHash)) {
       const [row] = await tx
         .select()
@@ -438,7 +499,7 @@ export async function approveRedemptionRequest(
   input: ApproveRedemptionInput,
 ): Promise<TerminalRedemptionResult> {
   await requireActiveRelationship(db, input.parentId, input.studentId);
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const auditKey = `audit:redemption-approved:${input.idempotencyKey}`;
   const approvePayloadHash = hashIdempotencyPayload({ redemptionId: input.redemptionId });
@@ -458,6 +519,7 @@ export async function approveRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
     if (await findCommandReplay(tx, auditKey, input.redemptionId, approvePayloadHash)) {
       const [row] = await tx
         .select()
@@ -470,7 +532,7 @@ export async function approveRedemptionRequest(
       return { redemption: toRedemptionDto(row), idempotentReplay: true };
     }
 
-    // Frozen lock order: redemption row → student/balance → monthly usage rows.
+    // Subject eligibility lock precedes redemption, balance and monthly rows.
     const row = await lockRedemptionRow(tx, input.redemptionId);
 
     if (row.studentId !== input.studentId) {
@@ -568,7 +630,7 @@ export async function rejectRedemptionRequest(
   input: RejectRedemptionInput,
 ): Promise<TerminalRedemptionResult> {
   await requireActiveRelationship(db, input.parentId, input.studentId);
-  await assertStudentAccountNotFrozen(db, input.studentId, "write");
+  await assertSubjectAccess(db, input.studentId, "write");
 
   const trimmedReason = input.reason.trim();
   if (!trimmedReason) {
@@ -596,6 +658,7 @@ export async function rejectRedemptionRequest(
   const now = input.now ?? new Date();
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
     if (await findCommandReplay(tx, auditKey, input.redemptionId, rejectPayloadHash)) {
       const [row] = await tx
         .select()
@@ -664,7 +727,7 @@ export async function rejectRedemptionRequest(
 }
 
 export async function listRedemptions(db: Database, studentId: string): Promise<RedemptionDto[]> {
-  await assertStudentAccountNotFrozen(db, studentId, "read");
+  await assertSubjectAccess(db, studentId, "read");
 
   const rows = await db
     .select()

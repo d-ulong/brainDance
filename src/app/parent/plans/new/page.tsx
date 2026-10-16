@@ -5,7 +5,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
-import { LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
+import { SessionLoadError, LoadingState, PageShell, Toast } from "@/components/ui/page-shell";
 import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { savePlanLibrary } from "@/lib/client/m2-api";
@@ -15,6 +15,8 @@ const today = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
 
 function ParentPlanNewPageContent() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const search = useSearchParams();
   const scopeSelf = search.get("scope") === "self";
@@ -27,13 +29,16 @@ function ParentPlanNewPageContent() {
   useUnsavedChangesGuard(dirty);
 
   useEffect(() => {
+    setSessionFailed(false);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "parent") {
         router.replace("/login");
       }
-    })();
-  }, [router]);
+    })().catch(() => {
+      setSessionFailed(true);
+    });
+  }, [router, sessionAttempt]);
 
   async function createPlan(definition: Parameters<typeof savePlanLibrary>[0], priority: number) {
     if (saveLock.current) return;
@@ -57,6 +62,17 @@ function ParentPlanNewPageContent() {
     router.push(scopeSelf ? "/parent/plans?scope=self" : "/parent/plans");
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   return (
     <PageShell
       title="新增计划"

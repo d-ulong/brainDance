@@ -4,19 +4,26 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/ui/app-theme";
-import { LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { fetchSession, type SessionInfo } from "@/lib/client/api";
 
 export default function AccountPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
   useEffect(() => {
-    void fetchSession().then((value) => {
-      if (!value) router.replace("/login");
-      else if (value.mustChangePassword) router.replace("/student/change-password");
-      else setSession(value);
-    });
-  }, [router]);
+    setSessionFailed(false);
+    void fetchSession()
+      .then((value) => {
+        if (!value) router.replace("/login");
+        else if (value.mustChangePassword) router.replace("/change-password");
+        else setSession(value);
+      })
+      .catch(() => {
+        setSessionFailed(true);
+      });
+  }, [router, sessionAttempt]);
   const roleLabel =
     session?.role === "parent" ? "家长" : session?.role === "admin" ? "管理员" : "学生";
   const links =
@@ -35,12 +42,28 @@ export default function AccountPage() {
             ["/parent/goals?scope=self", "🎯", "我的目标"],
             ["/parent/plans?scope=self", "🗓️", "我的计划"],
             ["/parent/schedule", "📅", "我的日程"],
+            ["/parent/my-redemption", "⭐", "我的积分与兑换"],
             ["/parent/change-password", "🔑", "修改密码"],
             ["/parent/training", "🧩", "我的训练"],
             ["/parent/students", "🏡", "我的家庭"],
             ["/parent/link", "🤝", "关联已有学生"],
           ]
-        : [["/admin/invitations", "✉️", "邀请新成员"]];
+        : [
+            ["/admin/accounts", "👥", "账号管理"],
+            ["/admin/invitations", "✉️", "邀请新成员"],
+            ["/change-password", "🔑", "修改本人密码"],
+          ];
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   return (
     <PageShell title="我的" showLogout>
       {!session ? (

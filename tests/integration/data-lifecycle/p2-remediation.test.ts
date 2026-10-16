@@ -112,7 +112,11 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c01-confirm",
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     expect(await countActiveRelationshipsForStudent(db, student.studentId)).toBe(0);
     expect(await countActivePrivateGrantsForStudent(db, student.studentId)).toBe(0);
@@ -459,7 +463,11 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
       idempotencyKey: "c05-confirm",
     });
 
-    await processDeletionWorker(db, { requestId: created.requestId, artifactStore });
+    await processDeletionWorker(db, {
+      requestId: created.requestId,
+      artifactStore,
+      now: created.revocableUntil,
+    });
 
     await db.transaction(async (tx) => {
       await tx
@@ -776,8 +784,16 @@ describe.skipIf(!hasDb)("M6 P2 final acceptance correction (C01–C07)", () => {
 
     try {
       const [a, b] = await Promise.all([
-        processDeletionWorker(connA.db, { requestId: created.requestId, artifactStore }),
-        processDeletionWorker(connB.db, { requestId: created.requestId, artifactStore }),
+        processDeletionWorker(connA.db, {
+          requestId: created.requestId,
+          artifactStore,
+          now: created.revocableUntil,
+        }),
+        processDeletionWorker(connB.db, {
+          requestId: created.requestId,
+          artifactStore,
+          now: created.revocableUntil,
+        }),
       ]);
 
       expect(a.status).toBe("executed");

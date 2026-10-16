@@ -2,6 +2,7 @@ import { and, eq, max, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
 import { planVersions, plans, scheduleHorizonMaintains, scheduleItems } from "@/db/schema";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
@@ -111,6 +112,8 @@ export async function maintainHorizon(
   }
 
   return db.transaction(async (tx) => {
+    await assertSubjectAccess(tx, input.studentId, "write", now);
+    await requireActiveRelationship(tx, input.actorId, input.studentId);
     const existingInTx = await findMaintainRow(
       tx,
       input.studentId,

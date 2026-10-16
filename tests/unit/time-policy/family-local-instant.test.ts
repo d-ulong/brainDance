@@ -25,7 +25,7 @@ describe("familyLocalInstant", () => {
 
   it("is the shared conversion source for completionWindowEnd", () => {
     expect(completionWindowEnd("2026-01-01")).toEqual(
-      familyLocalInstant("2026-01-02", "23:59:59.999"),
+      familyLocalInstant("2026-01-02", "22:00:00.000"),
     );
   });
 });

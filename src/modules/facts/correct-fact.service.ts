@@ -1,8 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
 
 import type { Database } from "@/db";
-import { factVersions } from "@/db/schema";
+import { factVersions, users } from "@/db/schema";
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
+import { assertSubjectAccess } from "@/modules/data-lifecycle/subject-access.service";
 import { requireActiveRelationship } from "@/modules/family-access/authorization.service";
 import { FamilyAccessError } from "@/modules/family-access/errors";
 import { FactsError } from "@/modules/facts/errors";
@@ -40,6 +41,26 @@ export type CorrectFactResult = {
 };
 
 const ADMIN_OVERRIDE_REASONS = new Set(["security", "data_correction"]);
+
+async function authorizeCorrection(tx: Database, input: CorrectFactInput, studentId: string) {
+  if (input.adminOverride) {
+    const [actor] = await tx
+      .select({ role: users.role, status: users.status })
+      .from(users)
+      .where(eq(users.id, input.actorId))
+      .limit(1);
+    if (actor?.role !== "admin" || actor.status !== "active")
+      throw new FactsError("FORBIDDEN", "Administrator access required");
+    return;
+  }
+  try {
+    await requireActiveRelationship(tx, input.actorId, studentId);
+  } catch (error) {
+    if (error instanceof FamilyAccessError && error.code === "FORBIDDEN")
+      throw new FactsError("FORBIDDEN", error.message);
+    throw error;
+  }
+}
 
 async function lockFactChain(tx: Database, factId: string) {
   await tx.execute(sql`SELECT id FROM fact_versions WHERE id = ${factId}::uuid FOR UPDATE`);
@@ -111,10 +132,20 @@ export async function correctFact(
   if (input.adminOverride && !ADMIN_OVERRIDE_REASONS.has(input.adminOverride.reason)) {
     throw new FactsError("VALIDATION_ERROR", "Invalid admin override reason");
   }
+  const [subject] = await db
+    .select({ studentId: factVersions.studentId })
+    .from(factVersions)
+    .where(eq(factVersions.id, input.factId))
+    .limit(1);
+  if (!subject) throw new FactsError("NOT_FOUND", "Fact not found");
 
   try {
     return await db.transaction(async (tx) => {
+      await assertSubjectAccess(tx, subject.studentId, "write", now);
       const predecessor = await lockFactChain(tx, input.factId);
+      if (predecessor.studentId !== subject.studentId)
+        throw new FactsError("STATE_CONFLICT", "Fact subject changed");
+      await authorizeCorrection(tx, input, predecessor.studentId);
 
       if (predecessor.factKey !== "schedule.error_count" || predecessor.sourceKind !== "manual") {
         throw new FactsError("VALIDATION_ERROR", "Only manual error_count facts can be corrected");
@@ -161,18 +192,7 @@ export async function correctFact(
 
       const item = await assertFormalScheduleItem(tx, predecessor.scheduleItemId);
 
-      if (input.adminOverride) {
-        // Admin path — no relationship check; route must use requireAdminSession
-      } else {
-        try {
-          await requireActiveRelationship(tx, input.actorId, predecessor.studentId);
-        } catch (error) {
-          if (error instanceof FamilyAccessError && error.code === "FORBIDDEN") {
-            throw new FactsError("FORBIDDEN", error.message);
-          }
-          throw error;
-        }
-
+      if (!input.adminOverride) {
         if (!isWithinCorrectionWindow(item.familyDate, now)) {
           if (isPastCorrectionWindow(item.familyDate, now)) {
             throw new FactsError("WINDOW_EXPIRED", "Correction window has expired");
@@ -266,6 +286,11 @@ export async function correctFact(
 
     if (isPostgresUniqueViolation(error)) {
       return db.transaction(async (tx) => {
+        await assertSubjectAccess(tx, subject.studentId, "write", now);
+        const predecessor = await lockFactChain(tx, input.factId);
+        if (predecessor.studentId !== subject.studentId)
+          throw new FactsError("STATE_CONFLICT", "Fact subject changed");
+        await authorizeCorrection(tx, input, predecessor.studentId);
         const [raced] = await tx
           .select()
           .from(factVersions)

@@ -6,7 +6,14 @@ import { use, useEffect, useMemo, useRef, useState } from "react";
 import { PlanLibraryEditForm } from "@/components/plans/plan-library-edit-form";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { StudentMultiSelect } from "@/components/ui/student-multi-select";
-import { Field, LoadingState, PageShell, PrimaryButton, Toast } from "@/components/ui/page-shell";
+import {
+  SessionLoadError,
+  Field,
+  LoadingState,
+  PageShell,
+  PrimaryButton,
+  Toast,
+} from "@/components/ui/page-shell";
 import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import {
@@ -39,6 +46,8 @@ function mergeSelectedWithBindingFacts(
 }
 
 export default function ParentPlanEditPage({ params }: { params: Promise<{ planId: string }> }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const { planId } = use(params);
   const router = useRouter();
   const search = useSearchParams();
@@ -83,6 +92,8 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
   useUnsavedChangesGuard(definitionDirty || bindingDirty);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     let cancelled = false;
     void (async () => {
       const session = await fetchSession();
@@ -114,11 +125,14 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
       } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [planId, router, scopeSelf]);
+  }, [planId, router, scopeSelf, sessionAttempt]);
 
   async function saveDefinition(
     definition: Parameters<typeof updatePlanLibrary>[2],
@@ -331,6 +345,18 @@ export default function ParentPlanEditPage({ params }: { params: Promise<{ planI
     router.push(scopeSelf ? "/parent/plans?scope=self" : "/parent/plans");
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   return (
     <PageShell
       title="编辑计划"

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  SessionLoadError,
   Alert,
   Field,
   LoadingState,
@@ -32,6 +33,8 @@ import {
 import { addFamilyDays } from "@/modules/time-policy/add-family-days";
 
 export default function ParentPlanPage({ params }: { params: Promise<{ studentId: string }> }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [studentId, setStudentId] = useState<string | null>(null);
   const [loading] = useState(true);
@@ -86,6 +89,7 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
     void (async () => {
       const resolved = await params;
       const sid = resolved.studentId;
@@ -105,9 +109,10 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
       // student's multi-plan tab. Redirect before its old aggregates can load.
       router.replace(`/parent/students/${sid}/plans`);
       return;
-
-    })();
-  }, [loadReadOnlyData, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+    });
+  }, [loadReadOnlyData, params, router, sessionAttempt]);
 
   async function onCreatePlan(event: React.FormEvent) {
     event.preventDefault();
@@ -209,6 +214,17 @@ export default function ParentPlanPage({ params }: { params: Promise<{ studentId
     }
   }
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="学习计划">

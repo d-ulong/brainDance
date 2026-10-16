@@ -7,15 +7,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as schema from "@/db/schema";
 import {
   auditEvents,
+  deletionRequests,
   factVersions,
   pointBalanceProjection,
   pointLedgerEntries,
   scheduleItems,
   settlements,
+  relationships,
+  users,
 } from "@/db/schema";
 import { confirmFact } from "@/modules/facts/confirm-fact.service";
 import { correctFact } from "@/modules/facts/correct-fact.service";
 import { submitErrorCount } from "@/modules/facts/submit-error-count.service";
+import { endRelationship } from "@/modules/family-access/end-relationship.service";
 import { createFormalPlan } from "@/modules/schedule/plan.service";
 import { maintainHorizon } from "@/modules/schedule/maintain-horizon.service";
 import { addFamilyDays } from "@/modules/time-policy/add-family-days";
@@ -29,6 +33,7 @@ import {
 } from "../../helpers/schedule";
 import {
   closeTestDb,
+  createIndependentTestDb,
   getTestDb,
   migrateTestDb,
   resetIdentityTables,
@@ -543,5 +548,234 @@ describe.skipIf(!hasDb)("m3 facts flow", () => {
 
     const auditRows = await db.select().from(auditEvents);
     expect(auditRows.some((row) => row.action === "fact.corrected.admin")).toBe(true);
+  });
+
+  it.each(["frozen", "adult"] as const)(
+    "blocks all fact commands and replays for a %s student, including admin override",
+    async (restriction) => {
+      const ctx = await seedFormalItem(db);
+      const now = correctionNowForFamilyDate(ctx.familyDate);
+      const pending = await submitErrorCount(db, {
+        actorId: ctx.studentId,
+        scheduleItemId: ctx.itemId,
+        idempotencyKey: "guard-pending",
+        body: { errorCount: 2 },
+        now,
+      });
+      const confirmed = await submitErrorCount(db, {
+        actorId: ctx.studentId,
+        scheduleItemId: ctx.itemId,
+        idempotencyKey: "guard-confirmed",
+        body: { errorCount: 1 },
+        now,
+      });
+      await confirmFact(db, {
+        parentId: ctx.parentId,
+        factId: confirmed.factVersionId,
+        idempotencyKey: "guard-confirm",
+        now,
+      });
+      await correctFact(db, {
+        actorId: ctx.parentId,
+        factId: confirmed.factVersionId,
+        idempotencyKey: "guard-correct",
+        body: { errorCount: 0, reason: "original correction" },
+        now,
+      });
+      const { adminId } = await bootstrapAdmin(db);
+      if (restriction === "frozen") {
+        await db
+          .insert(deletionRequests)
+          .values({
+            targetType: "student_account",
+            targetId: ctx.studentId,
+            studentId: ctx.studentId,
+            requestedBy: ctx.studentId,
+            status: "frozen",
+            revocableUntil: new Date(now.getTime() + 30 * 86_400_000),
+            createIdempotencyKey: "facts-freeze",
+            createIdempotencyPayloadHash: "fixture",
+            requestedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+      } else {
+        await db.update(users).set({ birthDate: "2000-01-01" }).where(eq(users.id, ctx.studentId));
+      }
+      const expected = { code: restriction === "frozen" ? "FROZEN" : "FORBIDDEN" };
+      const beforeFacts = await db.select().from(factVersions);
+      const beforeLedger = await db.select().from(pointLedgerEntries);
+      await expect(
+        submitErrorCount(db, {
+          actorId: ctx.studentId,
+          scheduleItemId: ctx.itemId,
+          idempotencyKey: "guard-new-submit",
+          body: { errorCount: 3 },
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        submitErrorCount(db, {
+          actorId: ctx.studentId,
+          scheduleItemId: ctx.itemId,
+          idempotencyKey: "guard-pending",
+          body: { errorCount: 2 },
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        confirmFact(db, {
+          parentId: ctx.parentId,
+          factId: pending.factVersionId,
+          idempotencyKey: "guard-new-confirm",
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        confirmFact(db, {
+          parentId: ctx.parentId,
+          factId: confirmed.factVersionId,
+          idempotencyKey: "guard-confirm",
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        correctFact(db, {
+          actorId: ctx.parentId,
+          factId: confirmed.factVersionId,
+          idempotencyKey: "guard-new-correct",
+          body: { errorCount: 3, reason: "blocked correction" },
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        correctFact(db, {
+          actorId: ctx.parentId,
+          factId: confirmed.factVersionId,
+          idempotencyKey: "guard-correct",
+          body: { errorCount: 0, reason: "original correction" },
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      await expect(
+        correctFact(db, {
+          actorId: adminId,
+          factId: confirmed.factVersionId,
+          idempotencyKey: "guard-correct",
+          body: { errorCount: 0, reason: "original correction" },
+          adminOverride: { reason: "security" },
+          now,
+        }),
+      ).rejects.toMatchObject(expected);
+      expect(await db.select().from(factVersions)).toEqual(beforeFacts);
+      expect(await db.select().from(pointLedgerEntries)).toEqual(beforeLedger);
+    },
+  );
+
+  it.each(["confirm", "correct"] as const)(
+    "rechecks relationship after a queued %s acquires the subject lock",
+    async (command) => {
+      const ctx = await seedFormalItem(db);
+      const now = correctionNowForFamilyDate(ctx.familyDate);
+      const submitted = await submitErrorCount(db, {
+        actorId: ctx.studentId,
+        scheduleItemId: ctx.itemId,
+        idempotencyKey: "queue-submit",
+        body: { errorCount: 2 },
+        now,
+      });
+      if (command === "correct")
+        await confirmFact(db, {
+          parentId: ctx.parentId,
+          factId: submitted.factVersionId,
+          idempotencyKey: "queue-confirm",
+          now,
+        });
+      const [relationship] = await db
+        .select()
+        .from(relationships)
+        .where(eq(relationships.studentId, ctx.studentId))
+        .limit(1);
+      const independent = createIndependentTestDb();
+      let pending: Promise<unknown> | undefined;
+      const beforeFacts = await db.select().from(factVersions);
+      const beforeLedger = await db.select().from(pointLedgerEntries);
+      try {
+        const pidRows = await independent.db.execute(sql`SELECT pg_backend_pid() AS pid`);
+        const workerPid = (pidRows[0] as { pid: number }).pid;
+        await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT id FROM users WHERE id = ${ctx.studentId}::uuid FOR UPDATE`);
+          pending = (
+            command === "confirm"
+              ? confirmFact(independent.db, {
+                  parentId: ctx.parentId,
+                  factId: submitted.factVersionId,
+                  idempotencyKey: "queued-confirm",
+                  now,
+                })
+              : correctFact(independent.db, {
+                  actorId: ctx.parentId,
+                  factId: submitted.factVersionId,
+                  idempotencyKey: "queued-correct",
+                  body: { errorCount: 0, reason: "queued correction" },
+                  now,
+                })
+          ).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          await expect
+            .poll(
+              async () => {
+                const rows = await db.execute(
+                  sql`SELECT cardinality(pg_blocking_pids(${workerPid}::int)) > 0 AS blocked`,
+                );
+                return (rows[0] as { blocked: boolean }).blocked;
+              },
+              { timeout: 5_000 },
+            )
+            .toBe(true);
+          await endRelationship(tx, {
+            actorId: ctx.parentId,
+            relationshipId: relationship!.id,
+            idempotencyKey: "queue-end-relationship",
+          });
+        });
+        expect(await pending).toMatchObject({ code: "FORBIDDEN" });
+        expect(await db.select().from(factVersions)).toEqual(beforeFacts);
+        expect(await db.select().from(pointLedgerEntries)).toEqual(beforeLedger);
+      } finally {
+        await pending;
+        await independent.close();
+      }
+    },
+  );
+
+  it("does not accept an admin override flag from a parent", async () => {
+    const ctx = await seedFormalItem(db);
+    const now = correctionNowForFamilyDate(ctx.familyDate);
+    const submitted = await submitErrorCount(db, {
+      actorId: ctx.studentId,
+      scheduleItemId: ctx.itemId,
+      idempotencyKey: "forged-submit",
+      body: { errorCount: 2 },
+      now,
+    });
+    await confirmFact(db, {
+      parentId: ctx.parentId,
+      factId: submitted.factVersionId,
+      idempotencyKey: "forged-confirm",
+      now,
+    });
+    await expect(
+      correctFact(db, {
+        actorId: ctx.parentId,
+        factId: submitted.factVersionId,
+        idempotencyKey: "forged-correct",
+        body: { errorCount: 0, reason: "not an administrator" },
+        adminOverride: { reason: "data_correction" },
+        now,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { familyPushStatusLabel, listStudentPushes, type FamilyPushDto } from "@/lib/client/m7-api";
 
 export default function StudentPushesPage() {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +24,8 @@ export default function StudentPushesPage() {
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const session = await fetchSession();
       if (!session || session.role !== "student") {
@@ -36,9 +40,24 @@ export default function StudentPushesPage() {
       } finally {
         setLoading(false);
       }
-    })();
-  }, [load, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [load, router, sessionAttempt]);
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="家庭推送">

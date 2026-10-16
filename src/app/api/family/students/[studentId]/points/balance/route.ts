@@ -16,7 +16,9 @@ export async function GET(_request: Request, context: RouteContext) {
     const { studentId: rawStudentId } = await context.params;
     const studentId = m2UuidParamSchema.parse(rawStudentId);
 
-    await requireStudentReadAccess(db, dbUser, studentId);
+    if (!(dbUser.role === "parent" && dbUser.id === studentId)) {
+      await requireStudentReadAccess(db, dbUser, studentId);
+    }
 
     const balance = await queryPointsBalance(db, studentId);
     return NextResponse.json(balance);

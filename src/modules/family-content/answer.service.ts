@@ -5,6 +5,7 @@ import { familyPushes, pushAnswerVersions, pushAnswers, users } from "@/db/schem
 import { appendAuditEvent } from "@/modules/audit/append-audit-event";
 import {
   assertStudentNotFrozenForFamilyContent,
+  lockPushSubjectForWrite,
   loadPushOrThrow,
 } from "@/modules/family-content/access";
 import {
@@ -37,10 +38,13 @@ async function toAnswerDto(
   now: Date = new Date(),
 ): Promise<PushAnswerDto> {
   const media = await listActiveMediaDtosForResource(db, "push_answer_version", version.id);
-  const [author] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, answer.studentId)).limit(1);
+  const [author] = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, answer.studentId))
+    .limit(1);
   const edited = answer.currentVersion > 1;
-  const canEdit =
-    viewerId === answer.studentId && isAnswerWithinEditWindow(answer.createdAt, now);
+  const canEdit = viewerId === answer.studentId && isAnswerWithinEditWindow(answer.createdAt, now);
   return {
     answerId: answer.id,
     pushId: answer.pushId,
@@ -62,9 +66,16 @@ export async function getPushAnswer(db: Database, pushId: string): Promise<PushA
 }
 
 /** Answers are attempts, not revisions of a single attempt. Edits bump version on one attempt. */
-export async function listPushAnswers(db: Database, pushId: string, viewer?: { actorId: string; actorRole: "parent" | "student" }): Promise<PushAnswerDto[]> {
-  const related = viewer?.actorRole === "student" ? await relatedPushesForStudentRead(db, pushId) : null;
-  const visibleIds = related ? related.filter((push) => isAnswerDisclosed(push, viewer!.actorId)).map((push) => push.id) : [pushId];
+export async function listPushAnswers(
+  db: Database,
+  pushId: string,
+  viewer?: { actorId: string; actorRole: "parent" | "student" },
+): Promise<PushAnswerDto[]> {
+  const related =
+    viewer?.actorRole === "student" ? await relatedPushesForStudentRead(db, pushId) : null;
+  const visibleIds = related
+    ? related.filter((push) => isAnswerDisclosed(push, viewer!.actorId)).map((push) => push.id)
+    : [pushId];
   const answers = await db
     .select()
     .from(pushAnswers)
@@ -73,9 +84,13 @@ export async function listPushAnswers(db: Database, pushId: string, viewer?: { a
   const result: PushAnswerDto[] = [];
   const now = new Date();
   for (const answer of answers) {
-    const [version] = await db.select().from(pushAnswerVersions).where(
-      sql`${pushAnswerVersions.answerId} = ${answer.id}::uuid AND ${pushAnswerVersions.version} = ${answer.currentVersion}`,
-    ).limit(1);
+    const [version] = await db
+      .select()
+      .from(pushAnswerVersions)
+      .where(
+        sql`${pushAnswerVersions.answerId} = ${answer.id}::uuid AND ${pushAnswerVersions.version} = ${answer.currentVersion}`,
+      )
+      .limit(1);
     if (version) result.push(await toAnswerDto(db, answer, version, viewer?.actorId, now));
   }
   return result;
@@ -143,6 +158,7 @@ export async function submitPushAnswer(
   });
 
   return db.transaction(async (tx) => {
+    await lockPushSubjectForWrite(tx, input.pushId);
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${input.pushId} FOR UPDATE`);
     const push = await loadPushOrThrow(tx, input.pushId);
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
@@ -157,7 +173,12 @@ export async function submitPushAnswer(
     const [existingAnswer] = await tx
       .select()
       .from(pushAnswers)
-      .where(and(eq(pushAnswers.studentId, input.studentId), eq(pushAnswers.createIdempotencyKey, input.idempotencyKey)))
+      .where(
+        and(
+          eq(pushAnswers.studentId, input.studentId),
+          eq(pushAnswers.createIdempotencyKey, input.idempotencyKey),
+        ),
+      )
       .limit(1);
 
     if (existingAnswer) {
@@ -192,7 +213,10 @@ export async function submitPushAnswer(
         };
       }
 
-      throw new FamilyContentError("STATE_CONFLICT", "Answer idempotency replay record is incomplete");
+      throw new FamilyContentError(
+        "STATE_CONFLICT",
+        "Answer idempotency replay record is incomplete",
+      );
     }
 
     const now = input.now ?? new Date();
@@ -259,7 +283,10 @@ export async function submitPushAnswer(
 
     await tx.update(familyPushes).set({ updatedAt: now }).where(eq(familyPushes.id, push.id));
 
-    return { answer: await toAnswerDto(tx, answer!, version!, input.studentId), idempotentReplay: false };
+    return {
+      answer: await toAnswerDto(tx, answer!, version!, input.studentId),
+      idempotentReplay: false,
+    };
   });
 }
 
@@ -304,6 +331,7 @@ export async function editPushAnswer(
       throw new FamilyContentError("FORBIDDEN", "Only the author can edit this answer");
     }
 
+    await lockPushSubjectForWrite(tx, answer.pushId);
     await tx.execute(sql`SELECT id FROM family_pushes WHERE id = ${answer.pushId} FOR UPDATE`);
     const push = await loadPushOrThrow(tx, answer.pushId);
     await assertStudentNotFrozenForFamilyContent(tx, push.studentId, "write");
@@ -325,7 +353,10 @@ export async function editPushAnswer(
       .limit(1);
     if (replayVersion) {
       if (replayVersion.submitIdempotencyPayloadHash !== payloadHash) {
-        throw new FamilyContentError("IDEMPOTENCY_CONFLICT", "Answer edit idempotency payload mismatch");
+        throw new FamilyContentError(
+          "IDEMPOTENCY_CONFLICT",
+          "Answer edit idempotency payload mismatch",
+        );
       }
       const [current] = await tx
         .select()
@@ -400,6 +431,9 @@ export async function editPushAnswer(
 
     await tx.update(familyPushes).set({ updatedAt: now }).where(eq(familyPushes.id, push.id));
 
-    return { answer: await toAnswerDto(tx, updated!, version!, input.studentId, now), idempotentReplay: false };
+    return {
+      answer: await toAnswerDto(tx, updated!, version!, input.studentId, now),
+      idempotentReplay: false,
+    };
   });
 }

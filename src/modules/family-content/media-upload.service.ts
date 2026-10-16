@@ -107,7 +107,10 @@ async function continueFromExistingUploadRow(
   }
   if (existing.status === "ready") {
     if (!isMediaScanAccepted(existing.scanResult)) {
-      throw new FamilyContentError("MEDIA_UNAVAILABLE", "该图片未扫描，当前环境不允许使用，请联系维护者");
+      throw new FamilyContentError(
+        "MEDIA_UNAVAILABLE",
+        "该图片未扫描，当前环境不允许使用，请联系维护者",
+      );
     }
     return { media: toMediaDto(existing), idempotentReplay: true };
   }
@@ -205,6 +208,7 @@ async function finalizeReadyInShortTx(
   },
 ): Promise<typeof mediaObjects.$inferSelect> {
   return db.transaction(async (tx) => {
+    await assertUploaderMayUploadForStudent(tx, input.actorId, input.studentId);
     await tx.execute(
       sql`SELECT id FROM media_objects WHERE id = ${input.mediaId}::uuid FOR UPDATE`,
     );
@@ -307,7 +311,10 @@ async function runUploadPipeline(
   }
   if (scan.outcome === "error") {
     await markRecoverableFailure(db, media.id, "processing", scan.category, new Date());
-    throw new FamilyContentError("MEDIA_UNAVAILABLE", "图片处理服务暂不可用，请联系维护者检查图片扫描配置");
+    throw new FamilyContentError(
+      "MEDIA_UNAVAILABLE",
+      "图片处理服务暂不可用，请联系维护者检查图片扫描配置",
+    );
   }
 
   let reencoded;
@@ -481,7 +488,12 @@ export async function assertMediaReadyForAttach(
 ): Promise<typeof mediaObjects.$inferSelect> {
   await db.execute(sql`SELECT id FROM media_objects WHERE id = ${mediaId}::uuid FOR UPDATE`);
   const [media] = await db.select().from(mediaObjects).where(eq(mediaObjects.id, mediaId)).limit(1);
-  if (!media || media.status !== "ready" || media.revokedAt || !isMediaScanAccepted(media.scanResult)) {
+  if (
+    !media ||
+    media.status !== "ready" ||
+    media.revokedAt ||
+    !isMediaScanAccepted(media.scanResult)
+  ) {
     throw new FamilyContentError("NOT_FOUND", "Media not found");
   }
   void actorId;

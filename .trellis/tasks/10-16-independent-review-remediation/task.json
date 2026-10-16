@@ -1,0 +1,28 @@
+{
+  "id": "independent-review-remediation",
+  "name": "independent-review-remediation",
+  "title": "独立审核问题整体整改",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "wangyoulong",
+  "assignee": "wangyoulong",
+  "createdAt": "2026-10-16",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-17-admin-account-reset"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

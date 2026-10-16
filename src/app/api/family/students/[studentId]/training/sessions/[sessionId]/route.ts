@@ -19,7 +19,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
     await requireStudentReadAccess(db, dbUser, studentId);
 
-    const session = await getTrainingSessionForStudent(db, studentId, sessionId);
+    const session = await getTrainingSessionForStudent(db, studentId, sessionId, dbUser.id);
     return NextResponse.json(session);
   } catch (error) {
     const { status, body } = toRouteErrorResponse(error);

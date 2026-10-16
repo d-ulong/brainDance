@@ -13,7 +13,7 @@ import {
 import { TrainingDisclaimer } from "@/components/training/training-disclaimer";
 import { TrainingSessionReview } from "@/components/training/training-session-review";
 import { TrendsPanel } from "@/components/training/trends-panel";
-import { Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
+import { SessionLoadError, Alert, LoadingState, PageShell } from "@/components/ui/page-shell";
 import { ApiError, fetchSession } from "@/lib/client/api";
 import { fetchTrainingSession, type TrainingSessionDetail } from "@/lib/client/training-api";
 
@@ -22,6 +22,8 @@ export default function ParentTrainingResultPage({
 }: {
   params: Promise<{ sessionId: string }>;
 }) {
+  const [sessionFailed, setSessionFailed] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const router = useRouter();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +36,8 @@ export default function ParentTrainingResultPage({
   }, []);
 
   useEffect(() => {
+    setSessionFailed(false);
+    setLoading(true);
     void (async () => {
       const resolved = await params;
       setSessionId(resolved.sessionId);
@@ -55,9 +59,24 @@ export default function ParentTrainingResultPage({
       } finally {
         setLoading(false);
       }
-    })();
-  }, [loadSession, params, router]);
+    })().catch(() => {
+      setSessionFailed(true);
+      setLoading(false);
+    });
+  }, [loadSession, params, router, sessionAttempt]);
 
+  if (sessionFailed)
+    return (
+      <PageShell title="加载失败" hideTabs>
+        <SessionLoadError
+          onRetry={() => {
+            setSessionFailed(false);
+            setLoading(true);
+            setSessionAttempt((attempt) => attempt + 1);
+          }}
+        />
+      </PageShell>
+    );
   if (loading) {
     return (
       <PageShell title="家长训练结果">
