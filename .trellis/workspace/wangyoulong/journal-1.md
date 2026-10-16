@@ -383,3 +383,37 @@ Archived 09-15-student-planning-goals; shipped schedule/training/push UX through
 ### Next Steps
 
 - 新任务统一处理全局页头、返回按钮、计划编辑与日程、目标状态机、训练结果详情及遗留回归门槛
+
+
+## Session 15: Review remediation and admin account recovery
+
+**Date**: 2026-10-17
+**Task**: Review remediation and admin account recovery
+**Branch**: `main`
+
+### Summary
+
+Completed independent review remediation, administrator account listing/reset and mandatory self password change, plus safe pull-before-restart Windows launcher. User authorized commit and push; preserved original dirty configuration and all private local credentials.
+
+### Main Changes
+
+- Committed audited source/spec/test increment; archived only the two related completed tasks.
+- Updated braindance-local Web/Worker; health HTTP200 and all three existing account credential fingerprints unchanged.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `28232f75bfe7177c52cd392f8c51e04a9985fdeb` | (see git log) |
+
+### Testing
+
+- [OK] Admin reset: final 16 PostgreSQL cases, 20 pure unit cases, 16 distinct desktop/mobile browser cases passed across scoped runs; typecheck and affected lint/diff checks passed. Existing remediation evidence retained in archived task.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- User verifies account recovery at http://localhost:3002/admin/accounts; unrelated original files remain uncommitted.
